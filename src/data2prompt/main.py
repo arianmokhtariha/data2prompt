@@ -6,6 +6,24 @@ from pathlib import Path
 import argparse
 
 
+# --- Constants & Core Defaults ---
+CORE_IGNORES = {
+    '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
+    'node_modules', '.idea', 'dist', 'build', '.mypy_cache',
+    '.pytest_cache', 'target', '.docker', '.aws', '.gcloud'
+}
+
+CORE_SKIP_EXTS = {
+    # Data & Databases
+    '.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
+    # Compressed & Binary
+    '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
+    # Media
+    '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
+    # Environment & Secrets
+    '.env', '.venv', '.pyc', '.ds_store'
+}
+
 def setup_cli():
     parser = argparse.ArgumentParser(
         description="📊 Data2Prompt: High-tech prompt packaging for Data Scientists."
@@ -30,37 +48,15 @@ def setup_cli():
                         help='Max lines of text output to keep per notebook cell (default: 55)')
     
     # Exclusions
-    parser.add_argument('--ignore-folders', nargs='+',
-                        default=[
-                            '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
-                            'node_modules',       # Standard for web/javascript tools
-                            '.idea',              # JetBrains/PyCharm settings
-                            'dist', 'build',      # Python distribution/build artifacts
-                            '.mypy_cache',        # Python type checking cache
-                            '.pytest_cache',      # Testing cache
-                            'target',             # Rust/Java build folders
-                            '.docker',            # Docker configurations
-                            '.aws',               # Cloud credentials (Security Risk!)
-                            '.gcloud'             # Cloud credentials (Security Risk!)
-                        ],
-                        help='Folders to skip entirely')
+    parser.add_argument('--ignore-folders', nargs='+', default=[],
+                        help='Additional folders to skip entirely')
     
     parser.add_argument('--max-file-size', type=int, default=200,
                         help='Max file size in KB to read entirely (default: 200KB)')
     
     # file formats to ignore
-    parser.add_argument('--skip-exts', nargs='+',
-                        default=[
-                            # Data & Databases
-                            '.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
-                            # Compressed & Binary
-                            '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
-                            # Media
-                            '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
-                            # Environment & Secrets 
-                            '.env', '.venv', '.pyc', '.ds_store'
-                        ],
-                        help='File extensions to skip content for (binary/heavy files)')
+    parser.add_argument('--skip-exts', nargs='+', default=[],
+                        help='Additional file extensions to skip content for')
     
     return parser.parse_args()
 
@@ -195,6 +191,10 @@ def process_sql(file_path, sample_size, max_lines):
 
 def run_packager():
     args = setup_cli() # Get settings from terminal
+    
+    # Merge Logic: Combine user input with CORE defaults and remove duplicates
+    args.ignore_folders = list(set(args.ignore_folders) | CORE_IGNORES)
+    args.skip_exts = list(set(args.skip_exts) | CORE_SKIP_EXTS)
     
     print_header()
     project_path = os.getcwd()
