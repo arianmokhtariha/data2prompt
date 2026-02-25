@@ -115,28 +115,46 @@ def process_notebook(file_path, max_lines):
     except Exception as e:
         return f"Error processing notebook: {e}"
 
-def process_sql(file_path, max_lines, max_inserts):
+def process_sql(file_path, sample_size, max_lines):
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
         
         processed_lines = []
-        insert_count = 0
+        table_row_count = 0
+        is_truncated = False
         
         for line in lines:
-            # Keep schema definitions always
-            if any(keyword in line.upper() for keyword in ["CREATE", "ALTER", "TABLE", "CONSTRAINT", "VIEW"]):
+            line_upper = line.upper()
+            
+            # 1. Detect New Table (Reset Counter)
+            if "CREATE TABLE" in line_upper or "BEGIN TABLE" in line_upper:
+                table_row_count = 0
+                is_truncated = False
                 processed_lines.append(line)
-            # Sample the Inserts
-            elif "INSERT INTO" in line.upper():
-                if insert_count < max_inserts:
+                continue
+
+            # 2. Handle Inserts and Data Rows (Sample per table)
+            is_insert = "INSERT INTO" in line_upper
+            is_data_row = line.strip().startswith("(")
+            
+            if is_insert or is_data_row:
+                if table_row_count < sample_size:
                     processed_lines.append(line)
-                    insert_count += 1
-                elif insert_count == max_inserts:
-                    processed_lines.append("-- ... [Additional INSERT statements truncated for brevity] ...\n")
-                    insert_count += 1
-            # Keep short comments or small setup lines
-            elif len(processed_lines) < max_lines:
+                    table_row_count += 1
+                elif not is_truncated:
+                    processed_lines.append("-- ... [Table data truncated for brevity] ...\n")
+                    is_truncated = True
+                continue
+            
+            # 3. Keep other schema keywords
+            schema_keywords = ["ALTER ", "CONSTRAINT ", "VIEW ", "DROP ", "INDEX ", "TABLE "]
+            if any(kw in line_upper for kw in schema_keywords):
+                processed_lines.append(line)
+                continue
+                
+            # 4. Keep other lines (comments, setup) up to the max_lines limit
+            if len(processed_lines) < max_lines:
                 processed_lines.append(line)
         
         return "```sql\n" + "".join(processed_lines) + "\n```"
@@ -194,7 +212,7 @@ def run_packager():
                 md_content.append(process_notebook(file_path, args.max_lines))
                 notebook_count += 1
             elif ext == '.sql':
-                md_content.append(process_sql(file_path, args.max_lines, args.sql_sample_size))
+                md_content.append(process_sql(file_path, args.sql_sample_size, args.max_lines))
                 sql_count += 1
             else:
                 try:
