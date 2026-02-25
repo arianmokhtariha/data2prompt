@@ -31,8 +31,22 @@ def setup_cli():
     
     # Exclusions
     parser.add_argument('--ignore-folders', nargs='+',
-                        default=['.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints'],
+                        default=[
+                            '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
+                            'node_modules',       # Standard for web/javascript tools
+                            '.idea',              # JetBrains/PyCharm settings
+                            'dist', 'build',      # Python distribution/build artifacts
+                            '.mypy_cache',        # Python type checking cache
+                            '.pytest_cache',      # Testing cache
+                            'target',             # Rust/Java build folders
+                            '.docker',            # Docker configurations
+                            '.aws',               # Cloud credentials (Security Risk!)
+                            '.gcloud'             # Cloud credentials (Security Risk!)
+                        ],
                         help='Folders to skip entirely')
+    
+    parser.add_argument('--max-file-size', type=int, default=200,
+                        help='Max file size in KB to read entirely (default: 200KB)')
     
     # file formats to ignore
     parser.add_argument('--skip-exts', nargs='+',
@@ -63,6 +77,15 @@ def print_header():
 def get_status_msg(file_path, file_count):
     sys.stdout.write(f"\r[#{file_count}] Processing: {file_path[:50]}...".ljust(70))
     sys.stdout.flush()
+
+def is_binary(file_path):
+    """Check if a file is binary by looking for a Null byte in the first 1024 bytes."""
+    try:
+        with open(file_path, 'rb') as f:
+            chunk = f.read(1024)
+            return b'\0' in chunk
+    except Exception:
+        return False
 
 def generate_tree(startpath, ignore_folders):
     tree = []
@@ -224,11 +247,25 @@ def run_packager():
                 md_content.append(process_sql(file_path, args.sql_sample_size, args.max_lines))
                 sql_count += 1
             else:
-                try:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        md_content.append(f"```{ext[1:] if ext else 'text'}\n{f.read()}\n```")
-                except:
-                    md_content.append("*Could not read file.*")
+                # The New Safety Net: Check for binary content
+                if is_binary(file_path):
+                    md_content.append(f"*Note: Binary content detected in {ext if ext else 'unknown'} file. Content skipped.*")
+                else:
+                    file_size_kb = os.path.getsize(file_path) / 1024
+                    try:
+                        if file_size_kb > args.max_file_size:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                # Read only the first 10KB to show the header
+                                header_content = f.read(10 * 1024)
+                                md_content.append(f"```{ext[1:] if ext else 'text'}\n{header_content}\n```")
+                                md_content.append(f"\n*Note: File truncated because it exceeds the size limit ({args.max_file_size}KB).*\n")
+                        else:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                # Still use 'ignore' errors just in case of weird characters,
+                                # but the binary check will stop the actual gibberish.
+                                md_content.append(f"```{ext[1:] if ext else 'text'}\n{f.read()}\n```")
+                    except Exception:
+                        md_content.append("*Could not read file.*")
             
             md_content.append("\n---\n")
 
