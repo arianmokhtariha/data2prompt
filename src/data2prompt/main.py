@@ -12,23 +12,27 @@ def setup_cli():
     )
     
     # Output settings
-    parser.add_argument('-o', '--output', default='PROMPT.md', 
+    parser.add_argument('-o', '--output', default='PROMPT.md',
                         help='Name of the generated markdown file (default: PROMPT.md)')
     
     # CSV sampling settings
-    parser.add_argument('-s', '--sample-size', type=int, default=70, 
+    parser.add_argument('-s', '--sample-size', type=int, default=70,
                         help='Number of random rows to sample from CSVs (default: 70)')
-    parser.add_argument('--seed', type=int, default=42, 
+    parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for consistent CSV sampling (default: 42)')
     
     # Notebook settings
-    parser.add_argument('--max-lines', type=int, default=55, 
+    parser.add_argument('--max-lines', type=int, default=55,
                         help='Max lines of text output to keep per notebook cell (default: 55)')
     
     # Exclusions
-    parser.add_argument('--ignore-folders', nargs='+', 
+    parser.add_argument('--ignore-folders', nargs='+',
                         default=['.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints'],
                         help='Folders to skip entirely')
+    
+    parser.add_argument('--skip-exts', nargs='+',
+                        default=['.pbix', '.db', '.sqlite', '.zip', '.png', '.jpg', '.jpeg', '.pdf', '.pkl', '.parquet', '.exe'],
+                        help='File extensions to skip content for (binary/heavy files)')
     
     return parser.parse_args()
 
@@ -46,10 +50,10 @@ def get_status_msg(file_path, file_count):
     sys.stdout.write(f"\r[#{file_count}] Processing: {file_path[:50]}...".ljust(70))
     sys.stdout.flush()
 
-def generate_tree(startpath):
+def generate_tree(startpath, ignore_folders):
     tree = []
     for root, dirs, files in os.walk(startpath):
-        dirs[:] = [d for d in dirs if d not in IGNORE_FOLDERS]
+        dirs[:] = [d for d in dirs if d not in ignore_folders]
         level = root.replace(startpath, '').count(os.sep)
         indent = ' ' * 4 * level
         tree.append(f"{indent}📂 {os.path.basename(root)}/")
@@ -58,16 +62,16 @@ def generate_tree(startpath):
             tree.append(f"{sub_indent}📄 {f}")
     return "\n".join(tree)
 
-def process_csv(file_path):
+def process_csv(file_path, sample_size, seed=42):
     try:
         df = pd.read_csv(file_path)
-        if len(df) > CSV_SAMPLE_SIZE:
-            df = df.sample(CSV_SAMPLE_SIZE)
-        return f"#### [Sample - Random {CSV_SAMPLE_SIZE} rows]\n" + df.to_markdown(index=False)
+        if len(df) > sample_size:
+            df = df.sample(sample_size, random_state=seed)
+        return f"#### [Sample - Random {sample_size} rows]\n" + df.to_markdown(index=False)
     except Exception as e:
         return f"Error reading CSV: {e}"
 
-def process_notebook(file_path):
+def process_notebook(file_path, max_lines):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             nb = json.load(f)
@@ -90,14 +94,14 @@ def process_notebook(file_path):
                 for out in cell.get('outputs', []):
                     if out.get('output_type') == 'stream':
                         text = "".join(out.get('text', []))
-                        if text.count('\n') < MAX_NOTEBOOK_TEXT_LINES:
+                        if text.count('\n') < max_lines:
                             output_md.append(f"> **Cell {i} Output:**\n> {text.strip()}")
                     
                     elif out.get('output_type') in ['execute_result', 'display_data']:
                         data = out.get('data', {})
                         if 'text/plain' in data:
                             content = "".join(data['text/plain'])
-                            if "base64" not in content and content.count('\n') < MAX_NOTEBOOK_TEXT_LINES:
+                            if "base64" not in content and content.count('\n') < max_lines:
                                 output_md.append(f"> **Cell {i} Data Preview:**\n> {content.strip()}")
                                 
             output_md.append("\n---\n") # Visual separator between cells
@@ -112,23 +116,17 @@ def run_packager():
     print_header()
     project_path = os.getcwd()
     
-    # Internal counters for the stats table
-    stats = {"files": 0, "csvs": 0, "notebooks": 0}
-    
     # 1. Build the Header with Metadata
     md_content = [
         f"# 📊 Project Context: {os.path.basename(project_path)}",
         f"> Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
-        f"> Settings: Sample Size={args.sample_size}, Line Limit={args.max_lines}\n"
+        f"> Settings: Sample Size={args.sample_size}, Line Limit={args.max_lines}, Seed={args.seed}\n"
     ]
-
-    project_path = os.getcwd()
-    md_content = [f"# Project Context: {os.path.basename(project_path)}\n"]
     
     print("Step 1: 🌳 Generating project tree structure...")
     md_content.append("## Project Structure")
     md_content.append("```text")
-    tree_text = generate_tree(project_path)
+    tree_text = generate_tree(project_path, args.ignore_folders)
     md_content.append(tree_text)
     md_content.append("```\n---\n")
     
@@ -138,9 +136,10 @@ def run_packager():
     notebook_count = 0
 
     for root, dirs, files in os.walk(project_path):
-        dirs[:] = [d for d in dirs if d not in IGNORE_FOLDERS]
+        dirs[:] = [d for d in dirs if d not in args.ignore_folders]
         for file in files:
-            if file == OUTPUT_FILE or file == sys.argv[0]:
+            # Skip the output file itself and the script file
+            if file == args.output or file == os.path.basename(sys.argv[0]):
                 continue
                 
             file_path = Path(root) / file
@@ -149,16 +148,16 @@ def run_packager():
             
             file_count += 1
             get_status_msg(str(relative_path), file_count)
-
+            
             md_content.append(f"## FILE: {relative_path}")
             
-            if ext in SKIP_CONTENT_EXTENSIONS:
+            if ext in args.skip_exts:
                 md_content.append(f"*Note: Binary/Heavy file ({ext}). Content skipped for brevity.*\n")
             elif ext == '.csv':
-                md_content.append(process_csv(file_path))
+                md_content.append(process_csv(file_path, args.sample_size, args.seed))
                 csv_count += 1
             elif ext == '.ipynb':
-                md_content.append(process_notebook(file_path))
+                md_content.append(process_notebook(file_path, args.max_lines))
                 notebook_count += 1
             else:
                 try:
@@ -169,8 +168,8 @@ def run_packager():
             
             md_content.append("\n---\n")
 
-    print(f"\n\nStep 3: 💾 Saving to {OUTPUT_FILE}...")
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+    print(f"\n\nStep 3: 💾 Saving to {args.output}...")
+    with open(args.output, 'w', encoding='utf-8') as f:
         f.write("\n".join(md_content))
 
     # Final File Size Check
