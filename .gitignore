@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+venv/
+env/
+.env
+
+# Test data or generated outputs
+project_context.md
+*.csv
+
+# Build files 
+build/
+dist/
+*.egg-info/
