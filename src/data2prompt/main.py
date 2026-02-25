@@ -3,19 +3,34 @@ import json
 import pandas as pd
 import sys
 from pathlib import Path
+import argparse
 
 
-# --- CONFIGURATION ---
-OUTPUT_FILE = "PROMPT.md"
-CSV_SAMPLE_SIZE = 100
-MAX_NOTEBOOK_TEXT_LINES = 100
-
-#A "blacklist" of file types that the script will acknowledge in the folder tree but will not attempt to read.
-SKIP_CONTENT_EXTENSIONS = {'.pbix', '.db', '.sqlite', '.zip', '.png', '.jpg', '.jpeg', '.pdf', '.pkl', '.parquet', '.exe'}
-
-#A list of directory names that the script will completely skip and not be shown in the folder tree.
-IGNORE_FOLDERS = {'.git', '__pycache__', '.ipynb_checkpoints', 'venv', '.vscode', 'node_modules'}
-
+def setup_cli():
+    parser = argparse.ArgumentParser(
+        description="📊 Data2Prompt: High-tech prompt packaging for Data Scientists."
+    )
+    
+    # Output settings
+    parser.add_argument('-o', '--output', default='PROMPT.md', 
+                        help='Name of the generated markdown file (default: PROMPT.md)')
+    
+    # CSV sampling settings
+    parser.add_argument('-s', '--sample-size', type=int, default=70, 
+                        help='Number of random rows to sample from CSVs (default: 70)')
+    parser.add_argument('--seed', type=int, default=42, 
+                        help='Random seed for consistent CSV sampling (default: 42)')
+    
+    # Notebook settings
+    parser.add_argument('--max-lines', type=int, default=55, 
+                        help='Max lines of text output to keep per notebook cell (default: 55)')
+    
+    # Exclusions
+    parser.add_argument('--ignore-folders', nargs='+', 
+                        default=['.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints'],
+                        help='Folders to skip entirely')
+    
+    return parser.parse_args()
 
 
 print("🚀 Script is starting...")
@@ -92,7 +107,21 @@ def process_notebook(file_path):
         return f"Error processing notebook: {e}"
 
 def run_packager():
+    args = setup_cli() # Get settings from terminal
+    
     print_header()
+    project_path = os.getcwd()
+    
+    # Internal counters for the stats table
+    stats = {"files": 0, "csvs": 0, "notebooks": 0}
+    
+    # 1. Build the Header with Metadata
+    md_content = [
+        f"# 📊 Project Context: {os.path.basename(project_path)}",
+        f"> Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
+        f"> Settings: Sample Size={args.sample_size}, Line Limit={args.max_lines}\n"
+    ]
+
     project_path = os.getcwd()
     md_content = [f"# Project Context: {os.path.basename(project_path)}\n"]
     
@@ -143,13 +172,19 @@ def run_packager():
     print(f"\n\nStep 3: 💾 Saving to {OUTPUT_FILE}...")
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write("\n".join(md_content))
+
+    # Final File Size Check
+    file_size_kb = os.path.getsize(args.output) / 1024
     
     print("\n" + "="*46)
-    print(f"✅ DONE! Packaging Complete.")
+    print(f"✅ DONE! Created: {args.output} ({file_size_kb:.1f} KB)")
     print(f"📂 Total Files Processed: {file_count}")
     print(f"📊 CSVs Sampled:         {csv_count}")
     print(f"📓 Notebooks Cleaned:    {notebook_count}")
-    print(f"📝 Final File:           {OUTPUT_FILE}")
+    
+    if file_size_kb > 2000:
+        print("⚠️  WARNING: File is over 2MB. This might be too large for some context windows.")
+        print("💡 Suggestion: Reduce --sample-size or --max-lines.")
     print("="*46)
 
 if __name__ == "__main__":
