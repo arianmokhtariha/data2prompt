@@ -34,9 +34,18 @@ def setup_cli():
                         default=['.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints'],
                         help='Folders to skip entirely')
     
-    # file formats to ignore 
+    # file formats to ignore
     parser.add_argument('--skip-exts', nargs='+',
-                        default=['.pbix', '.db', '.sqlite', '.zip', '.png', '.jpg', '.jpeg', '.pdf', '.pkl', '.parquet', '.exe'],
+                        default=[
+                            # Data & Databases
+                            '.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
+                            # Compressed & Binary
+                            '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
+                            # Media
+                            '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
+                            # Environment & Secrets 
+                            '.env', '.venv', '.pyc', '.ds_store'
+                        ],
                         help='File extensions to skip content for (binary/heavy files)')
     
     return parser.parse_args()
