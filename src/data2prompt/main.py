@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .cli import setup_cli
 from .parsers import process_csv, process_notebook, process_sql
-from .utils import is_binary, generate_tree, print_header, get_status_msg
+from .utils import is_binary, generate_tree, print_header, get_status_msg, count_tokens
 
 # A unique identifier added to the top of every generated Markdown file.
 # This allows the tool to detect and skip its own previous outputs during subsequent runs.
@@ -117,6 +117,14 @@ def run_packager():
             md_content.append("\n---\n")
 
     print(f"\n\nStep 3: 💾 Saving to {args.output}...")
+    
+    # Calculate tokens before final save
+    full_content_temp = "\n".join(md_content)
+    total_tokens = count_tokens(full_content_temp)
+    
+    # Insert token count into the header (after settings line)
+    md_content.insert(6, f"> Tokens: {total_tokens} (est. via o200k_base)\n")
+    
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write("\n".join(md_content))
 
@@ -125,6 +133,7 @@ def run_packager():
     
     print("\n" + "="*46)
     print(f"✅ DONE! Created: {args.output} ({file_size_kb:.1f} KB)")
+    print(f"Tokens: {total_tokens} (est. via o200k_base)")
     print(f"📂 Total Files Processed: {file_count}")
     print(f"📊 CSVs Sampled:         {csv_count}")
     print(f"📓 Notebooks Cleaned:    {notebook_count}")

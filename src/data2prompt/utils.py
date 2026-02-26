@@ -1,5 +1,15 @@
 import os
 import sys
+import tiktoken
+
+def count_tokens(text, encoding_name="o200k_base"):
+    """Returns the number of tokens in a text string."""
+    try:
+        encoding = tiktoken.get_encoding(encoding_name)
+        num_tokens = len(encoding.encode(text))
+        return num_tokens
+    except Exception:
+        return 0
 
 def print_header():
     header = """

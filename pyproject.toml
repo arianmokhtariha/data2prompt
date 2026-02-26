@@ -19,7 +19,8 @@ classifiers = [
 ]
 dependencies = [
     "pandas>=1.0.0",
-    "tabulate>=0.9.0"
+    "tabulate>=0.9.0",
+    "tiktoken>=0.7.0",
 ]
 
 [project.scripts]
