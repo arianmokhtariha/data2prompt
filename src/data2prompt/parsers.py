@@ -15,7 +15,10 @@ def process_csv(file_path, sample_size=DEFAULT_CSV_SAMPLE_SIZE, seed=DEFAULT_SEE
         df = pd.read_csv(file_path)
         if len(df) > sample_size:
             df = df.sample(sample_size, random_state=seed)
-        return f"#### [Sample - Random {sample_size} rows]\n" + df.to_markdown(index=False)
+            footer = f"\n\n-- [CSV truncated: Showing random {sample_size} rows to save context] --"
+        else:
+            footer = ""
+        return f"#### [Sample - Random {sample_size} rows]\n" + df.to_markdown(index=False) + footer
     except Exception as e:
         return f"Error reading CSV: {e}"
     
@@ -42,15 +45,24 @@ def process_notebook(file_path, max_lines=DEFAULT_MAX_LINES):
                 for out in cell.get('outputs', []):
                     if out.get('output_type') == 'stream':
                         text = "".join(out.get('text', []))
-                        if text.count('\n') < max_lines:
+                        lines = text.strip().split('\n')
+                        if len(lines) > max_lines:
+                            truncated_text = '\n'.join(lines[:max_lines])
+                            output_md.append(f"> **Cell {i} Output:**\n> {truncated_text}\n> -- [Output truncated: Showing first {max_lines} lines to save context] --")
+                        else:
                             output_md.append(f"> **Cell {i} Output:**\n> {text.strip()}")
                     
                     elif out.get('output_type') in ['execute_result', 'display_data']:
                         data = out.get('data', {})
                         if 'text/plain' in data:
                             content = "".join(data['text/plain'])
-                            if "base64" not in content and content.count('\n') < max_lines:
-                                output_md.append(f"> **Cell {i} Data Preview:**\n> {content.strip()}")
+                            if "base64" not in content:
+                                lines = content.strip().split('\n')
+                                if len(lines) > max_lines:
+                                    truncated_content = '\n'.join(lines[:max_lines])
+                                    output_md.append(f"> **Cell {i} Data Preview:**\n> {truncated_content}\n> -- [Data preview truncated: Showing first {max_lines} lines to save context] --")
+                                else:
+                                    output_md.append(f"> **Cell {i} Data Preview:**\n> {content.strip()}")
                                 
             output_md.append("\n---\n") # Visual separator between cells
             
@@ -86,7 +98,7 @@ def process_sql(file_path, sample_size=DEFAULT_SQL_SAMPLE_SIZE, max_lines=DEFAUL
                     processed_lines.append(line)
                     table_row_count += 1
                 elif not is_truncated:
-                    processed_lines.append("-- ... [Table data truncated for brevity] ...\n")
+                    processed_lines.append(f"-- [Table data truncated: Showing first {sample_size} rows to save context] --\n")
                     is_truncated = True
                 continue
             
@@ -146,7 +158,7 @@ def process_excel(file_path, max_rows=DEFAULT_CSV_SAMPLE_SIZE, max_sheets=DEFAUL
                     # 3. Sampling (The Safety Guard)
                     if len(df) > max_rows:
                         df = df.head(max_rows)
-                        footer = f"\n-- [Sheet truncated: Showing first {max_rows} rows] --"
+                        footer = f"\n\n-- [Sheet truncated: Showing first {max_rows} rows to save context] --"
                     else:
                         footer = ""
                     

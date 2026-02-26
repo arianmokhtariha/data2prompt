@@ -92,7 +92,7 @@ def run_packager():
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                             header_content = f.read(10 * 1024)
                             md_content.append(f"```markdown\n{header_content}\n```")
-                            md_content.append(f"\n*Note: File truncated because it exceeds the size limit ({args.max_file_size}KB).*\n")
+                            md_content.append(f"\n-- [File truncated: Showing first 10KB because it exceeds the size limit ({args.max_file_size}KB) to save context] --\n")
                     else:
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                             md_content.append(f"```markdown\n{f.read()}\n```")
@@ -113,7 +113,7 @@ def run_packager():
                                 # Read only the first 10KB to show the header
                                 header_content = f.read(10 * 1024)
                                 md_content.append(f"```{ext[1:] if ext else 'text'}\n{header_content}\n```")
-                                md_content.append(f"\n*Note: File truncated because it exceeds the size limit ({args.max_file_size}KB).*\n")
+                                md_content.append(f"\n-- [File truncated: Showing first 10KB because it exceeds the size limit ({args.max_file_size}KB) to save context] --\n")
                         else:
                             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                                 # Still use 'ignore' errors just in case of weird characters,
