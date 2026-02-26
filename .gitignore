@@ -9,10 +9,12 @@ env/
 .env
 
 # Test data or generated outputs
-project_context.md
 *.csv
 
 # Build files 
 build/
 dist/
 *.egg-info/
+
+# roo folder
+.roo/
