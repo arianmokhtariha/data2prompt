@@ -1,34 +1,17 @@
 import argparse
-
-# --- Constants & Core Defaults ---
-# These constants define the baseline behavior of the tool.
-# User-provided arguments in the terminal will be merged with these defaults
-# to ensure essential files and folders are always handled correctly.
-
-# Folders matching these names are excluded from both the project tree and content processing.
-# This includes version control, environment folders, and common IDE settings.
-CORE_IGNORES = {
-    '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
-    'node_modules', '.idea', 'dist', 'build', '.mypy_cache',
-    '.pytest_cache', 'target', '.docker', '.aws', '.gcloud'
-}
-
-# Specific filenames that should be excluded from the entire process (tree and content).
-# By default, this is empty to allow maximum flexibility, but can be populated with CORE defaults if needed.
-CORE_IGNORE_FILES = set()
-
-# Files with these extensions will have their names listed in the project tree,
-# but their actual content will be skipped to avoid bloating the prompt with binary or heavy data.
-CORE_SKIP_EXTS = {
-    # Data & Databases
-    '.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
-    # Compressed & Binary
-    '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
-    # Media
-    '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
-    # Environment & Secrets
-    '.env', '.venv', '.pyc', '.ds_store'
-}
+from .constants import (
+    CORE_IGNORES,
+    CORE_IGNORE_FILES,
+    CORE_SKIP_EXTS,
+    DEFAULT_CSV_SAMPLE_SIZE,
+    DEFAULT_SQL_SAMPLE_SIZE,
+    DEFAULT_SQL_MAX_LINES,
+    DEFAULT_MAX_LINES,
+    DEFAULT_MAX_SHEETS,
+    DEFAULT_SEED,
+    DEFAULT_MAX_FILE_SIZE_KB,
+    DEFAULT_OUTPUT_FILE
+)
 
 def setup_cli():
     """
@@ -40,22 +23,29 @@ def setup_cli():
     )
     
     # Output settings
-    parser.add_argument('-o', '--output', default='PROMPT.md',
-                        help='Name of the generated markdown file (default: PROMPT.md)')
+    parser.add_argument('-o', '--output', default=DEFAULT_OUTPUT_FILE,
+                        help=f'Name of the generated markdown file (default: {DEFAULT_OUTPUT_FILE})')
     
     # CSV sampling settings
-    parser.add_argument('-s', '--csv-sample-size', type=int, default=70,
-                        help='Number of random rows to sample from CSVs (default: 70)')
-    parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed for consistent CSV sampling (default: 42)')
+    parser.add_argument('-s', '--csv-sample-size', type=int, default=DEFAULT_CSV_SAMPLE_SIZE,
+                        help=f'Number of random rows to sample from CSVs (default: {DEFAULT_CSV_SAMPLE_SIZE})')
+    parser.add_argument('--seed', type=int, default=DEFAULT_SEED,
+                        help=f'Random seed for consistent CSV sampling (default: {DEFAULT_SEED})')
     
     # SQL sampling settings
-    parser.add_argument('--sql-sample-size', type=int, default=70,
-                        help='Number of INSERT statements to keep in SQL files (default: 70)')
+    parser.add_argument('--sql-sample-size', type=int, default=DEFAULT_SQL_SAMPLE_SIZE,
+                        help=f'Number of INSERT statements to keep in SQL files (default: {DEFAULT_SQL_SAMPLE_SIZE})')
+    
+    parser.add_argument('--sql-max-lines', type=int, default=DEFAULT_SQL_MAX_LINES,
+                        help=f'Max non-data lines to keep in SQL files (default: {DEFAULT_SQL_MAX_LINES})')
     
     # Notebook settings
-    parser.add_argument('--max-lines', type=int, default=55,
-                        help='Max lines of text output to keep per notebook cell (default: 55)')
+    parser.add_argument('--max-lines', type=int, default=DEFAULT_MAX_LINES,
+                        help=f'Max lines of text output to keep per notebook cell (default: {DEFAULT_MAX_LINES})')
+    
+    # Excel settings
+    parser.add_argument('--max-sheets', type=int, default=DEFAULT_MAX_SHEETS,
+                        help=f'Max number of sheets to process in Excel files (default: {DEFAULT_MAX_SHEETS})')
     
     # Exclusions
     parser.add_argument('--ignore-folders', nargs='+', default=[],
@@ -64,8 +54,8 @@ def setup_cli():
     parser.add_argument('--ignore-files', nargs='+', default=[],
                         help='Additional files to skip entirely')
     
-    parser.add_argument('--max-file-size', type=int, default=200,
-                        help='Max file size in KB to read entirely (default: 200KB)')
+    parser.add_argument('--max-file-size', type=int, default=DEFAULT_MAX_FILE_SIZE_KB,
+                        help=f'Max file size in KB to read entirely (default: {DEFAULT_MAX_FILE_SIZE_KB}KB)')
     
     # file formats to ignore
     parser.add_argument('--skip-exts', nargs='+', default=[],
