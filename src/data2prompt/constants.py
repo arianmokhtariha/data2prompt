@@ -24,11 +24,11 @@ CORE_SKIP_EXTS = {
 }
 
 # Default values for CLI arguments and processing functions
-DEFAULT_CSV_SAMPLE_SIZE = 70
-DEFAULT_SQL_SAMPLE_SIZE = 70  # Controls the number of INSERT/data rows kept per table in SQL files.
-DEFAULT_SQL_MAX_LINES = 100   # Caps the total number of non-data lines (comments, setup, etc.) in SQL files.
+DEFAULT_CSV_SAMPLE_SIZE = 50
+DEFAULT_SQL_SAMPLE_SIZE = 50  # Controls the number of INSERT/data rows kept per table in SQL files.
+DEFAULT_SQL_MAX_LINES = 70   # Caps the total number of non-data lines (comments, setup, etc.) in SQL files.
 DEFAULT_MAX_LINES = 55        # Max lines of text output to keep per notebook cell.
-DEFAULT_MAX_SHEETS = 5        # Max number of sheets to process in Excel files.
+DEFAULT_MAX_SHEETS = 10       # Max number of sheets to process in Excel files.
 DEFAULT_SEED = 42             # Random seed for consistent sampling.
 DEFAULT_MAX_FILE_SIZE_KB = 200
 DEFAULT_OUTPUT_FILE = 'PROMPT.md'

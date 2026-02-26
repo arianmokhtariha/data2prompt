@@ -150,8 +150,8 @@ def process_excel(file_path, max_rows=DEFAULT_CSV_SAMPLE_SIZE, max_sheets=DEFAUL
                     else:
                         footer = ""
                     
-                    csv_data = df.to_csv(index=False)
-                    output_md.append(f"```csv\n{csv_data}\n```")
+                    markdown_data = df.to_markdown(index=False)
+                    output_md.append(markdown_data)
                     if footer:
                         output_md.append(footer)
             except Exception as e:
