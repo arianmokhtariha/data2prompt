@@ -1,6 +1,10 @@
 import json
-import pandas as pd
+from pathlib import Path
+from typing import Tuple, Union
+
 import openpyxl
+import pandas as pd
+
 from .constants import (
     DEFAULT_CSV_SAMPLE_SIZE,
     DEFAULT_SQL_SAMPLE_SIZE,
@@ -10,7 +14,11 @@ from .constants import (
     DEFAULT_SEED
 )
 
-def process_csv(file_path, sample_size=DEFAULT_CSV_SAMPLE_SIZE, seed=DEFAULT_SEED):
+def process_csv(
+    file_path: Union[str, Path],
+    sample_size: int = DEFAULT_CSV_SAMPLE_SIZE,
+    seed: int = DEFAULT_SEED,
+) -> str:
     try:
         df = pd.read_csv(file_path)
         if len(df) > sample_size:
@@ -18,13 +26,22 @@ def process_csv(file_path, sample_size=DEFAULT_CSV_SAMPLE_SIZE, seed=DEFAULT_SEE
             footer = f"\n\n-- [CSV truncated: Showing random {sample_size} rows to save context] --"
         else:
             footer = ""
-        return f"#### [Sample - Random {sample_size} rows]\n" + df.to_markdown(index=False) + footer
+        return (
+            f"#### [Sample - Random {sample_size} rows]\n"
+            + df.to_markdown(index=False)
+            + footer
+        )
+    except pd.errors.EmptyDataError:
+        return "*Note: CSV file is empty.*"
     except Exception as e:
         return f"Error reading CSV: {e}"
-    
-def process_notebook(file_path, max_lines=DEFAULT_MAX_LINES):
+
+
+def process_notebook(
+    file_path: Union[str, Path], max_lines: int = DEFAULT_MAX_LINES
+) -> str:
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             nb = json.load(f)
         output_md = []
         
@@ -67,10 +84,17 @@ def process_notebook(file_path, max_lines=DEFAULT_MAX_LINES):
             output_md.append("\n---\n") # Visual separator between cells
             
         return "\n\n".join(output_md)
+    except json.JSONDecodeError:
+        return "*Error: Malformed Jupyter Notebook (Invalid JSON).*"
     except Exception as e:
         return f"Error processing notebook: {e}"
 
-def process_sql(file_path, sample_size=DEFAULT_SQL_SAMPLE_SIZE, max_lines=DEFAULT_SQL_MAX_LINES):
+
+def process_sql(
+    file_path: Union[str, Path],
+    sample_size: int = DEFAULT_SQL_SAMPLE_SIZE,
+    max_lines: int = DEFAULT_SQL_MAX_LINES,
+) -> str:
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
@@ -116,7 +140,11 @@ def process_sql(file_path, sample_size=DEFAULT_SQL_SAMPLE_SIZE, max_lines=DEFAUL
     except Exception as e:
         return f"⚠️ Error reading SQL: {e}"
 
-def process_excel(file_path, max_rows=DEFAULT_CSV_SAMPLE_SIZE, max_sheets=DEFAULT_MAX_SHEETS):
+def process_excel(
+    file_path: Union[str, Path],
+    max_rows: int = DEFAULT_CSV_SAMPLE_SIZE,
+    max_sheets: int = DEFAULT_MAX_SHEETS,
+) -> Tuple[str, int]:
     try:
         # 1. Sheet Discovery & Visual Element Check using openpyxl
         wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)

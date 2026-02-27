@@ -1,10 +1,14 @@
 import os
 import sys
+from pathlib import Path
+from typing import List, Union
+
 import tiktoken
-import tiktoken
+
 from .ui import ui
 
-def count_tokens(text, encoding_name="o200k_base"):
+
+def count_tokens(text: str, encoding_name: str = "o200k_base") -> int:
     """Returns the number of tokens in a text string."""
     try:
         encoding = tiktoken.get_encoding(encoding_name)
@@ -13,16 +17,19 @@ def count_tokens(text, encoding_name="o200k_base"):
     except Exception:
         return 0
 
-def is_binary(file_path):
+def is_binary(file_path: Union[str, Path]) -> bool:
     """Check if a file is binary by looking for a Null byte in the first 1024 bytes."""
     try:
-        with open(file_path, 'rb') as f:
+        with open(file_path, "rb") as f:
             chunk = f.read(1024)
-            return b'\0' in chunk
-    except Exception:
+            return b"\0" in chunk
+    except OSError:
         return False
 
-def generate_tree(startpath, ignore_folders, ignore_files):
+
+def generate_tree(
+    startpath: Union[str, Path], ignore_folders: List[str], ignore_files: List[str]
+) -> str:
     tree = []
     for root, dirs, files in os.walk(startpath):
         dirs[:] = [d for d in dirs if d not in ignore_folders]
@@ -35,7 +42,7 @@ def generate_tree(startpath, ignore_folders, ignore_files):
                 tree.append(f"{sub_indent}📄 {f}")
     return "\n".join(tree)
 
-def load_ignore_file(directory):
+def load_ignore_file(directory: Union[str, Path]) -> List[str]:
     """
     Looks for a .data2promptignore file in the given directory.
     Returns a list of patterns to ignore, excluding comments and empty lines.

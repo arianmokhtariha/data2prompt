@@ -1,4 +1,6 @@
 import argparse
+from argparse import Namespace
+
 from .constants import (
     CORE_IGNORES,
     CORE_IGNORE_FILES,
@@ -13,10 +15,13 @@ from .constants import (
     DEFAULT_OUTPUT_FILE
 )
 
-def setup_cli():
-    """
-    Configures the Command Line Interface (CLI) for the tool.
+def setup_cli() -> Namespace:
+    """Configures the Command Line Interface (CLI) for the tool.
+
     Defines all available flags and their help descriptions.
+
+    Returns:
+        argparse.Namespace: An object containing the merged user and core configurations.
     """
     parser = argparse.ArgumentParser(
         description="📊 Data2Prompt: High-tech prompt packaging for Data Scientists."

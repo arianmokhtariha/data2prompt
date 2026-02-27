@@ -1,46 +1,57 @@
-from rich.console import Console, Group
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from rich.table import Table
-from rich.panel import Panel
 from contextlib import contextmanager
+from typing import Any, Dict, Generator, List
+
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
+from rich.table import Table
+
 
 class UIHandler:
     """
     Handles all Terminal User Interface (TUI) logic for Data2Prompt.
     Encapsulates Rich-based display components, formatting, and progress tracking.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         self.console = Console()
 
-    def print_header(self):
+    def print_header(self) -> None:
         """Displays the application header."""
         header = "📊 DATA PROJECT -> LLM PROMPT PACKAGER 📊"
         self.console.print(Panel(header, style="bold blue", expand=False))
 
-    def print_step(self, step_num, message):
+    def print_step(self, step_num: int, message: str) -> None:
         """Displays a formatted step message."""
         self.console.print(f"\n[bold blue]Step {step_num}: {message}[/bold blue]")
 
     @contextmanager
-    def status(self, message):
+    def status(self, message: str) -> Generator[Any, None, None]:
         """Context manager for showing a status spinner."""
         with self.console.status(f"[bold green]{message}"):
             yield
 
     @contextmanager
-    def progress_bar(self, description, total):
+    def progress_bar(
+        self, description: str, total: int
+    ) -> Generator[Any, None, None]:
         """Context manager for showing a progress bar."""
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TaskProgressColumn(),
-            console=self.console
+            console=self.console,
         ) as progress:
             task = progress.add_task(description, total=total)
             yield progress, task
 
-    def print_summary_table(self, processed_files_info):
+    def print_summary_table(self, processed_files_info: List[Dict[str, Any]]) -> None:
         """Displays a summary table of all processed files."""
         table = Table(title="Processing Summary", show_header=True, header_style="bold magenta")
         table.add_column("File Name", style="cyan")
@@ -61,7 +72,13 @@ class UIHandler:
             )
         self.console.print(table)
 
-    def print_success_panel(self, output_path, file_size_kb, total_tokens, stats):
+    def print_success_panel(
+        self,
+        output_path: str,
+        file_size_kb: float,
+        total_tokens: int,
+        stats: Dict[str, int],
+    ) -> None:
         """Displays the final success panel with project statistics."""
         stats_grid = Table.grid(padding=(0, 1))
         stats_grid.add_row("📂", f"Total Files: [bold]{stats.get('file_count', 0)}[/bold]")
@@ -82,18 +99,15 @@ class UIHandler:
         )
         self.console.print(success_panel)
 
-    def print_warning_panel(self, message):
+    def print_warning_panel(self, message: str) -> None:
         """Displays a warning message in a panel."""
-        self.console.print(Panel(
-            message,
-            border_style="yellow"
-        ))
+        self.console.print(Panel(message, border_style="yellow"))
 
-    def print_warning(self, message):
+    def print_warning(self, message: str) -> None:
         """Displays a simple warning message."""
         self.console.print(f"[yellow]⚠️  Warning: {message}[/yellow]")
 
-    def print_error(self, message):
+    def print_error(self, message: str) -> None:
         """Displays an error message."""
         self.console.print(f"[red]❌ Error: {message}[/red]")
 
