@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .cli import setup_cli
 from .parsers import process_csv, process_notebook, process_sql, process_excel
-from .utils import is_binary, generate_tree, print_header, get_status_msg, count_tokens
+from .utils import is_binary, generate_tree, print_header, get_status_msg, count_tokens, load_ignore_file
 from .constants import GENERATION_FLAG
 
 def run_packager():
@@ -17,6 +17,14 @@ def run_packager():
     
     print_header()
     project_path = os.getcwd()
+
+    # Load project-specific ignores from .data2promptignore
+    project_ignores = load_ignore_file(project_path)
+    
+    # Merge project-specific ignores into the existing ignore lists
+    # We treat these as both folder and file ignores for maximum coverage
+    args.ignore_folders = list(set(args.ignore_folders) | set(project_ignores))
+    args.ignore_files = list(set(args.ignore_files) | set(project_ignores))
     
     # 1. Build the Header with Metadata
     md_content = [
