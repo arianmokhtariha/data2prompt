@@ -1,6 +1,8 @@
 import os
 import sys
 import tiktoken
+import tiktoken
+from .ui import ui
 
 def count_tokens(text, encoding_name="o200k_base"):
     """Returns the number of tokens in a text string."""
@@ -10,18 +12,6 @@ def count_tokens(text, encoding_name="o200k_base"):
         return num_tokens
     except Exception:
         return 0
-
-def print_header():
-    header = """
-    ==============================================
-        📊 DATA PROJECT -> LLM PROMPT PACKAGER 📊
-    ==============================================
-    """
-    print(header)
-
-def get_status_msg(file_path, file_count):
-    sys.stdout.write(f"\r[#{file_count}] Processing: {file_path[:50]}...".ljust(70))
-    sys.stdout.flush()
 
 def is_binary(file_path):
     """Check if a file is binary by looking for a Null byte in the first 1024 bytes."""
@@ -65,6 +55,6 @@ def load_ignore_file(directory):
                     pattern = line.rstrip('/')
                     ignore_list.append(pattern)
         except Exception as e:
-            print(f"⚠️  Warning: Could not read .data2promptignore: {e}")
+            ui.print_warning(f"Could not read .data2promptignore: {e}")
             
     return ignore_list
