@@ -1,6 +1,7 @@
 import json
+import random
 from pathlib import Path
-from typing import Tuple, Union
+from typing import List, Tuple, Union
 
 import openpyxl
 import pandas as pd
@@ -94,47 +95,74 @@ def process_sql(
     file_path: Union[str, Path],
     sample_size: int = DEFAULT_SQL_SAMPLE_SIZE,
     max_lines: int = DEFAULT_SQL_MAX_LINES,
+    seed: int = DEFAULT_SEED,
 ) -> str:
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
         
         processed_lines = []
-        table_row_count = 0
-        is_truncated = False
-        
+        table_data_buffer: List[str] = []
+        in_create_block = False
+        rng = random.Random(seed)
+
+        def flush_buffer():
+            if not table_data_buffer:
+                return
+            
+            if len(table_data_buffer) > sample_size:
+                # Randomly sample indices to maintain relative order
+                indices = sorted(rng.sample(range(len(table_data_buffer)), sample_size))
+                for idx in indices:
+                    processed_lines.append(table_data_buffer[idx])
+                processed_lines.append(f"-- [Table data truncated: Showing random {sample_size} rows to save context] --\n")
+            else:
+                processed_lines.extend(table_data_buffer)
+            table_data_buffer.clear()
+
         for line in lines:
             line_upper = line.upper()
+            line_stripped = line.strip()
             
-            # 1. Detect New Table (Reset Counter)
+            # 1. Detect New Table (Flush Buffer & Start Block)
             if "CREATE TABLE" in line_upper or "BEGIN TABLE" in line_upper:
-                table_row_count = 0
-                is_truncated = False
+                flush_buffer()
+                in_create_block = True
                 processed_lines.append(line)
                 continue
 
-            # 2. Handle Inserts and Data Rows (Sample per table)
+            # 2. Handle Inserts and Data Rows (Buffer per table)
             is_insert = "INSERT INTO" in line_upper
-            is_data_row = line.strip().startswith("(")
+            is_data_row = line_stripped.startswith("(") or line_stripped.startswith(", (")
             
             if is_insert or is_data_row:
-                if table_row_count < sample_size:
-                    processed_lines.append(line)
-                    table_row_count += 1
-                elif not is_truncated:
-                    processed_lines.append(f"-- [Table data truncated: Showing first {sample_size} rows to save context] --\n")
-                    is_truncated = True
+                in_create_block = False # Data rows mean we are out of the CREATE block
+                table_data_buffer.append(line)
                 continue
             
-            # 3. Keep other schema keywords
+            # 3. Keep other schema keywords (Flush Buffer first)
             schema_keywords = ["ALTER ", "CONSTRAINT ", "VIEW ", "DROP ", "INDEX ", "TABLE "]
             if any(kw in line_upper for kw in schema_keywords):
+                flush_buffer()
+                in_create_block = False
                 processed_lines.append(line)
                 continue
-                
-            # 4. Keep other lines (comments, setup) up to the max_lines limit
-            if len(processed_lines) < max_lines:
+            
+            # 4. End of CREATE block detection (closing parenthesis at start of line)
+            if in_create_block and line_stripped.startswith(")") and (line_stripped.endswith(";") or "ENGINE" in line_upper):
                 processed_lines.append(line)
+                in_create_block = False
+                continue
+
+            # 5. Keep lines if inside CREATE block OR under max_lines limit
+            if in_create_block:
+                processed_lines.append(line)
+            elif len(processed_lines) < max_lines:
+                flush_buffer() # Ensure data is flushed before adding more non-data lines
+                processed_lines.append(line)
+        
+        # Final flush for the last table
+        flush_buffer()
         
         return "```sql\n" + "".join(processed_lines) + "\n```"
     except Exception as e:
@@ -144,6 +172,7 @@ def process_excel(
     file_path: Union[str, Path],
     max_rows: int = DEFAULT_CSV_SAMPLE_SIZE,
     max_sheets: int = DEFAULT_MAX_SHEETS,
+    seed: int = DEFAULT_SEED,
 ) -> Tuple[str, int]:
     try:
         # 1. Sheet Discovery & Visual Element Check using openpyxl
@@ -185,13 +214,15 @@ def process_excel(
                 else:
                     # 3. Sampling (The Safety Guard)
                     if len(df) > max_rows:
-                        df = df.head(max_rows)
-                        footer = f"\n\n-- [Sheet truncated: Showing first {max_rows} rows to save context] --"
+                        df = df.sample(n=max_rows, random_state=seed)
+                        footer = f"\n\n-- [Sheet truncated: Showing random {max_rows} rows to save context] --"
+                        header = f"#### [Sample - Random {max_rows} rows]\n"
                     else:
                         footer = ""
+                        header = ""
                     
                     markdown_data = df.to_markdown(index=False)
-                    output_md.append(markdown_data)
+                    output_md.append(header + markdown_data)
                     if footer:
                         output_md.append(footer)
             except Exception as e:

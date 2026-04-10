@@ -39,29 +39,33 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
         content = process_csv(file_path, args.csv_sample_size, args.seed)
         result["content"] = content
         result["stats_update"]["csv_count"] = 1
-        result["tokens"] = count_tokens(content)
+        tokens, _ = count_tokens(content)
+        result["tokens"] = tokens
         result["type"] = "CSV"
         result["status"] = "Sampled"
     elif ext == '.ipynb':
         content = process_notebook(file_path, args.max_lines)
         result["content"] = content
         result["stats_update"]["notebook_count"] = 1
-        result["tokens"] = count_tokens(content)
+        tokens, _ = count_tokens(content)
+        result["tokens"] = tokens
         result["type"] = "Notebook"
         result["status"] = "Cleaned"
     elif ext == '.sql':
-        content = process_sql(file_path, args.sql_sample_size, args.sql_max_lines)
+        content = process_sql(file_path, args.sql_sample_size, args.sql_max_lines, args.seed)
         result["content"] = content
         result["stats_update"]["sql_count"] = 1
-        result["tokens"] = count_tokens(content)
+        tokens, _ = count_tokens(content)
+        result["tokens"] = tokens
         result["type"] = "SQL"
         result["status"] = "Parsed"
     elif ext in ['.xlsx', '.xls']:
-        excel_md, sheet_count = process_excel(file_path, args.csv_sample_size, args.max_sheets)
+        excel_md, sheet_count = process_excel(file_path, args.csv_sample_size, args.max_sheets, args.seed)
         result["content"] = excel_md
         result["stats_update"]["excel_count"] = 1
         result["stats_update"]["excel_sheets_count"] = sheet_count
-        result["tokens"] = count_tokens(excel_md)
+        tokens, _ = count_tokens(excel_md)
+        result["tokens"] = tokens
         result["type"] = f"Excel ({sheet_count} sheets)"
         result["status"] = "Extracted"
     elif ext == '.md':
@@ -87,13 +91,15 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
                         header_content = f.read(10 * 1024)
                         result["content"] = f"```{lang}\n{header_content}\n```"
                         result["content"] += f"\n-- [File truncated: Showing first 10KB because it exceeds the size limit ({args.max_file_size}KB) to save context] --\n"
-                        result["tokens"] = count_tokens(result["content"])
+                        tokens, _ = count_tokens(result["content"])
+                        result["tokens"] = tokens
                         result["status"] = "Truncated"
                 else:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         file_text = f.read()
                         result["content"] = f"```{lang}\n{file_text}\n```"
-                        result["tokens"] = count_tokens(result["content"])
+                        tokens, _ = count_tokens(result["content"])
+                        result["tokens"] = tokens
             except Exception:
                 result["content"] = "*Could not read file.*"
                 result["status"] = "Error"
@@ -121,11 +127,11 @@ def run_packager():
     # 1. Build the Header with Metadata
     md_content = [
         f"<!-- {GENERATION_FLAG} -->",
-        f"# 📊 Project Context: {project_path.name}",
+        f"# Project Context: {project_path.name}",
         f"> This document provides a structured context of the project's codebase and data schema.",
-        f"> It is optimized for LLMs to understand the project structure, file contents, and data formats efficiently.\n",
+        f"> It is optimized for LLMs to understand the project structure, file contents, and data formats efficiently.",
         f"> Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
-        f"> Settings: CSV Sample={args.csv_sample_size}, SQL Sample={args.sql_sample_size}, Line Limit={args.max_lines}, Seed={args.seed}\n"
+        ""  # Blank line for spacing
     ]
     
     with ui.status("Generating project tree structure..."):
@@ -135,7 +141,7 @@ def run_packager():
         md_content.append(tree_text)
         md_content.append("```\n---\n")
     
-    ui.print_step(2, "🛠 Analyzing and Extracting Project Data...")
+    ui.print_step("Analyzing and Extracting Project Data...")
     
     # Collect all files first to set progress bar total
     all_files = []
@@ -190,14 +196,16 @@ def run_packager():
             md_content.append("\n---\n")
             progress.advance(task)
 
-    ui.print_step(3, f"💾 Saving to {args.output}...")
+    ui.print_step("Extraction complete.")
+    ui.print_step(f"Saving to {args.output}")
     
     # Calculate tokens before final save
     full_content_temp = "\n".join(md_content)
-    total_tokens = count_tokens(full_content_temp)
+    total_tokens, method = count_tokens(full_content_temp)
     
-    # Insert token count into the header (after settings line)
-    md_content.insert(6, f"> Tokens: {total_tokens} (est. via o200k_base)\n")
+    # Insert token count into the header (after generated on line)
+    method_label = "o200k_base" if method == "o200k_base" else "regex_fallback" if method == "regex_fallback" else "word_count"
+    md_content.insert(5, f"> Tokens: {total_tokens} (est. via {method_label})")
     
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write("\n".join(md_content))
@@ -205,16 +213,13 @@ def run_packager():
     # Final File Size Check
     file_size_kb = Path(args.output).stat().st_size / 1024
     
-    # Display Summary Table
-    ui.print_summary_table(processed_files_info)
-
-    # Final Success Panel
-    ui.print_success_panel(args.output, file_size_kb, total_tokens, stats)
+    # Display Final Report (Interactive Summary + Success Panel)
+    ui.print_final_report(processed_files_info, args.output, file_size_kb, total_tokens, stats, method)
     
     if file_size_kb > 2000:
         ui.print_warning_panel(
-            "⚠️  [bold yellow]WARNING:[/bold yellow] File is over 2MB. This might be too large for some context windows.\n"
-            "💡 [bold cyan]Suggestion:[/bold cyan] Reduce --csv-sample-size, --sql-sample-size or --max-lines."
+            "[bold yellow]WARNING:[/bold yellow] File is over 2MB. This might be too large for some context windows.\n"
+            "[bold cyan]Suggestion:[/bold cyan] Reduce --csv-sample-size, --sql-sample-size or --max-lines."
         )
 
 if __name__ == "__main__":

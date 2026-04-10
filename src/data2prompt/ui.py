@@ -1,7 +1,12 @@
+import random
+import sys
+import time
 from contextlib import contextmanager
 from typing import Any, Dict, Generator, List
 
+from rich.color import Color
 from rich.console import Console, Group
+from rich.live import Live
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -10,7 +15,16 @@ from rich.progress import (
     TaskProgressColumn,
     TextColumn,
 )
+from rich.style import Style
 from rich.table import Table
+from rich.text import Text
+
+from data2prompt.constants import (
+    ANIMATION_FRAME_DELAY,
+    MATRIX_DARK_GREEN,
+    MATRIX_NEON_GREEN,
+    STARTUP_ANIMATION_DURATION,
+)
 
 
 class UIHandler:
@@ -20,49 +34,122 @@ class UIHandler:
     """
     def __init__(self) -> None:
         self.console = Console()
+        self._ascii_art: List[str] = [
+            "                                                                                                                   ",
+            "  ██╗      ██████╗   █████╗  ████████╗  █████╗  ██████╗  ██████╗  ██████╗   ██████╗  ███╗   ███╗ ██████╗  ████████╗",
+            "  ╚██╗     ██╔══██╗ ██╔══██╗ ╚══██╔══╝ ██╔══██╗ ╚════██╗ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ████╗ ████║ ██╔══██╗ ╚══██╔══╝",
+            "   ╚██╗    ██║  ██║ ███████║    ██║    ███████║  █████╔╝ ██████╔╝ ██████╔╝ ██║   ██║ ██╔████╔██║ ██████╔╝    ██║   ",
+            "   ██╔╝    ██║  ██║ ██╔══██║    ██║    ██╔══██║ ██╔═══╝  ██╔═══╝  ██╔══██╗ ██║   ██║ ██║╚██╔╝██║ ██╔═══╝     ██║   ",
+            "  ██╔╝     ██████╔╝ ██║  ██║    ██║    ██║  ██║ ███████╗ ██║      ██║  ██║ ╚██████╔╝ ██║ ╚═╝ ██║ ██║         ██║   ",
+            "  ╚═╝      ╚═════╝  ╚═╝  ╚═╝    ╚═╝    ╚═╝  ╚═╝ ╚══════╝ ╚═╝      ╚═╝  ╚═╝  ╚═════╝  ╚═╝     ╚═╝ ╚═╝         ╚═╝   "
+        ]
+
+    def _get_matrix_color(self, t: float) -> Color:
+        """Calculates a color for a linear gradient between dark and neon green."""
+        r = int(MATRIX_DARK_GREEN[0] + (MATRIX_NEON_GREEN[0] - MATRIX_DARK_GREEN[0]) * t)
+        g = int(MATRIX_DARK_GREEN[1] + (MATRIX_NEON_GREEN[1] - MATRIX_DARK_GREEN[1]) * t)
+        b = int(MATRIX_DARK_GREEN[2] + (MATRIX_NEON_GREEN[2] - MATRIX_DARK_GREEN[2]) * t)
+        return Color.from_rgb(r, g, b)
+
+    def _generate_matrix_frame(self, width: int, height: int) -> Text:
+        """Generates a single frame of random binary/hex characters."""
+        chars = "0123456789ABCDEF"
+        lines = []
+        for _ in range(height):
+            line = "".join(random.choice(chars) if random.random() > 0.5 else str(random.randint(0, 1)) for _ in range(width))
+            lines.append(line)
+        
+        return Text("\n".join(lines), style=Style(color=Color.from_rgb(*MATRIX_DARK_GREEN), dim=True))
 
     def print_header(self) -> None:
-        """Displays the application header."""
-        header = "📊 DATA PROJECT -> LLM PROMPT PACKAGER 📊"
-        self.console.print(Panel(header, style="bold blue", expand=False))
+        """Displays the application header with a Matrix decryption animation."""
+        max_width = max(len(line) for line in self._ascii_art)
+        height = len(self._ascii_art)
+        
+        start_time = time.time()
+        with Live(self._generate_matrix_frame(max_width, height), refresh_per_second=20, console=self.console) as live:
+            while time.time() - start_time < STARTUP_ANIMATION_DURATION:
+                live.update(self._generate_matrix_frame(max_width, height))
+                time.sleep(ANIMATION_FRAME_DELAY)
+            
+            # Final reveal with gradient
+            final_text = Text()
+            for y, line in enumerate(self._ascii_art):
+                row_text = Text()
+                t_y = y / (height - 1) if height > 1 else 0
+                for x, char in enumerate(line):
+                    t_x = x / (max_width - 1) if max_width > 1 else 0
+                    # Use a combination of x and y for the gradient
+                    t = (t_x + t_y) / 2
+                    color = self._get_matrix_color(t)
+                    row_text.append(char, style=Style(color=color, bold=True))
+                final_text.append(row_text)
+                if y < height - 1:
+                    final_text.append("\n")
+            
+            live.update(final_text)
+        
 
-    def print_step(self, step_num: int, message: str) -> None:
+    def print_step(self, message: str) -> None:
         """Displays a formatted step message."""
-        self.console.print(f"\n[bold blue]Step {step_num}: {message}[/bold blue]")
+        self.console.print(f"\n[bold green]>[/bold green] [bold green]{message}[/bold green]")
 
     @contextmanager
     def status(self, message: str) -> Generator[Any, None, None]:
-        """Context manager for showing a status spinner."""
-        with self.console.status(f"[bold green]{message}"):
+        """Context manager for showing a status spinner with a tech-focused animation."""
+        # Use 'dots12' as a reliable, tech-focused built-in spinner
+        with self.console.status(Text(message, style="bold green"), spinner="dots12", spinner_style="bold green"):
             yield
 
     @contextmanager
     def progress_bar(
         self, description: str, total: int
     ) -> Generator[Any, None, None]:
-        """Context manager for showing a progress bar."""
+        """Context manager for showing a hacker-style progress bar."""
         with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
+            SpinnerColumn(spinner_name="dots12", style="bold green"),
+            TextColumn("[progress.description]{task.description}", style="bold green"),
+            TextColumn("[bold green]\n[/bold green]"),
+            BarColumn(bar_width=None, style="dim green", complete_style="bold green", finished_style="bold green"),
+            TextColumn("[bold green]][/bold green]"),
+            TaskProgressColumn(style="bold yellow"),
             console=self.console,
         ) as progress:
+            # We use a custom task to ensure the bar looks like [█████]
+            # Rich's BarColumn doesn't easily support custom brackets in the constructor,
+            # but we can achieve the look by styling the BarColumn and surrounding it with TextColumns.
             task = progress.add_task(description, total=total)
             yield progress, task
 
-    def print_summary_table(self, processed_files_info: List[Dict[str, Any]]) -> None:
-        """Displays a summary table of all processed files."""
-        table = Table(title="Processing Summary", show_header=True, header_style="bold magenta")
-        table.add_column("File Name", style="cyan")
-        table.add_column("Type", style="green")
-        table.add_column("Tokens", justify="right", style="yellow")
-        table.add_column("Status", style="bold")
+    def print_final_report(
+        self,
+        processed_files_info: List[Dict[str, Any]],
+        output_path: str,
+        file_size_kb: float,
+        total_tokens: int,
+        stats: Dict[str, int],
+        method: str = "o200k_base",
+    ) -> None:
+        """Displays the final report including the success panel and an interactive summary table."""
+        # 1. Build the Summary Table
+        table = Table(
+            show_header=True,
+            header_style="bold green",
+            border_style="dim green",
+            box=None,
+            padding=(0, 2),
+            collapse_padding=True,
+            pad_edge=False
+        )
+        table.add_column("FILE_PATH", style="green", no_wrap=True)
+        table.add_column("TYPE", style="green")
+        table.add_column("TOKENS", justify="right", style="bold yellow")
+        table.add_column("STATUS", style="bold")
 
         for info in processed_files_info:
             status = info.get("status", "Unknown")
-            status_color = "green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
-                           "yellow" if status in ["Truncated", "Skipped (Binary)"] else "red"
+            status_color = "bold green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
+                           "bold yellow" if status in ["Truncated", "Skipped (Binary)"] else "bold red"
             
             table.add_row(
                 info.get("name", "Unknown"),
@@ -70,46 +157,172 @@ class UIHandler:
                 f"{info.get('tokens', 0):,}",
                 f"[{status_color}]{status}[/{status_color}]"
             )
-        self.console.print(table)
 
-    def print_success_panel(
-        self,
-        output_path: str,
-        file_size_kb: float,
-        total_tokens: int,
-        stats: Dict[str, int],
-    ) -> None:
-        """Displays the final success panel with project statistics."""
+        # 2. Build the Success Panel
         stats_grid = Table.grid(padding=(0, 1))
-        stats_grid.add_row("📂", f"Total Files: [bold]{stats.get('file_count', 0)}[/bold]")
-        stats_grid.add_row("📊", f"CSVs Sampled: [bold]{stats.get('csv_count', 0)}[/bold]")
-        stats_grid.add_row("📓", f"Notebooks Cleaned: [bold]{stats.get('notebook_count', 0)}[/bold]")
-        stats_grid.add_row("💾", f"SQL Scripts Parsed: [bold]{stats.get('sql_count', 0)}[/bold]")
-        stats_grid.add_row("📈", f"Excel Files Handled: [bold]{stats.get('excel_count', 0)}[/bold] ({stats.get('excel_sheets_count', 0)} sheets)")
+        stats_grid.add_row("[green]>[/green]", f"TOTAL_FILES: [bold green]{stats.get('file_count', 0)}[/bold green]")
 
+        if stats.get("csv_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"CSV_SAMPLED: [bold green]{stats.get('csv_count', 0)}[/bold green]")
+
+        if stats.get("notebook_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"IPYNB_CLEAN: [bold green]{stats.get('notebook_count', 0)}[/bold green]")
+
+        if stats.get("sql_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"SQL_PARSED:  [bold green]{stats.get('sql_count', 0)}[/bold green]")
+
+        if stats.get("excel_count", 0) > 0:
+            stats_grid.add_row(
+                "[green]>[/green]",
+                f"XLSX_HANDLED: [bold green]{stats.get('excel_count', 0)}[/bold green] ({stats.get('excel_sheets_count', 0)} sheets)",
+            )
+
+        method_label = method.upper()
         success_panel = Panel(
             Group(
-                f"✅ [bold green]DONE![/bold green] Created: [bold]{output_path}[/bold] ({file_size_kb:.1f} KB)",
-                f"Tokens: [bold yellow]{total_tokens:,}[/bold yellow] (est. via o200k_base)",
+                f"[bold green]COMPILATION COMPLETE[/bold green]",
+                f"PATH: [bold white]{output_path}[/bold white] ({file_size_kb:.1f} KB)",
+                f"LOAD: [bold yellow]{total_tokens:,}[/bold yellow] TOKENS (via {method_label})",
                 "",
                 stats_grid
             ),
-            border_style="green",
-            title="Success"
+            border_style="bold green",
+            title="[bold green]SCAN SUMMARY[/bold green]"
+                            )
+
+        # 3. Interactive Logic
+        # Recreate the header for the interactive screen
+        max_width = max(len(line) for line in self._ascii_art)
+        height = len(self._ascii_art)
+        header_text = Text()
+        for y, line in enumerate(self._ascii_art):
+            row_text = Text()
+            t_y = y / (height - 1) if height > 1 else 0
+            for x, char in enumerate(line):
+                t_x = x / (max_width - 1) if max_width > 1 else 0
+                t = (t_x + t_y) / 2
+                color = self._get_matrix_color(t)
+                row_text.append(char, style=Style(color=color, bold=True))
+            header_text.append(row_text)
+            if y < height - 1:
+                header_text.append("\n")
+
+        # Recreate the final steps for the interactive screen
+        steps_group = Group(
+            Text.from_markup(f"\n[bold green]>[/bold green] [bold green]Extraction complete.[/bold green]"),
+            Text.from_markup(f"\n[bold green]>[/bold green] [bold green]Saving to {output_path}[/bold green]\n")
         )
-        self.console.print(success_panel)
+
+        # If not on Windows or not in a TTY, just print everything and move on
+        if not sys.stdin.isatty() or sys.platform != "win32":
+            self.console.print(success_panel)
+            self.console.print(Panel(table, border_style="bold green", title="[bold green]SCAN LIST[/bold green]", padding=(0, 1)))
+            return
+
+        import msvcrt
+        scroll_offset = 0
+
+        # Calculate summary height for layout stability (Header + Steps + Summary)
+        # Header is ~7 lines, Steps are ~3 lines, Summary is variable
+        stats_rows = 1 # TOTAL_FILES
+        if stats.get("csv_count", 0) > 0: stats_rows += 1
+        if stats.get("notebook_count", 0) > 0: stats_rows += 1
+        if stats.get("sql_count", 0) > 0: stats_rows += 1
+        if stats.get("excel_count", 0) > 0: stats_rows += 1
+        summary_height = 6 + stats_rows
+
+        def get_scan_list_panel(offset: int, v_height: int) -> Panel:
+            """Generates the renderable panel based on scroll offset and viewport height."""
+            viewport_table = Table(
+                show_header=True,
+                header_style="bold green",
+                border_style="dim green",
+                box=None,
+                padding=(0, 2),
+                collapse_padding=True,
+                pad_edge=False
+            )
+            for col in table.columns:
+                viewport_table.add_column(col.header, style=col.style, justify=col.justify)
+            
+            for info in processed_files_info[offset : offset + v_height]:
+                status = info.get("status", "Unknown")
+                status_color = "bold green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
+                               "bold yellow" if status in ["Truncated", "Skipped (Binary)"] else "bold red"
+                
+                viewport_table.add_row(
+                    info.get("name", "Unknown"),
+                    info.get("type", "Unknown"),
+                    f"{info.get('tokens', 0):,}",
+                    f"[{status_color}]{status}[/{status_color}]"
+                )
+            
+            instruction = Text("Use Arrow Up/Down to scroll, 'q' to exit", style="dim green")
+            return Panel(
+                Group(viewport_table, "", instruction),
+                border_style="bold green",
+                title="[bold green]SCAN LIST[/bold green]",
+                padding=(0, 1),
+                height=v_height + 5
+            )
+
+        try:
+            # Use screen=True for absolute stability on Windows during rapid resize.
+            # This prevents the "duplicate rendering" artifact seen in standard buffer.
+            with Live(None, console=self.console, auto_refresh=False, screen=True) as live:
+                while True:
+                    # Dynamically calculate viewport based on current terminal height
+                    console_height = live.console.height
+                    
+                    # Header (7) + Steps (3) + Summary (summary_height) + List Borders/Padding (6)
+                    # We need to be more precise with the reserved height
+                    reserved_height = 7 + 4 + summary_height + 6
+                    v_height = max(2, console_height - reserved_height)
+                    
+                    max_offset = max(0, len(processed_files_info) - v_height)
+                    scroll_offset = min(scroll_offset, max_offset)
+                    
+                    # Update the live display with header, steps, and both panels
+                    current_list_panel = get_scan_list_panel(scroll_offset, v_height)
+                    live.update(Group(header_text, steps_group, success_panel, current_list_panel), refresh=True)
+
+                    if msvcrt.kbhit():
+                        key = msvcrt.getch()
+                        if key == b'\xe0':  # Arrow keys
+                            arrow = msvcrt.getch()
+                            if arrow == b'H':  # Up
+                                scroll_offset = max(0, scroll_offset - 1)
+                            elif arrow == b'P':  # Down
+                                scroll_offset = min(max_offset, scroll_offset + 1)
+                        elif key.lower() in [b'q', b'x']:  # Quit
+                            break
+                        elif key == b'\x03':  # Ctrl+C
+                            raise KeyboardInterrupt
+                    time.sleep(0.05)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Restore history by printing the final state to the standard buffer
+            # We only print the panels to avoid duplicating the header/steps already in the terminal history
+            self.console.print(success_panel)
+            self.console.print(Panel(table, border_style="bold green", title="[bold green]SCAN LIST[/bold green]", padding=(0, 1)))
 
     def print_warning_panel(self, message: str) -> None:
-        """Displays a warning message in a panel."""
-        self.console.print(Panel(message, border_style="yellow"))
+        """Displays a warning message in a hacker-style panel."""
+        self.console.print(Panel(
+            message,
+            border_style="bold yellow",
+            title="[bold yellow]SYSTEM_WARNING[/bold yellow]",
+            subtitle="[dim yellow]check_logs[/dim yellow]"
+        ))
 
     def print_warning(self, message: str) -> None:
-        """Displays a simple warning message."""
-        self.console.print(f"[yellow]⚠️  Warning: {message}[/yellow]")
+        """Displays a simple warning message with a hacker aesthetic."""
+        self.console.print(f"[bold yellow]![/bold yellow] [yellow]WARN: {message}[/yellow]")
 
     def print_error(self, message: str) -> None:
-        """Displays an error message."""
-        self.console.print(f"[red]❌ Error: {message}[/red]")
+        """Displays an error message with a hacker aesthetic."""
+        self.console.print(f"[bold red]![/bold red] [red]ERR_CRITICAL: {message}[/red]")
 
 # Global UI instance
 ui = UIHandler()
