@@ -24,6 +24,8 @@ from data2prompt.constants import (
     MATRIX_DARK_GREEN,
     MATRIX_NEON_GREEN,
     STARTUP_ANIMATION_DURATION,
+    SCROLL_THUMB,
+    SCROLL_TRACK,
 )
 
 
@@ -131,6 +133,9 @@ class UIHandler:
         method: str = "o200k_base",
     ) -> None:
         """Displays the final report including the success panel and an interactive summary table."""
+        # Sort files by tokens in descending order (Heaviest first)
+        processed_files_info.sort(key=lambda x: x.get("tokens", 0), reverse=True)
+
         # 1. Build the Summary Table
         table = Table(
             show_header=True,
@@ -257,9 +262,38 @@ class UIHandler:
                     f"[{status_color}]{status}[/{status_color}]"
                 )
             
+            # --- Scroll Bar Logic ---
+            total_items = len(processed_files_info)
+            visible_rows = min(v_height, total_items)
+            track_height = visible_rows + 1  # Header + visible rows
+            
+            if total_items > v_height:
+                thumb_size = max(1, int(track_height * (v_height / total_items)))
+                max_offset = total_items - v_height
+                # Proportional position
+                thumb_pos = int((track_height - thumb_size) * (offset / max_offset))
+            else:
+                thumb_size = track_height
+                thumb_pos = 0
+
+            scroll_bar = Text()
+            for i in range(track_height):
+                if thumb_pos <= i < thumb_pos + thumb_size:
+                    scroll_bar.append(SCROLL_THUMB, style="bold green")
+                else:
+                    scroll_bar.append(SCROLL_TRACK, style="dim green")
+                if i < track_height - 1:
+                    scroll_bar.append("\n")
+
+            # Create a grid to place the table and scroll bar side-by-side
+            grid = Table.grid(expand=True)
+            grid.add_column()  # Table column
+            grid.add_column(width=1)  # Scroll bar column
+            grid.add_row(viewport_table, scroll_bar)
+
             instruction = Text("Use Arrow Up/Down to scroll, 'q' to exit", style="dim green")
             return Panel(
-                Group(viewport_table, "", instruction),
+                Group(grid, "", instruction),
                 border_style="bold green",
                 title="[bold green]SCAN LIST[/bold green]",
                 padding=(0, 1),
