@@ -1,6 +1,14 @@
 import os
 import sys
+import warnings
+
+# Suppress known noisy warnings globally for a cleaner TUI experience
+# We do this before importing pandas to ensure the filters are in place
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
 import pandas as pd
+# Now that pandas is imported, we can reference its error types
+warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 from pathlib import Path
 from typing import Dict, Any
 from .cli import setup_cli
@@ -12,12 +20,12 @@ from .constants import GENERATION_FLAG
 def get_ui_action(ext: str, skip_exts: list[str]) -> str:
     """Determines the UI action string based on file extension."""
     if ext in skip_exts: return "Skipping"
-    elif ext == '.csv': return "Sampling CSV"
-    elif ext == '.ipynb': return "Cleaning Notebook"
-    elif ext == '.sql': return "Parsing SQL"
-    elif ext in ['.xlsx', '.xls']: return "Extracting Excel"
-    elif ext == '.md': return "Reading Markdown"
-    return "Reading File"
+    elif ext == '.csv': return "Sampling"
+    elif ext == '.ipynb': return "Cleaning"
+    elif ext == '.sql': return "Parsing"
+    elif ext in ['.xlsx', '.xls']: return "Extracting"
+    elif ext == '.md': return "Reading"
+    return "Reading"
 
 def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
     """Handles a single file and returns its content, tokens, and metadata."""
@@ -35,6 +43,7 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
         result["content"] = f"*Note: Binary/Heavy file ({ext}). Content skipped for brevity.*\n"
         result["status"] = "Skipped (Binary)"
         result["type"] = f"Binary ({ext})"
+        result["stats_update"]["binary_count"] = 1
     elif ext == '.csv':
         content = process_csv(file_path, args.csv_sample_size, args.seed)
         result["content"] = content
@@ -82,6 +91,7 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
         if is_binary(file_path):
             result["content"] = f"*Note: Binary content detected in {ext if ext else 'unknown'} file. Content skipped.*"
             result["status"] = "Skipped (Binary)"
+            result["stats_update"]["binary_count"] = 1
         else:
             file_size_kb = file_path.stat().st_size / 1024
             try:
@@ -94,6 +104,7 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
                         tokens, _ = count_tokens(result["content"])
                         result["tokens"] = tokens
                         result["status"] = "Truncated"
+                        result["stats_update"]["truncated_count"] = 1
                 else:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         file_text = f.read()
@@ -134,15 +145,6 @@ def run_packager():
         ""  # Blank line for spacing
     ]
     
-    with ui.status("Generating project tree structure..."):
-        md_content.append("## Project Structure")
-        md_content.append("```text")
-        tree_text = generate_tree(str(project_path), args.ignore_folders, args.ignore_files)
-        md_content.append(tree_text)
-        md_content.append("```\n---\n")
-    
-    ui.print_step("Analyzing and Extracting Project Data...")
-    
     # Collect all files first to set progress bar total
     all_files = []
     for root, dirs, files in os.walk(project_path):
@@ -158,21 +160,36 @@ def run_packager():
         "notebook_count": 0,
         "sql_count": 0,
         "excel_count": 0,
-        "excel_sheets_count": 0
+        "excel_sheets_count": 0,
+        "truncated_count": 0,
+        "binary_count": 0
     }
     
     # For the summary table
     processed_files_info = []
 
-    with ui.progress_bar("[cyan]Processing files...", total=len(all_files)) as (progress, task):
+    # Total steps: 1 (Tree) + N (Files) + 1 (Compiling)
+    total_steps = 1 + len(all_files) + 1
+    
+    with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as (progress, task):
+        # 1. Generating project tree
+        progress.update(task, description="[cyan]Generating project tree...[/cyan]")
+        md_content.append("## Project Structure")
+        md_content.append("```text")
+        tree_text = generate_tree(str(project_path), args.ignore_folders, args.ignore_files)
+        md_content.append(tree_text)
+        md_content.append("```\n---\n")
+        progress.advance(task)
+
+        # 2. Processing files
         for file_path in all_files:
             relative_path = file_path.relative_to(project_path)
             ext = file_path.suffix.lower()
             stats["file_count"] += 1
             
-            # Determine action for progress bar
+            # Determine action for progress bar - show only filename
             action = get_ui_action(ext, args.skip_exts)
-            progress.update(task, description=f"[cyan]{action}: [bold]{relative_path}[/bold]")
+            progress.update(task, description=f"[cyan]{action}[/cyan] [bold]{file_path.name}[/bold] [cyan]...[/cyan]")
             
             result = process_target_file(file_path, args)
             if result.get("skip_file"):
@@ -196,19 +213,19 @@ def run_packager():
             md_content.append("\n---\n")
             progress.advance(task)
 
-    ui.print_step("Extraction complete.")
-    ui.print_step(f"Saving to {args.output}")
-    
-    # Calculate tokens before final save
-    full_content_temp = "\n".join(md_content)
-    total_tokens, method = count_tokens(full_content_temp)
-    
-    # Insert token count into the header (after generated on line)
-    method_label = "o200k_base" if method == "o200k_base" else "regex_fallback" if method == "regex_fallback" else "word_count"
-    md_content.insert(5, f"> Tokens: {total_tokens} (est. via {method_label})")
-    
-    with open(args.output, 'w', encoding='utf-8') as f:
-        f.write("\n".join(md_content))
+        # 3. Compiling project context
+        progress.update(task, description="[cyan]Compiling project context...[/cyan]")
+        # Calculate tokens before final save
+        full_content_temp = "\n".join(md_content)
+        total_tokens, method = count_tokens(full_content_temp)
+        
+        # Insert token count into the header (after generated on line)
+        method_label = "o200k_base" if method == "o200k_base" else "regex_fallback" if method == "regex_fallback" else "word_count"
+        md_content.insert(5, f"> Tokens: {total_tokens} (est. via {method_label})")
+        
+        with open(args.output, 'w', encoding='utf-8') as f:
+            f.write("\n".join(md_content))
+        progress.advance(task)
 
     # Final File Size Check
     file_size_kb = Path(args.output).stat().st_size / 1024

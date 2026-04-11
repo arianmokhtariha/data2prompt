@@ -4,7 +4,8 @@
 CORE_IGNORES = {
     '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
     'node_modules', '.idea', 'dist', 'build', '.mypy_cache',
-    '.pytest_cache', 'target', '.docker', '.aws', '.gcloud'
+    '.pytest_cache', 'target', '.docker', '.aws', '.gcloud',
+    '__MACOSX'
 }
 
 # Specific filenames that should be excluded from the entire process.
@@ -30,7 +31,7 @@ DEFAULT_SQL_MAX_LINES = 50             # Caps the total number of non-data lines
 DEFAULT_MAX_LINES = 55                 # Max lines of text output to keep per notebook cell.
 DEFAULT_MAX_SHEETS = 10                # Max number of sheets to process in Excel files.
 DEFAULT_SEED = 42                      # Random seed for consistent sampling.
-DEFAULT_MAX_FILE_SIZE_KB = 200         # maximum file size of unhandled type to keep enitrely (if file is larger than that only the first 10kb will be shown)
+DEFAULT_MAX_FILE_SIZE_KB = 70          # maximum file size of unhandled type to keep enitrely (if file is larger than that only the first 10kb will be shown)
 DEFAULT_OUTPUT_FILE = 'PROMPT.md'      # default .md file output name
 
 # A unique identifier added to the top of every generated Markdown file.

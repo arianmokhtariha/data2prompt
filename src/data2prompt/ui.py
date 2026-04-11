@@ -1,3 +1,4 @@
+import os
 import random
 import sys
 import time
@@ -11,10 +12,10 @@ from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
-    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
 )
+from rich.spinner import Spinner
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
@@ -92,10 +93,6 @@ class UIHandler:
             live.update(final_text)
         
 
-    def print_step(self, message: str) -> None:
-        """Displays a formatted step message."""
-        self.console.print(f"\n[bold green]>[/bold green] [bold green]{message}[/bold green]")
-
     @contextmanager
     def status(self, message: str) -> Generator[Any, None, None]:
         """Context manager for showing a status spinner with a tech-focused animation."""
@@ -107,20 +104,25 @@ class UIHandler:
     def progress_bar(
         self, description: str, total: int
     ) -> Generator[Any, None, None]:
-        """Context manager for showing a hacker-style progress bar."""
-        with Progress(
-            SpinnerColumn(spinner_name="dots12", style="bold green"),
-            TextColumn("[progress.description]{task.description}", style="bold green"),
-            TextColumn("[bold green]\n[/bold green]"),
+        """Context manager for showing a stable, two-line hacker-style progress bar."""
+        progress = Progress(
+            TextColumn("[bold green][[/bold green]"),
             BarColumn(bar_width=None, style="dim green", complete_style="bold green", finished_style="bold green"),
             TextColumn("[bold green]][/bold green]"),
             TaskProgressColumn(style="bold yellow"),
             console=self.console,
-        ) as progress:
-            # We use a custom task to ensure the bar looks like [█████]
-            # Rich's BarColumn doesn't easily support custom brackets in the constructor,
-            # but we can achieve the look by styling the BarColumn and surrounding it with TextColumns.
-            task = progress.add_task(description, total=total)
+        )
+        task = progress.add_task(description, total=total)
+        spinner = Spinner("dots12", style="bold green")
+
+        class ProgressGroup:
+            def __rich_console__(self, console: Console, options: Any) -> Generator[Any, None, None]:
+                curr_task = progress.tasks[0]
+                header_grid = Table.grid(padding=(0, 1))
+                header_grid.add_row(spinner, Text.from_markup(curr_task.description))
+                yield Group(header_grid, progress)
+
+        with Live(ProgressGroup(), console=self.console, transient=True, refresh_per_second=20):
             yield progress, task
 
     def print_final_report(
@@ -146,7 +148,7 @@ class UIHandler:
             collapse_padding=True,
             pad_edge=False
         )
-        table.add_column("FILE_PATH", style="green", no_wrap=True)
+        table.add_column("FILE_NAME", style="green", no_wrap=True)
         table.add_column("TYPE", style="green")
         table.add_column("TOKENS", justify="right", style="bold yellow")
         table.add_column("STATUS", style="bold")
@@ -157,7 +159,7 @@ class UIHandler:
                            "bold yellow" if status in ["Truncated", "Skipped (Binary)"] else "bold red"
             
             table.add_row(
-                info.get("name", "Unknown"),
+                os.path.basename(info.get("name", "Unknown")),
                 info.get("type", "Unknown"),
                 f"{info.get('tokens', 0):,}",
                 f"[{status_color}]{status}[/{status_color}]"
@@ -181,6 +183,12 @@ class UIHandler:
                 "[green]>[/green]",
                 f"XLSX_HANDLED: [bold green]{stats.get('excel_count', 0)}[/bold green] ({stats.get('excel_sheets_count', 0)} sheets)",
             )
+
+        if stats.get("truncated_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"TRUNCATED:    [bold yellow]{stats.get('truncated_count', 0)}[/bold yellow]")
+
+        if stats.get("binary_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"BINARY_SKIP:  [bold yellow]{stats.get('binary_count', 0)}[/bold yellow]")
 
         method_label = method.upper()
         success_panel = Panel(
@@ -212,12 +220,6 @@ class UIHandler:
             if y < height - 1:
                 header_text.append("\n")
 
-        # Recreate the final steps for the interactive screen
-        steps_group = Group(
-            Text.from_markup(f"\n[bold green]>[/bold green] [bold green]Extraction complete.[/bold green]"),
-            Text.from_markup(f"\n[bold green]>[/bold green] [bold green]Saving to {output_path}[/bold green]\n")
-        )
-
         # If not on Windows or not in a TTY, just print everything and move on
         if not sys.stdin.isatty() or sys.platform != "win32":
             self.console.print(success_panel)
@@ -227,13 +229,15 @@ class UIHandler:
         import msvcrt
         scroll_offset = 0
 
-        # Calculate summary height for layout stability (Header + Steps + Summary)
-        # Header is ~7 lines, Steps are ~3 lines, Summary is variable
+        # Calculate summary height for layout stability (Header + Summary)
+        # Header is ~7 lines, Summary is variable
         stats_rows = 1 # TOTAL_FILES
         if stats.get("csv_count", 0) > 0: stats_rows += 1
         if stats.get("notebook_count", 0) > 0: stats_rows += 1
         if stats.get("sql_count", 0) > 0: stats_rows += 1
         if stats.get("excel_count", 0) > 0: stats_rows += 1
+        if stats.get("truncated_count", 0) > 0: stats_rows += 1
+        if stats.get("binary_count", 0) > 0: stats_rows += 1
         summary_height = 6 + stats_rows
 
         def get_scan_list_panel(offset: int, v_height: int) -> Panel:
@@ -256,7 +260,7 @@ class UIHandler:
                                "bold yellow" if status in ["Truncated", "Skipped (Binary)"] else "bold red"
                 
                 viewport_table.add_row(
-                    info.get("name", "Unknown"),
+                    os.path.basename(info.get("name", "Unknown")),
                     info.get("type", "Unknown"),
                     f"{info.get('tokens', 0):,}",
                     f"[{status_color}]{status}[/{status_color}]"
@@ -308,17 +312,17 @@ class UIHandler:
                     # Dynamically calculate viewport based on current terminal height
                     console_height = live.console.height
                     
-                    # Header (7) + Steps (3) + Summary (summary_height) + List Borders/Padding (6)
+                    # Header (7) + Summary (summary_height) + List Borders/Padding (6)
                     # We need to be more precise with the reserved height
-                    reserved_height = 7 + 4 + summary_height + 6
+                    reserved_height = 7 + summary_height + 6
                     v_height = max(2, console_height - reserved_height)
                     
                     max_offset = max(0, len(processed_files_info) - v_height)
                     scroll_offset = min(scroll_offset, max_offset)
                     
-                    # Update the live display with header, steps, and both panels
+                    # Update the live display with header and both panels
                     current_list_panel = get_scan_list_panel(scroll_offset, v_height)
-                    live.update(Group(header_text, steps_group, success_panel, current_list_panel), refresh=True)
+                    live.update(Group(header_text, success_panel, current_list_panel), refresh=True)
 
                     if msvcrt.kbhit():
                         key = msvcrt.getch()
@@ -346,8 +350,7 @@ class UIHandler:
         self.console.print(Panel(
             message,
             border_style="bold yellow",
-            title="[bold yellow]SYSTEM_WARNING[/bold yellow]",
-            subtitle="[dim yellow]check_logs[/dim yellow]"
+            title="[bold yellow]SYSTEM_WARNING[/bold yellow]"
         ))
 
     def print_warning(self, message: str) -> None:

@@ -1,5 +1,6 @@
 import json
 import random
+import warnings
 from pathlib import Path
 from typing import List, Tuple, Union
 
@@ -21,7 +22,7 @@ def process_csv(
     seed: int = DEFAULT_SEED,
 ) -> str:
     try:
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, low_memory=False)
         if len(df) > sample_size:
             df = df.sample(sample_size, random_state=seed)
             footer = f"\n\n-- [CSV truncated: Showing random {sample_size} rows to save context] --"
@@ -176,7 +177,9 @@ def process_excel(
 ) -> Tuple[str, int]:
     try:
         # 1. Sheet Discovery & Visual Element Check using openpyxl
-        wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
         sheet_names = wb.sheetnames
         
         output_md = []
