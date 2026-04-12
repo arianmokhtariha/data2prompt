@@ -45,7 +45,13 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
         result["type"] = f"Binary ({ext})"
         result["stats_update"]["binary_count"] = 1
     elif ext == '.csv':
-        content = process_csv(file_path, args.csv_sample_size, args.seed)
+        content = process_csv(
+            file_path,
+            args.csv_sample_size,
+            args.seed,
+            args.table_limit,
+            args.table_truncate
+        )
         result["content"] = content
         result["stats_update"]["csv_count"] = 1
         tokens, _ = count_tokens(content)
@@ -72,7 +78,9 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
             args.sql_max_lines,
             args.seed,
             args.line_length_threshold,
-            args.truncated_line_length
+            args.truncated_line_length,
+            args.table_limit,
+            args.table_truncate
         )
         result["content"] = content
         result["stats_update"]["sql_count"] = 1
@@ -81,7 +89,14 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
         result["type"] = "SQL"
         result["status"] = "Parsed"
     elif ext in ['.xlsx', '.xls']:
-        excel_md, sheet_count = process_excel(file_path, args.csv_sample_size, args.max_sheets, args.seed)
+        excel_md, sheet_count = process_excel(
+            file_path,
+            args.csv_sample_size,
+            args.max_sheets,
+            args.seed,
+            args.table_limit,
+            args.table_truncate
+        )
         result["content"] = excel_md
         result["stats_update"]["excel_count"] = 1
         result["stats_update"]["excel_sheets_count"] = sheet_count

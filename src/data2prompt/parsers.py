@@ -15,8 +15,31 @@ from .constants import (
     DEFAULT_MAX_SHEETS,
     DEFAULT_SEED,
     DEFAULT_LINE_LENGTH_THRESHOLD,
-    DEFAULT_TRUNCATED_LINE_LENGTH
+    DEFAULT_TRUNCATED_LINE_LENGTH,
+    DEFAULT_TABLE_CHAR_LIMIT,
+    DEFAULT_TABLE_TRUNCATED_SIZE
 )
+
+def enforce_table_limit(text: str, limit: int, truncate_to: int) -> str:
+    """
+    Checks if a table's string representation exceeds a character limit.
+    If it does, truncates it and appends a warning.
+
+    Args:
+        text: The table string (markdown or SQL).
+        limit: Max characters allowed.
+        truncate_to: Characters to keep if limit is exceeded.
+
+    Returns:
+        str: The potentially truncated string.
+    """
+    if len(text) <= limit:
+        return text
+
+    truncated = text[:truncate_to]
+    warning = f"\n\n-- [Table truncated: Total size exceeded {limit} characters. Showing first {truncate_to} characters to save context] --"
+    return truncated + warning
+
 
 def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
     """
@@ -53,6 +76,8 @@ def process_csv(
     file_path: Union[str, Path],
     sample_size: int = DEFAULT_CSV_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
+    table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
+    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
 ) -> str:
     try:
         df = pd.read_csv(file_path, low_memory=False)
@@ -61,11 +86,14 @@ def process_csv(
             footer = f"\n\n-- [CSV truncated: Showing random {sample_size} rows to save context] --"
         else:
             footer = ""
-        return (
+        
+        markdown_content = (
             f"#### [Sample - Random {sample_size} rows]\n"
             + df.to_markdown(index=False)
             + footer
         )
+        
+        return enforce_table_limit(markdown_content, table_limit, table_truncate)
     except pd.errors.EmptyDataError:
         return "*Note: CSV file is empty.*"
     except Exception as e:
@@ -138,7 +166,9 @@ def process_sql(
     max_lines: int = DEFAULT_SQL_MAX_LINES,
     seed: int = DEFAULT_SEED,
     line_threshold: int = DEFAULT_LINE_LENGTH_THRESHOLD,
-    truncate_to: int = DEFAULT_TRUNCATED_LINE_LENGTH
+    truncate_to: int = DEFAULT_TRUNCATED_LINE_LENGTH,
+    table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
+    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
 ) -> str:
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -156,11 +186,22 @@ def process_sql(
             if len(table_data_buffer) > sample_size:
                 # Randomly sample indices to maintain relative order
                 indices = sorted(rng.sample(range(len(table_data_buffer)), sample_size))
-                for idx in indices:
-                    processed_lines.append(table_data_buffer[idx])
+                sampled_rows = [table_data_buffer[idx] for idx in indices]
+                sampled_text = "".join(sampled_rows)
+                
+                # Apply secondary truncation if the sampled block is still too large
+                sampled_text = enforce_table_limit(sampled_text, table_limit, table_truncate)
+                
+                processed_lines.append(sampled_text)
+                if not sampled_text.endswith("\n"):
+                    processed_lines.append("\n")
                 processed_lines.append(f"-- [Table data truncated: Showing random {sample_size} rows to save context] --\n")
             else:
-                processed_lines.extend(table_data_buffer)
+                data_text = "".join(table_data_buffer)
+                data_text = enforce_table_limit(data_text, table_limit, table_truncate)
+                processed_lines.append(data_text)
+                if not data_text.endswith("\n"):
+                    processed_lines.append("\n")
             table_data_buffer.clear()
 
         for line in lines:
@@ -218,6 +259,8 @@ def process_excel(
     max_rows: int = DEFAULT_CSV_SAMPLE_SIZE,
     max_sheets: int = DEFAULT_MAX_SHEETS,
     seed: int = DEFAULT_SEED,
+    table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
+    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
 ) -> Tuple[str, int]:
     try:
         # 1. Sheet Discovery & Visual Element Check using openpyxl
@@ -269,9 +312,8 @@ def process_excel(
                         header = ""
                     
                     markdown_data = df.to_markdown(index=False)
-                    output_md.append(header + markdown_data)
-                    if footer:
-                        output_md.append(footer)
+                    sheet_content = header + markdown_data + footer
+                    output_md.append(enforce_table_limit(sheet_content, table_limit, table_truncate))
             except Exception as e:
                 output_md.append(f"### Sheet: {sheet_name}")
                 output_md.append(f"⚠️ Error reading sheet data: {e}")

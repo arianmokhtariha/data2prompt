@@ -13,6 +13,8 @@ from .constants import (
     DEFAULT_SEED,
     DEFAULT_LINE_LENGTH_THRESHOLD,
     DEFAULT_TRUNCATED_LINE_LENGTH,
+    DEFAULT_TABLE_CHAR_LIMIT,
+    DEFAULT_TABLE_TRUNCATED_SIZE,
     DEFAULT_MAX_FILE_SIZE_KB,
     DEFAULT_OUTPUT_FILE
 )
@@ -59,6 +61,12 @@ def setup_cli() -> Namespace:
                         help=f'Max characters per line before truncation (default: {DEFAULT_LINE_LENGTH_THRESHOLD})')
     parser.add_argument('--truncated-line-length', type=int, default=DEFAULT_TRUNCATED_LINE_LENGTH,
                         help=f'Length to truncate long lines to (default: {DEFAULT_TRUNCATED_LINE_LENGTH})')
+
+    # Table Truncation settings
+    parser.add_argument('--table-limit', type=int, default=DEFAULT_TABLE_CHAR_LIMIT,
+                        help=f'Max characters for a single table/sheet after sampling (default: {DEFAULT_TABLE_CHAR_LIMIT})')
+    parser.add_argument('--table-truncate', type=int, default=DEFAULT_TABLE_TRUNCATED_SIZE,
+                        help=f'Length to truncate large tables to (default: {DEFAULT_TABLE_TRUNCATED_SIZE})')
 
     # Exclusions
     parser.add_argument('--ignore-folders', nargs='+', default=[],
