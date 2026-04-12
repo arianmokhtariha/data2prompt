@@ -53,7 +53,12 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
         result["type"] = "CSV"
         result["status"] = "Sampled"
     elif ext == '.ipynb':
-        content = process_notebook(file_path, args.max_lines)
+        content = process_notebook(
+            file_path,
+            args.max_lines,
+            args.line_length_threshold,
+            args.truncated_line_length
+        )
         result["content"] = content
         result["stats_update"]["notebook_count"] = 1
         tokens, _ = count_tokens(content)
@@ -61,7 +66,14 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
         result["type"] = "Notebook"
         result["status"] = "Cleaned"
     elif ext == '.sql':
-        content = process_sql(file_path, args.sql_sample_size, args.sql_max_lines, args.seed)
+        content = process_sql(
+            file_path,
+            args.sql_sample_size,
+            args.sql_max_lines,
+            args.seed,
+            args.line_length_threshold,
+            args.truncated_line_length
+        )
         result["content"] = content
         result["stats_update"]["sql_count"] = 1
         tokens, _ = count_tokens(content)

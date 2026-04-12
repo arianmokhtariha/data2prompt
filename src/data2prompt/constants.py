@@ -31,6 +31,8 @@ DEFAULT_SQL_MAX_LINES = 50             # Caps the total number of non-data lines
 DEFAULT_MAX_LINES = 55                 # Max lines of text output to keep per notebook cell.
 DEFAULT_MAX_SHEETS = 10                # Max number of sheets to process in Excel files.
 DEFAULT_SEED = 42                      # Random seed for consistent sampling.
+DEFAULT_LINE_LENGTH_THRESHOLD = 4000   # Max characters allowed per line before truncation is triggered.
+DEFAULT_TRUNCATED_LINE_LENGTH = 1000   # Number of characters to keep when a line is truncated.
 DEFAULT_MAX_FILE_SIZE_KB = 70          # maximum file size of unhandled type to keep enitrely (if file is larger than that only the first 10kb will be shown)
 DEFAULT_OUTPUT_FILE = 'PROMPT.md'      # default .md file output name
 

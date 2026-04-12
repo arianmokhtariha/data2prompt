@@ -13,8 +13,41 @@ from .constants import (
     DEFAULT_SQL_MAX_LINES,
     DEFAULT_MAX_LINES,
     DEFAULT_MAX_SHEETS,
-    DEFAULT_SEED
+    DEFAULT_SEED,
+    DEFAULT_LINE_LENGTH_THRESHOLD,
+    DEFAULT_TRUNCATED_LINE_LENGTH
 )
+
+def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
+    """
+    Truncates lines in a text string that exceed a certain character threshold.
+    
+    Args:
+        text: The input text to process.
+        threshold: The maximum allowed length for a single line.
+        truncate_to: The length to truncate long lines to.
+        
+    Returns:
+        str: The processed text with long lines truncated and flagged.
+    """
+    if not text:
+        return text
+        
+    lines = text.splitlines()
+    processed_lines = []
+    for line in lines:
+        if len(line) > threshold:
+            truncated = line[:truncate_to]
+            processed_lines.append(f"{truncated} ... -- [Line truncated: showing first {truncate_to} characters] --")
+        else:
+            processed_lines.append(line)
+    
+    # Preserve trailing newline if it existed
+    result = "\n".join(processed_lines)
+    if text.endswith("\n") and not result.endswith("\n"):
+        result += "\n"
+    return result
+
 
 def process_csv(
     file_path: Union[str, Path],
@@ -40,7 +73,10 @@ def process_csv(
 
 
 def process_notebook(
-    file_path: Union[str, Path], max_lines: int = DEFAULT_MAX_LINES
+    file_path: Union[str, Path],
+    max_lines: int = DEFAULT_MAX_LINES,
+    line_threshold: int = DEFAULT_LINE_LENGTH_THRESHOLD,
+    truncate_to: int = DEFAULT_TRUNCATED_LINE_LENGTH
 ) -> str:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -55,15 +91,18 @@ def process_notebook(
             output_md.append(f"### Cell {i} [{cell_type}]")
             
             if cell['cell_type'] == 'markdown':
-                output_md.append("".join(cell['source']))
+                content = "".join(cell['source'])
+                output_md.append(truncate_long_lines(content, line_threshold, truncate_to))
             
             elif cell['cell_type'] == 'code':
                 code = "".join(cell['source'])
+                code = truncate_long_lines(code, line_threshold, truncate_to)
                 output_md.append(f"```python\n{code}\n```")
                 
                 for out in cell.get('outputs', []):
                     if out.get('output_type') == 'stream':
                         text = "".join(out.get('text', []))
+                        text = truncate_long_lines(text, line_threshold, truncate_to)
                         lines = text.strip().split('\n')
                         if len(lines) > max_lines:
                             truncated_text = '\n'.join(lines[:max_lines])
@@ -76,6 +115,7 @@ def process_notebook(
                         if 'text/plain' in data:
                             content = "".join(data['text/plain'])
                             if "base64" not in content:
+                                content = truncate_long_lines(content, line_threshold, truncate_to)
                                 lines = content.strip().split('\n')
                                 if len(lines) > max_lines:
                                     truncated_content = '\n'.join(lines[:max_lines])
@@ -97,6 +137,8 @@ def process_sql(
     sample_size: int = DEFAULT_SQL_SAMPLE_SIZE,
     max_lines: int = DEFAULT_SQL_MAX_LINES,
     seed: int = DEFAULT_SEED,
+    line_threshold: int = DEFAULT_LINE_LENGTH_THRESHOLD,
+    truncate_to: int = DEFAULT_TRUNCATED_LINE_LENGTH
 ) -> str:
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -122,6 +164,8 @@ def process_sql(
             table_data_buffer.clear()
 
         for line in lines:
+            # Apply line-level truncation using the modular helper
+            line = truncate_long_lines(line, line_threshold, truncate_to)
             line_upper = line.upper()
             line_stripped = line.strip()
             

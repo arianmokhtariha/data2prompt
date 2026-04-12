@@ -11,6 +11,8 @@ from .constants import (
     DEFAULT_MAX_LINES,
     DEFAULT_MAX_SHEETS,
     DEFAULT_SEED,
+    DEFAULT_LINE_LENGTH_THRESHOLD,
+    DEFAULT_TRUNCATED_LINE_LENGTH,
     DEFAULT_MAX_FILE_SIZE_KB,
     DEFAULT_OUTPUT_FILE
 )
@@ -52,6 +54,12 @@ def setup_cli() -> Namespace:
     parser.add_argument('--max-sheets', type=int, default=DEFAULT_MAX_SHEETS,
                         help=f'Max number of sheets to process in Excel files (default: {DEFAULT_MAX_SHEETS})')
     
+    # Line Truncation settings
+    parser.add_argument('--line-length-threshold', type=int, default=DEFAULT_LINE_LENGTH_THRESHOLD,
+                        help=f'Max characters per line before truncation (default: {DEFAULT_LINE_LENGTH_THRESHOLD})')
+    parser.add_argument('--truncated-line-length', type=int, default=DEFAULT_TRUNCATED_LINE_LENGTH,
+                        help=f'Length to truncate long lines to (default: {DEFAULT_TRUNCATED_LINE_LENGTH})')
+
     # Exclusions
     parser.add_argument('--ignore-folders', nargs='+', default=[],
                         help='Additional folders to skip entirely')
