@@ -13,9 +13,16 @@ from pathlib import Path
 from typing import Dict, Any
 from .cli import setup_cli
 from .parsers import process_csv, process_notebook, process_sql, process_excel
-from .utils import is_binary, generate_tree, count_tokens, load_ignore_file
+from .utils import is_binary, generate_tree, count_tokens, load_ignore_file, get_dynamic_wrapper
 from .ui import ui
-from .constants import GENERATION_FLAG
+from .constants import (
+    GENERATION_FLAG,
+    SYSTEM_INSTRUCTIONS,
+    TAG_PROJECT_STRUCTURE,
+    TAG_FILE_REPOSITORY,
+    TAG_FILE,
+    TAG_CONTENT
+)
 
 def get_ui_action(ext: str, skip_exts: list[str]) -> str:
     """Determines the UI action string based on file extension."""
@@ -126,7 +133,7 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
                 if file_size_kb > args.max_file_size:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         header_content = f.read(10 * 1024)
-                        result["content"] = f"```{lang}\n{header_content}\n```"
+                        result["content"] = header_content
                         result["content"] += f"\n-- [File truncated: Showing first 10KB because it exceeds the size limit ({args.max_file_size}KB) to save context] --\n"
                         tokens, _ = count_tokens(result["content"])
                         result["tokens"] = tokens
@@ -135,7 +142,7 @@ def process_target_file(file_path: Path, args: Any) -> Dict[str, Any]:
                 else:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         file_text = f.read()
-                        result["content"] = f"```{lang}\n{file_text}\n```"
+                        result["content"] = file_text
                         tokens, _ = count_tokens(result["content"])
                         result["tokens"] = tokens
             except Exception:
@@ -166,9 +173,8 @@ def run_packager():
     md_content = [
         f"<!-- {GENERATION_FLAG} -->",
         f"# Project Context: {project_path.name}",
-        f"> This document provides a structured context of the project's codebase and data schema.",
-        f"> It is optimized for LLMs to understand the project structure, file contents, and data formats efficiently.",
-        f"> Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
+        SYSTEM_INSTRUCTIONS,
+        f"> Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}\n",
         ""  # Blank line for spacing
     ]
     
@@ -202,13 +208,18 @@ def run_packager():
         # 1. Generating project tree
         progress.update(task, description="[cyan]Generating project tree...[/cyan]")
         md_content.append("## Project Structure")
+        md_content.append(f"<{TAG_PROJECT_STRUCTURE}>")
         md_content.append("```text")
         tree_text = generate_tree(str(project_path), args.ignore_folders, args.ignore_files)
         md_content.append(tree_text)
-        md_content.append("```\n---\n")
+        md_content.append("```")
+        md_content.append(f"</{TAG_PROJECT_STRUCTURE}>\n---\n")
         progress.advance(task)
 
         # 2. Processing files
+        md_content.append("## File Repository")
+        md_content.append(f"<{TAG_FILE_REPOSITORY}>")
+        
         for file_path in all_files:
             relative_path = file_path.relative_to(project_path)
             ext = file_path.suffix.lower()
@@ -223,8 +234,21 @@ def run_packager():
                 progress.advance(task)
                 continue
 
-            md_content.append(f"## FILE: {relative_path}")
-            md_content.append(result["content"])
+            # File Header with Metadata
+            # We use a custom anchor to ensure the TOC works reliably
+            anchor_name = f"file-{str(relative_path).lower().replace(' ', '-').replace('.', '').replace('/', '').replace('\\', '')}"
+            md_content.append(f'### <a name="{anchor_name}"></a>📄 File: `{relative_path}`')
+            md_content.append(f"> **Metadata:** Type: `{result['type']}` | Tokens: `{result['tokens']}` | Status: `{result['status']}`")
+            
+            # XML Wrapping with Dynamic Backticks
+            wrapper = get_dynamic_wrapper(result["content"])
+            lang = ext[1:] if ext and ext != '.md' else 'markdown' if ext == '.md' else 'text'
+            
+            md_content.append(f'<{TAG_FILE} path="{relative_path}">')
+            md_content.append(f"<{TAG_CONTENT}>")
+            md_content.append(f"{wrapper}{lang}\n{result['content']}\n{wrapper}")
+            md_content.append(f"</{TAG_CONTENT}>")
+            md_content.append(f"</{TAG_FILE}>")
             
             # Update stats
             for key, value in result["stats_update"].items():
@@ -240,6 +264,8 @@ def run_packager():
             md_content.append("\n---\n")
             progress.advance(task)
 
+        md_content.append(f"</{TAG_FILE_REPOSITORY}>")
+
         # 3. Compiling project context
         progress.update(task, description="[cyan]Compiling project context...[/cyan]")
         # Calculate tokens before final save
@@ -248,8 +274,24 @@ def run_packager():
         
         # Insert token count into the header (after generated on line)
         method_label = "o200k_base" if method == "o200k_base" else "regex_fallback" if method == "regex_fallback" else "word_count"
-        md_content.insert(5, f"> Tokens: {total_tokens} (est. via {method_label})")
+        md_content.insert(4, f"> Tokens: {total_tokens} (est. via {method_label})")
         
+        # Generate Summary Table (TOC)
+        summary_table = ["## Summary Table", "| File | Type | Tokens | Status |", "| :--- | :--- | :--- | :--- |"]
+        for info in processed_files_info:
+            # Create a markdown anchor from the file path
+            # Markdown anchors for headers: lowercase, spaces to hyphens, remove special chars
+            anchor = info['name'].lower().replace(' ', '-').replace('.', '').replace('/', '').replace('\\', '')
+            # The actual header format is "### 📄 File: `path`"
+            # Rich/Markdown usually handles this by stripping the emoji and backticks
+            # Let's use a more direct approach for the anchor
+            safe_anchor = f"file-{anchor}"
+            # We'll need to update the header to include this anchor
+            summary_table.append(f"| [{info['name']}](#{safe_anchor}) | {info['type']} | {info['tokens']} | {info['status']} |")
+        
+        md_content.insert(5, "\n".join(summary_table))
+        md_content.insert(6, "\n---\n")
+
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write("\n".join(md_content))
         progress.advance(task)

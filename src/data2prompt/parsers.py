@@ -113,30 +113,33 @@ def process_notebook(
         
         # Added enumeration to track cell numbers
         for i, cell in enumerate(nb.get('cells', []), 1):
-            cell_type = cell['cell_type'].upper()
-            
-            # Create a clear, readable header for the LLM
-            output_md.append(f"### Cell {i} [{cell_type}]")
+            cell_type = cell['cell_type'].lower()
+            output_md.append(f'<notebook_cell index="{i}" type="{cell_type}">')
             
             if cell['cell_type'] == 'markdown':
                 content = "".join(cell['source'])
-                output_md.append(truncate_long_lines(content, line_threshold, truncate_to))
+                content = truncate_long_lines(content, line_threshold, truncate_to)
+                output_md.append("<cell_markdown>")
+                output_md.append(content)
+                output_md.append("</cell_markdown>")
             
             elif cell['cell_type'] == 'code':
                 code = "".join(cell['source'])
                 code = truncate_long_lines(code, line_threshold, truncate_to)
-                output_md.append(f"```python\n{code}\n```")
+                output_md.append("<cell_code>")
+                output_md.append(code)
+                output_md.append("</cell_code>")
                 
+                outputs = []
                 for out in cell.get('outputs', []):
                     if out.get('output_type') == 'stream':
                         text = "".join(out.get('text', []))
                         text = truncate_long_lines(text, line_threshold, truncate_to)
                         lines = text.strip().split('\n')
                         if len(lines) > max_lines:
-                            truncated_text = '\n'.join(lines[:max_lines])
-                            output_md.append(f"> **Cell {i} Output:**\n> {truncated_text}\n> -- [Output truncated: Showing first {max_lines} lines to save context] --")
+                            outputs.append('\n'.join(lines[:max_lines]) + f"\n-- [Output truncated: Showing first {max_lines} lines] --")
                         else:
-                            output_md.append(f"> **Cell {i} Output:**\n> {text.strip()}")
+                            outputs.append(text.strip())
                     
                     elif out.get('output_type') in ['execute_result', 'display_data']:
                         data = out.get('data', {})
@@ -146,12 +149,16 @@ def process_notebook(
                                 content = truncate_long_lines(content, line_threshold, truncate_to)
                                 lines = content.strip().split('\n')
                                 if len(lines) > max_lines:
-                                    truncated_content = '\n'.join(lines[:max_lines])
-                                    output_md.append(f"> **Cell {i} Data Preview:**\n> {truncated_content}\n> -- [Data preview truncated: Showing first {max_lines} lines to save context] --")
+                                    outputs.append('\n'.join(lines[:max_lines]) + f"\n-- [Data preview truncated: Showing first {max_lines} lines] --")
                                 else:
-                                    output_md.append(f"> **Cell {i} Data Preview:**\n> {content.strip()}")
+                                    outputs.append(content.strip())
+                
+                if outputs:
+                    output_md.append("<cell_output>")
+                    output_md.append("\n---\n".join(outputs))
+                    output_md.append("</cell_output>")
                                 
-            output_md.append("\n---\n") # Visual separator between cells
+            output_md.append(f"</notebook_cell>")
             
         return "\n\n".join(output_md)
     except json.JSONDecodeError:
@@ -184,9 +191,13 @@ def process_sql(
                 return
             
             if len(table_data_buffer) > sample_size:
-                # Randomly sample indices to maintain relative order
-                indices = sorted(rng.sample(range(len(table_data_buffer)), sample_size))
-                sampled_rows = [table_data_buffer[idx] for idx in indices]
+                # Always keep the first line (usually the INSERT header)
+                first_line = table_data_buffer[0]
+                
+                # Sample from the rest of the buffer
+                # We need sample_size - 1 more rows
+                rest_indices = sorted(rng.sample(range(1, len(table_data_buffer)), sample_size - 1))
+                sampled_rows = [first_line] + [table_data_buffer[idx] for idx in rest_indices]
                 sampled_text = "".join(sampled_rows)
                 
                 # Apply secondary truncation if the sampled block is still too large
@@ -250,7 +261,7 @@ def process_sql(
         # Final flush for the last table
         flush_buffer()
         
-        return "```sql\n" + "".join(processed_lines) + "\n```"
+        return "".join(processed_lines)
     except Exception as e:
         return f"⚠️ Error reading SQL: {e}"
 

@@ -28,6 +28,22 @@ def count_tokens(text: str, encoding_name: str = "o200k_base") -> tuple[int, str
             # Absolute fallback to word count if regex fails
             return len(text.split()), "word_count"
 
+def get_dynamic_wrapper(content: str) -> str:
+    """
+    Finds the longest sequence of backticks in the content and returns
+     a wrapper string with one more backtick than the maximum found.
+    Ensures that nested code blocks do not break the outer container.
+    """
+    max_backticks = 0
+    # Find all sequences of backticks
+    matches = re.findall(r'`+', content)
+    if matches:
+        max_backticks = max(len(m) for m in matches)
+    
+    # We need at least 3 backticks for a markdown code block
+    return '`' * max(3, max_backticks + 1)
+
+
 def is_binary(file_path: Union[str, Path]) -> bool:
     """Check if a file is binary by looking for a Null byte in the first 1024 bytes."""
     try:
