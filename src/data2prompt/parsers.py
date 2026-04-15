@@ -61,7 +61,7 @@ def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
     for line in lines:
         if len(line) > threshold:
             truncated = line[:truncate_to]
-            processed_lines.append(f"{truncated} ... -- [Line truncated: showing first {truncate_to} characters] --")
+            processed_lines.append(f"{truncated}  -- [Line truncated: showing first {truncate_to} characters] --")
         else:
             processed_lines.append(line)
     
