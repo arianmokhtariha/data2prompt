@@ -8,9 +8,6 @@ venv/
 env/
 .env
 
-# Test data or generated outputs
-*.csv
-
 # Build files 
 build/
 dist/
