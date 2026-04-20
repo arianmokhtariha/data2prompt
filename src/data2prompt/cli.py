@@ -1,4 +1,7 @@
 import argparse
+from dataclasses import dataclass, field
+from typing import List, Set
+from pathlib import Path
 from argparse import Namespace
 
 from .constants import (
@@ -19,13 +22,32 @@ from .constants import (
     DEFAULT_OUTPUT_FILE
 )
 
-def setup_cli() -> Namespace:
+@dataclass
+class Config:
+    """Data Transfer Object for application configuration."""
+    output: str
+    csv_sample_size: int
+    seed: int
+    sql_sample_size: int
+    sql_max_lines: int
+    max_lines: int
+    max_sheets: int
+    line_length_threshold: int
+    truncated_line_length: int
+    table_limit: int
+    table_truncate: int
+    ignore_folders: Set[str] = field(default_factory=set)
+    ignore_files: Set[str] = field(default_factory=set)
+    max_file_size: int = 0
+    skip_exts: Set[str] = field(default_factory=set)
+
+def setup_cli() -> Config:
     """Configures the Command Line Interface (CLI) for the tool.
 
     Defines all available flags and their help descriptions.
 
     Returns:
-        argparse.Namespace: An object containing the merged user and core configurations.
+        Config: A type-safe configuration object.
     """
     parser = argparse.ArgumentParser(
         description="📊 Data2Prompt: High-tech prompt packaging for Data Scientists."
@@ -88,8 +110,21 @@ def setup_cli() -> Namespace:
     # We combine the user's terminal input with our CORE constants.
     # This ensures that even if a user provides custom ignores, essential items
     # like '.git' or binary extensions are still respected.
-    args.ignore_folders = list(set(args.ignore_folders) | CORE_IGNORES)
-    args.ignore_files = list(set(args.ignore_files) | CORE_IGNORE_FILES)
-    args.skip_exts = list(set(args.skip_exts) | CORE_SKIP_EXTS)
     
-    return args
+    return Config(
+        output=args.output,
+        csv_sample_size=args.csv_sample_size,
+        seed=args.seed,
+        sql_sample_size=args.sql_sample_size,
+        sql_max_lines=args.sql_max_lines,
+        max_lines=args.max_lines,
+        max_sheets=args.max_sheets,
+        line_length_threshold=args.line_length_threshold,
+        truncated_line_length=args.truncated_line_length,
+        table_limit=args.table_limit,
+        table_truncate=args.table_truncate,
+        ignore_folders=set(args.ignore_folders) | CORE_IGNORES,
+        ignore_files=set(args.ignore_files) | CORE_IGNORE_FILES,
+        max_file_size=args.max_file_size,
+        skip_exts=set(args.skip_exts) | CORE_SKIP_EXTS
+    )

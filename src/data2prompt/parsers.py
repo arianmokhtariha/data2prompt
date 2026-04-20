@@ -1,8 +1,12 @@
 import json
 import random
 import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Dict, Any, Protocol, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .cli import Config
 
 import openpyxl
 import pandas as pd
@@ -19,6 +23,21 @@ from .constants import (
     DEFAULT_TABLE_CHAR_LIMIT,
     DEFAULT_TABLE_TRUNCATED_SIZE
 )
+
+@dataclass
+class ParserResult:
+    """Standardized output for all parsers."""
+    content: str
+    tokens: int
+    type: str
+    status: str
+    stats_update: Dict[str, int] = field(default_factory=dict)
+    skip_file: bool = False
+
+class BaseParser(Protocol):
+    """Interface for all file parsers."""
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        ...
 
 def enforce_table_limit(text: str, limit: int, truncate_to: int) -> str:
     """
@@ -335,3 +354,157 @@ def process_excel(
         return "\n".join(output_md), processed_sheets
     except Exception as e:
         return f"⚠️ Error reading Excel: {e}", 0
+
+# --- Parser Implementations ---
+
+class CSVParser:
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        from .utils import count_tokens
+        content = process_csv(
+            file_path,
+            config.csv_sample_size,
+            config.seed,
+            config.table_limit,
+            config.table_truncate
+        )
+        tokens, _ = count_tokens(content)
+        return ParserResult(
+            content=content,
+            tokens=tokens,
+            type="CSV",
+            status="Sampled",
+            stats_update={"csv_count": 1}
+        )
+
+class NotebookParser:
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        from .utils import count_tokens
+        content = process_notebook(
+            file_path,
+            config.max_lines,
+            config.line_length_threshold,
+            config.truncated_line_length
+        )
+        tokens, _ = count_tokens(content)
+        return ParserResult(
+            content=content,
+            tokens=tokens,
+            type="Notebook",
+            status="Cleaned",
+            stats_update={"notebook_count": 1}
+        )
+
+class SQLParser:
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        from .utils import count_tokens
+        content = process_sql(
+            file_path,
+            config.sql_sample_size,
+            config.sql_max_lines,
+            config.seed,
+            config.line_length_threshold,
+            config.truncated_line_length,
+            config.table_limit,
+            config.table_truncate
+        )
+        tokens, _ = count_tokens(content)
+        return ParserResult(
+            content=content,
+            tokens=tokens,
+            type="SQL",
+            status="Parsed",
+            stats_update={"sql_count": 1}
+        )
+
+class ExcelParser:
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        from .utils import count_tokens
+        content, sheet_count = process_excel(
+            file_path,
+            config.csv_sample_size,
+            config.max_sheets,
+            config.seed,
+            config.table_limit,
+            config.table_truncate
+        )
+        tokens, _ = count_tokens(content)
+        return ParserResult(
+            content=content,
+            tokens=tokens,
+            type=f"Excel ({sheet_count} sheets)",
+            status="Extracted",
+            stats_update={"excel_count": 1, "excel_sheets_count": sheet_count}
+        )
+
+class DefaultParser:
+    """Fallback parser for text files."""
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        from .utils import count_tokens, is_binary
+        from .constants import GENERATION_FLAG
+        
+        ext = file_path.suffix.lower()
+        
+        # Check for .md generation flag
+        if ext == '.md':
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    if GENERATION_FLAG in f.read(100):
+                        return ParserResult(content="", tokens=0, type="Markdown", status="Skipped", skip_file=True)
+            except:
+                pass
+
+        if is_binary(file_path):
+            return ParserResult(
+                content=f"*Note: Binary content detected in {ext if ext else 'unknown'} file. Content skipped.*",
+                tokens=0,
+                type=f"Binary ({ext})",
+                status="Skipped (Binary)",
+                stats_update={"binary_count": 1}
+            )
+        
+        file_size_kb = file_path.stat().st_size / 1024
+        try:
+            if file_size_kb > config.max_file_size:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    header_content = f.read(10 * 1024)
+                    content = header_content + f"\n-- [File truncated: Showing first 10KB because it exceeds the size limit ({config.max_file_size}KB) to save context] --\n"
+                    tokens, _ = count_tokens(content)
+                    return ParserResult(
+                        content=content,
+                        tokens=tokens,
+                        type=ext[1:] if ext else "text",
+                        status="Truncated",
+                        stats_update={"truncated_count": 1}
+                    )
+            else:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    tokens, _ = count_tokens(content)
+                    return ParserResult(
+                        content=content,
+                        tokens=tokens,
+                        type=ext[1:] if ext else "text",
+                        status="Read"
+                    )
+        except Exception:
+            return ParserResult(content="*Could not read file.*", tokens=0, type="Error", status="Error")
+
+class ParserRegistry:
+    """Handles file-to-parser mapping."""
+    def __init__(self):
+        self._parsers: Dict[str, BaseParser] = {}
+        self._default_parser = DefaultParser()
+
+    def register(self, extensions: List[str], parser: BaseParser):
+        for ext in extensions:
+            self._parsers[ext.lower()] = parser
+
+    def get_parser(self, extension: str) -> BaseParser:
+        return self._parsers.get(extension.lower(), self._default_parser)
+
+# Global registry instance
+registry = ParserRegistry()
+registry.register(['.csv'], CSVParser())
+registry.register(['.ipynb'], NotebookParser())
+registry.register(['.sql'], SQLParser())
+registry.register(['.xlsx', '.xls'], ExcelParser())

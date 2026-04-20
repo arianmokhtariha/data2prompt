@@ -1,6 +1,7 @@
 import os
+import sys
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Set
 
 import tiktoken
 import regex as re
@@ -54,13 +55,57 @@ def is_binary(file_path: Union[str, Path]) -> bool:
         return False
 
 
+class ProjectScanner:
+    """Encapsulates file discovery and ignore logic."""
+
+    def __init__(self, project_path: Path, ignore_folders: Set[str], ignore_files: Set[str], output_file: str):
+        self.project_path = project_path
+        self.ignore_folders = ignore_folders
+        self.ignore_files = ignore_files
+        self.output_file = output_file
+        self._load_project_ignores()
+
+    def _load_project_ignores(self):
+        """Loads and merges project-specific ignores from .data2promptignore."""
+        project_ignores = load_ignore_file(self.project_path)
+        self.ignore_folders.update(project_ignores)
+        self.ignore_files.update(project_ignores)
+
+    def scan(self) -> List[Path]:
+        """Discovers all files in the project path, respecting ignore rules."""
+        all_files = []
+        for root, dirs, files in os.walk(self.project_path):
+            dirs[:] = [d for d in dirs if d not in self.ignore_folders]
+            for file in files:
+                if file == self.output_file or file == Path(sys.argv[0]).name or file in self.ignore_files:
+                    continue
+                all_files.append(Path(root) / file)
+        return all_files
+
+    def generate_tree(self) -> str:
+        """Generates a visual tree representation of the project structure."""
+        tree = []
+        startpath_str = str(self.project_path)
+        for root, dirs, files in os.walk(self.project_path):
+            dirs[:] = [d for d in dirs if d not in self.ignore_folders]
+            level = root.replace(startpath_str, '').count(os.sep)
+            indent = ' ' * 4 * level
+            tree.append(f"{indent}📂 {os.path.basename(root)}/")
+            sub_indent = ' ' * 4 * (level + 1)
+            for f in files:
+                if f not in self.ignore_files and f != self.output_file and f != Path(sys.argv[0]).name:
+                    tree.append(f"{sub_indent}📄 {f}")
+        return "\n".join(tree)
+
 def generate_tree(
-    startpath: Union[str, Path], ignore_folders: List[str], ignore_files: List[str]
+    startpath: Union[str, Path], ignore_folders: Union[List[str], Set[str]], ignore_files: Union[List[str], Set[str]]
 ) -> str:
+    """Legacy wrapper for generate_tree."""
     tree = []
+    startpath_str = str(startpath)
     for root, dirs, files in os.walk(startpath):
         dirs[:] = [d for d in dirs if d not in ignore_folders]
-        level = root.replace(startpath, '').count(os.sep)
+        level = root.replace(startpath_str, '').count(os.sep)
         indent = ' ' * 4 * level
         tree.append(f"{indent}📂 {os.path.basename(root)}/")
         sub_indent = ' ' * 4 * (level + 1)

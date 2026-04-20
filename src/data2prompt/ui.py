@@ -3,7 +3,7 @@ import random
 import sys
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, List
+from typing import Any, Dict, Generator, List, Optional
 
 from rich.color import Color
 from rich.console import Console, Group
@@ -27,6 +27,7 @@ from data2prompt.constants import (
     STARTUP_ANIMATION_DURATION,
     SCROLL_THUMB,
     SCROLL_TRACK,
+    ASCII_ART,
 )
 
 
@@ -37,15 +38,27 @@ class UIHandler:
     """
     def __init__(self) -> None:
         self.console = Console()
-        self._ascii_art: List[str] = [
-            "                                                                                                                   ",
-            "  ██╗      ██████╗   █████╗  ████████╗  █████╗  ██████╗  ██████╗  ██████╗   ██████╗  ███╗   ███╗ ██████╗  ████████╗",
-            "  ╚██╗     ██╔══██╗ ██╔══██╗ ╚══██╔══╝ ██╔══██╗ ╚════██╗ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ████╗ ████║ ██╔══██╗ ╚══██╔══╝",
-            "   ╚██╗    ██║  ██║ ███████║    ██║    ███████║  █████╔╝ ██████╔╝ ██████╔╝ ██║   ██║ ██╔████╔██║ ██████╔╝    ██║   ",
-            "   ██╔╝    ██║  ██║ ██╔══██║    ██║    ██╔══██║ ██╔═══╝  ██╔═══╝  ██╔══██╗ ██║   ██║ ██║╚██╔╝██║ ██╔═══╝     ██║   ",
-            "  ██╔╝     ██████╔╝ ██║  ██║    ██║    ██║  ██║ ███████╗ ██║      ██║  ██║ ╚██████╔╝ ██║ ╚═╝ ██║ ██║         ██║   ",
-            "  ╚═╝      ╚═════╝  ╚═╝  ╚═╝    ╚═╝    ╚═╝  ╚═╝ ╚══════╝ ╚═╝      ╚═╝  ╚═╝  ╚═════╝  ╚═╝     ╚═╝ ╚═╝         ╚═╝   "
-        ]
+        self._progress: Optional[Progress] = None
+        self._task_id: Any = None
+
+    def on_start(self, description: str, total: int) -> None:
+        """Event handler for process start."""
+        self.print_header()
+
+    def on_progress(self, description: str, advance: int = 0) -> None:
+        """Event handler for progress updates."""
+        if self._progress and self._task_id is not None:
+            self._progress.update(self._task_id, description=description)
+            if advance > 0:
+                self._progress.advance(self._task_id, advance)
+
+    def on_error(self, message: str) -> None:
+        """Event handler for errors."""
+        self.print_error(message)
+
+    def on_warning(self, message: str) -> None:
+        """Event handler for warnings."""
+        self.print_warning(message)
 
     def _get_matrix_color(self, t: float) -> Color:
         """Calculates a color for a linear gradient between dark and neon green."""
@@ -66,8 +79,8 @@ class UIHandler:
 
     def print_header(self) -> None:
         """Displays the application header with a Matrix decryption animation."""
-        max_width = max(len(line) for line in self._ascii_art)
-        height = len(self._ascii_art)
+        max_width = max(len(line) for line in ASCII_ART)
+        height = len(ASCII_ART)
         
         start_time = time.time()
         with Live(self._generate_matrix_frame(max_width, height), refresh_per_second=20, console=self.console) as live:
@@ -77,7 +90,7 @@ class UIHandler:
             
             # Final reveal with gradient
             final_text = Text()
-            for y, line in enumerate(self._ascii_art):
+            for y, line in enumerate(ASCII_ART):
                 row_text = Text()
                 t_y = y / (height - 1) if height > 1 else 0
                 for x, char in enumerate(line):
@@ -115,6 +128,9 @@ class UIHandler:
         task = progress.add_task(description, total=total)
         spinner = Spinner("dots12", style="bold green")
 
+        self._progress = progress
+        self._task_id = task
+
         class ProgressGroup:
             def __rich_console__(self, console: Console, options: Any) -> Generator[Any, None, None]:
                 curr_task = progress.tasks[0]
@@ -122,8 +138,12 @@ class UIHandler:
                 header_grid.add_row(spinner, Text.from_markup(curr_task.description))
                 yield Group(header_grid, progress)
 
-        with Live(ProgressGroup(), console=self.console, transient=True, refresh_per_second=20):
-            yield progress, task
+        try:
+            with Live(ProgressGroup(), console=self.console, transient=True, refresh_per_second=20):
+                yield self
+        finally:
+            self._progress = None
+            self._task_id = None
 
     def print_final_report(
         self,
@@ -205,10 +225,10 @@ class UIHandler:
 
         # 3. Interactive Logic
         # Recreate the header for the interactive screen
-        max_width = max(len(line) for line in self._ascii_art)
-        height = len(self._ascii_art)
+        max_width = max(len(line) for line in ASCII_ART)
+        height = len(ASCII_ART)
         header_text = Text()
-        for y, line in enumerate(self._ascii_art):
+        for y, line in enumerate(ASCII_ART):
             row_text = Text()
             t_y = y / (height - 1) if height > 1 else 0
             for x, char in enumerate(line):

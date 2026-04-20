@@ -6,9 +6,10 @@ from src.data2prompt.utils import count_tokens, is_binary, load_ignore_file
 def test_count_tokens():
     # A simple string should return a deterministic token count
     text = "Hello, world! This is a test."
-    tokens = count_tokens(text)
+    tokens, method = count_tokens(text)
     assert isinstance(tokens, int)
     assert tokens > 0
+    assert isinstance(method, str)
 
 def test_is_binary():
     with tempfile.NamedTemporaryFile(delete=False) as temp_bin:
