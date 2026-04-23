@@ -17,3 +17,24 @@ def test_setup_cli_merges_defaults():
         # These are defined in src/data2prompt/constants.py
         assert ".git" in args.ignore_folders
         assert ".exe" in args.skip_exts
+
+def test_setup_cli_output_naming():
+    # Test default naming
+    with patch.object(sys, 'argv', ["data2prompt"]):
+        args = setup_cli()
+        assert args.output == "PROMPT.xml"
+
+    # Test custom naming with default format
+    with patch.object(sys, 'argv', ["data2prompt", "-o", "my_prompt"]):
+        args = setup_cli()
+        assert args.output == "my_prompt.xml"
+
+    # Test custom naming with markdown format
+    with patch.object(sys, 'argv', ["data2prompt", "-o", "my_prompt", "-f", "markdown"]):
+        args = setup_cli()
+        assert args.output == "my_prompt.md"
+
+    # Test edge case: output name with extension
+    with patch.object(sys, 'argv', ["data2prompt", "-o", "test.md", "-f", "xml"]):
+        args = setup_cli()
+        assert args.output == "test.md.xml"

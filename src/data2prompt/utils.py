@@ -83,36 +83,31 @@ class ProjectScanner:
         return all_files
 
     def generate_tree(self) -> str:
-        """Generates a visual tree representation of the project structure."""
+        """Generates a flat list of files in the project structure."""
         tree = []
-        startpath_str = str(self.project_path)
         for root, dirs, files in os.walk(self.project_path):
             dirs[:] = [d for d in dirs if d not in self.ignore_folders]
-            level = root.replace(startpath_str, '').count(os.sep)
-            indent = ' ' * 4 * level
-            tree.append(f"{indent}📂 {os.path.basename(root)}/")
-            sub_indent = ' ' * 4 * (level + 1)
             for f in files:
                 if f not in self.ignore_files and f != self.output_file and f != Path(sys.argv[0]).name:
-                    tree.append(f"{sub_indent}📄 {f}")
-        return "\n".join(tree)
+                    rel_path = Path(root).relative_to(self.project_path) / f
+                    # Use forward slashes for consistency in the output
+                    tree.append(str(rel_path).replace(os.sep, '\\'))
+        return "\n".join(sorted(tree))
 
 def generate_tree(
     startpath: Union[str, Path], ignore_folders: Union[List[str], Set[str]], ignore_files: Union[List[str], Set[str]]
 ) -> str:
-    """Legacy wrapper for generate_tree."""
+    """Legacy wrapper for generate_tree, now generating a flat list."""
     tree = []
-    startpath_str = str(startpath)
+    startpath = Path(startpath)
     for root, dirs, files in os.walk(startpath):
         dirs[:] = [d for d in dirs if d not in ignore_folders]
-        level = root.replace(startpath_str, '').count(os.sep)
-        indent = ' ' * 4 * level
-        tree.append(f"{indent}📂 {os.path.basename(root)}/")
-        sub_indent = ' ' * 4 * (level + 1)
         for f in files:
             if f not in ignore_files:
-                tree.append(f"{sub_indent}📄 {f}")
-    return "\n".join(tree)
+                rel_path = Path(root).relative_to(startpath) / f
+                # Use forward slashes for consistency in the output
+                tree.append(str(rel_path).replace(os.sep, '\\'))
+    return "\n".join(sorted(tree))
 
 def load_ignore_file(directory: Union[str, Path]) -> List[str]:
     """

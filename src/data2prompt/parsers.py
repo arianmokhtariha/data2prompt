@@ -25,14 +25,69 @@ from .constants import (
 )
 
 @dataclass
+class NotebookCellIR:
+    """Intermediate representation for a Jupyter Notebook cell."""
+    number: int
+    type: str  # 'code' or 'markdown'
+    source: str
+    outputs: Optional[str] = None
+
+@dataclass
+class TableIR:
+    """Intermediate representation for tabular data (CSV, Excel)."""
+    name: str
+    df: pd.DataFrame
+    header_note: Optional[str] = None
+    footer_note: Optional[str] = None
+    visual_warning: bool = False
+    sheet_number: Optional[int] = None
+    file_path: Optional[str] = None
+
+@dataclass
 class ParserResult:
     """Standardized output for all parsers."""
-    content: str
+    content: Union[str, List[NotebookCellIR], List[TableIR]]
     tokens: int
     type: str
     status: str
     stats_update: Dict[str, int] = field(default_factory=dict)
     skip_file: bool = False
+
+def flatten_ir(content: Union[str, List[NotebookCellIR], List[TableIR]]) -> str:
+    """
+    Flattens the Intermediate Representation (IR) into a string for token counting.
+    This provides a rough estimate of the final output size.
+    """
+    if isinstance(content, str):
+        return content
+    
+    if not content:
+        return ""
+
+    if isinstance(content[0], NotebookCellIR):
+        parts = []
+        for cell in content:
+            parts.append(cell.source)
+            if cell.outputs:
+                parts.append(cell.outputs)
+        return "\n".join(parts)
+    
+    if isinstance(content[0], TableIR):
+        parts = []
+        for table in content:
+            # Include sheet metadata in estimation if present
+            if table.sheet_number is not None:
+                parts.append(f"Sheet {table.sheet_number}: {table.name} - {table.file_path}")
+            
+            # Use a simple string representation for token estimation
+            if table.header_note:
+                parts.append(table.header_note)
+            parts.append(table.df.to_string(index=False))
+            if table.footer_note:
+                parts.append(table.footer_note)
+        return "\n".join(parts)
+    
+    return ""
 
 class BaseParser(Protocol):
     """Interface for all file parsers."""
@@ -97,26 +152,27 @@ def process_csv(
     seed: int = DEFAULT_SEED,
     table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
     table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
-) -> str:
+) -> List[TableIR]:
     try:
         df = pd.read_csv(file_path, low_memory=False)
+        header_note = None
+        footer_note = None
+        
         if len(df) > sample_size:
             df = df.sample(sample_size, random_state=seed)
-            footer = f"\n\n-- [CSV truncated: Showing random {sample_size} rows to save context] --"
-        else:
-            footer = ""
+            header_note = f"-- [Sample - Random {sample_size} rows] --"
+            footer_note = f"-- [CSV truncated: Showing random {sample_size} rows to save context] --"
         
-        markdown_content = (
-            f"#### [Sample - Random {sample_size} rows]\n"
-            + df.to_markdown(index=False)
-            + footer
-        )
-        
-        return enforce_table_limit(markdown_content, table_limit, table_truncate)
+        return [TableIR(
+            name=Path(file_path).name,
+            df=df,
+            header_note=header_note,
+            footer_note=footer_note
+        )]
     except pd.errors.EmptyDataError:
-        return "*Note: CSV file is empty.*"
+        return [TableIR(name=Path(file_path).name, df=pd.DataFrame(), footer_note="-- [Note: CSV file is empty] --")]
     except Exception as e:
-        return f"Error reading CSV: {e}"
+        return [TableIR(name=Path(file_path).name, df=pd.DataFrame(), footer_note=f"-- [Error reading CSV: {e}] --")]
 
 
 def process_notebook(
@@ -124,31 +180,20 @@ def process_notebook(
     max_lines: int = DEFAULT_MAX_LINES,
     line_threshold: int = DEFAULT_LINE_LENGTH_THRESHOLD,
     truncate_to: int = DEFAULT_TRUNCATED_LINE_LENGTH
-) -> str:
+) -> List[NotebookCellIR]:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             nb = json.load(f)
-        output_md = []
         
-        # Added enumeration to track cell numbers
+        cells_ir = []
+        
         for i, cell in enumerate(nb.get('cells', []), 1):
             cell_type = cell['cell_type'].lower()
-            output_md.append(f'<notebook_cell index="{i}" type="{cell_type}">')
+            source = "".join(cell['source'])
+            source = truncate_long_lines(source, line_threshold, truncate_to)
             
-            if cell['cell_type'] == 'markdown':
-                content = "".join(cell['source'])
-                content = truncate_long_lines(content, line_threshold, truncate_to)
-                output_md.append("<cell_markdown>")
-                output_md.append(content)
-                output_md.append("</cell_markdown>")
-            
-            elif cell['cell_type'] == 'code':
-                code = "".join(cell['source'])
-                code = truncate_long_lines(code, line_threshold, truncate_to)
-                output_md.append("<cell_code>")
-                output_md.append(code)
-                output_md.append("</cell_code>")
-                
+            cell_outputs = None
+            if cell_type == 'code':
                 outputs = []
                 for out in cell.get('outputs', []):
                     if out.get('output_type') == 'stream':
@@ -166,24 +211,27 @@ def process_notebook(
                             content = "".join(data['text/plain'])
                             if "base64" not in content:
                                 content = truncate_long_lines(content, line_threshold, truncate_to)
-                                lines = content.strip().split('\n')
-                                if len(lines) > max_lines:
-                                    outputs.append('\n'.join(lines[:max_lines]) + f"\n-- [Data preview truncated: Showing first {max_lines} lines] --")
+                                int_lines = content.strip().split('\n')
+                                if len(int_lines) > max_lines:
+                                    outputs.append('\n'.join(int_lines[:max_lines]) + f"\n-- [Data preview truncated: Showing first {max_lines} lines] --")
                                 else:
                                     outputs.append(content.strip())
                 
                 if outputs:
-                    output_md.append("<cell_output>")
-                    output_md.append("\n---\n".join(outputs))
-                    output_md.append("</cell_output>")
-                                
-            output_md.append(f"</notebook_cell>")
+                    cell_outputs = "\n---\n".join(outputs)
             
-        return "\n\n".join(output_md)
+            cells_ir.append(NotebookCellIR(
+                number=i,
+                type=cell_type,
+                source=source,
+                outputs=cell_outputs
+            ))
+            
+        return cells_ir
     except json.JSONDecodeError:
-        return "*Error: Malformed Jupyter Notebook (Invalid JSON).*"
+        return [NotebookCellIR(number=0, type="markdown", source="*Error: Malformed Jupyter Notebook (Invalid JSON).*")]
     except Exception as e:
-        return f"Error processing notebook: {e}"
+        return [NotebookCellIR(number=0, type="markdown", source=f"Error processing notebook: {e}")]
 
 
 def process_sql(
@@ -286,12 +334,13 @@ def process_sql(
 
 def process_excel(
     file_path: Union[str, Path],
+    display_path: str = "",
     max_rows: int = DEFAULT_CSV_SAMPLE_SIZE,
     max_sheets: int = DEFAULT_MAX_SHEETS,
     seed: int = DEFAULT_SEED,
     table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
     table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
-) -> Tuple[str, int]:
+) -> List[TableIR]:
     try:
         # 1. Sheet Discovery & Visual Element Check using openpyxl
         with warnings.catch_warnings():
@@ -299,12 +348,15 @@ def process_excel(
             wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
         sheet_names = wb.sheetnames
         
-        output_md = []
+        tables_ir = []
         processed_sheets = 0
         
-        for sheet_name in sheet_names:
+        for i, sheet_name in enumerate(sheet_names, 1):
             if processed_sheets >= max_sheets:
-                output_md.append(f"\n-- [Workbook truncated: Only first {max_sheets} sheets processed] --\n")
+                # Add a dummy table to represent truncation if needed,
+                # or handle it in the generator. Let's add a note to the last table or a special entry.
+                if tables_ir:
+                    tables_ir[-1].footer_note = (tables_ir[-1].footer_note or "") + f"\n-- [Workbook truncated: Only first {max_sheets} sheets processed] --"
                 break
             
             processed_sheets += 1
@@ -323,37 +375,44 @@ def process_excel(
             # 2. Data Extraction using pandas
             try:
                 df = pd.read_excel(file_path, sheet_name=sheet_name)
-                
-                output_md.append(f"### Sheet: {sheet_name}")
+                header_note = None
+                footer_note = None
                 
                 if has_visuals:
-                    output_md.append("*Note: Visual elements (images/charts) detected in this sheet.*")
+                    header_note = "-- [Note: Visual elements (images/charts) detected in this sheet] --"
 
                 if df.empty:
-                    output_md.append(f"*Note: Sheet '{sheet_name}' appears to be a visual dashboard or empty. No tabular data extracted.*")
+                    footer_note = f"-- [Note: Sheet '{sheet_name}' appears to be a visual dashboard or empty. No tabular data extracted] --"
                 else:
                     # 3. Sampling (The Safety Guard)
                     if len(df) > max_rows:
                         df = df.sample(n=max_rows, random_state=seed)
-                        footer = f"\n\n-- [Sheet truncated: Showing random {max_rows} rows to save context] --"
-                        header = f"#### [Sample - Random {max_rows} rows]\n"
-                    else:
-                        footer = ""
-                        header = ""
+                        footer_note = (footer_note or "") + f"-- [Sheet truncated: Showing random {max_rows} rows to save context] --"
+                        header_note = (header_note or "") + f"-- [Sample - Random {max_rows} rows] --"
                     
-                    markdown_data = df.to_markdown(index=False)
-                    sheet_content = header + markdown_data + footer
-                    output_md.append(enforce_table_limit(sheet_content, table_limit, table_truncate))
+                tables_ir.append(TableIR(
+                    name=sheet_name,
+                    df=df,
+                    header_note=header_note,
+                    footer_note=footer_note,
+                    visual_warning=has_visuals,
+                    sheet_number=i,
+                    file_path=display_path
+                ))
+
             except Exception as e:
-                output_md.append(f"### Sheet: {sheet_name}")
-                output_md.append(f"⚠️ Error reading sheet data: {e}")
-            
-            output_md.append("\n---\n")
+                tables_ir.append(TableIR(
+                    name=sheet_name,
+                    df=pd.DataFrame(),
+                    footer_note=f"-- [Error reading sheet data: {e}] --",
+                    sheet_number=i,
+                    file_path=display_path
+                ))
             
         wb.close()
-        return "\n".join(output_md), processed_sheets
+        return tables_ir
     except Exception as e:
-        return f"⚠️ Error reading Excel: {e}", 0
+        return [TableIR(name="Error", df=pd.DataFrame(), footer_note=f"-- [Error reading Excel: {e}] --")]
 
 # --- Parser Implementations ---
 
@@ -367,7 +426,7 @@ class CSVParser:
             config.table_limit,
             config.table_truncate
         )
-        tokens, _ = count_tokens(content)
+        tokens, _ = count_tokens(flatten_ir(content))
         return ParserResult(
             content=content,
             tokens=tokens,
@@ -385,7 +444,7 @@ class NotebookParser:
             config.line_length_threshold,
             config.truncated_line_length
         )
-        tokens, _ = count_tokens(content)
+        tokens, _ = count_tokens(flatten_ir(content))
         return ParserResult(
             content=content,
             tokens=tokens,
@@ -419,15 +478,24 @@ class SQLParser:
 class ExcelParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
         from .utils import count_tokens
-        content, sheet_count = process_excel(
+        import os
+        # Get path relative to project root
+        try:
+            display_path = str(file_path.relative_to(Path.cwd())).replace(os.sep, '\\')
+        except ValueError:
+            display_path = str(file_path).replace(os.sep, '\\')
+            
+        content = process_excel(
             file_path,
+            display_path,
             config.csv_sample_size,
             config.max_sheets,
             config.seed,
             config.table_limit,
             config.table_truncate
         )
-        tokens, _ = count_tokens(content)
+        sheet_count = len(content)
+        tokens, _ = count_tokens(flatten_ir(content))
         return ParserResult(
             content=content,
             tokens=tokens,
@@ -444,12 +512,12 @@ class DefaultParser:
         
         ext = file_path.suffix.lower()
         
-        # Check for .md generation flag
-        if ext == '.md':
+        # Check for generation flag in all text files
+        if not is_binary(file_path):
             try:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     if GENERATION_FLAG in f.read(100):
-                        return ParserResult(content="", tokens=0, type="Markdown", status="Skipped", skip_file=True)
+                        return ParserResult(content="", tokens=0, type="Skipped", status="Skipped (Generated)", skip_file=True)
             except:
                 pass
 
@@ -479,6 +547,7 @@ class DefaultParser:
             else:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
+                    content = truncate_long_lines(content, config.line_length_threshold, config.truncated_line_length)
                     tokens, _ = count_tokens(content)
                     return ParserResult(
                         content=content,

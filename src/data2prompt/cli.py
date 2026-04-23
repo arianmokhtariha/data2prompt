@@ -19,13 +19,15 @@ from .constants import (
     DEFAULT_TABLE_CHAR_LIMIT,
     DEFAULT_TABLE_TRUNCATED_SIZE,
     DEFAULT_MAX_FILE_SIZE_KB,
-    DEFAULT_OUTPUT_FILE
+    DEFAULT_OUTPUT_FILE,
+    SUPPORTED_FORMATS
 )
 
 @dataclass
 class Config:
     """Data Transfer Object for application configuration."""
     output: str
+    format: str
     csv_sample_size: int
     seed: int
     sql_sample_size: int
@@ -55,7 +57,10 @@ def setup_cli() -> Config:
     
     # Output settings
     parser.add_argument('-o', '--output', default=DEFAULT_OUTPUT_FILE,
-                        help=f'Name of the generated markdown file (default: {DEFAULT_OUTPUT_FILE})')
+                        help=f'Base name of the generated file (default: {DEFAULT_OUTPUT_FILE})')
+    
+    parser.add_argument('-f', '--format', choices=list(SUPPORTED_FORMATS.keys()), default='xml',
+                        help='Output format: xml or markdown (default: xml)')
     
     # CSV sampling settings
     parser.add_argument('-s', '--csv-sample-size', type=int, default=DEFAULT_CSV_SAMPLE_SIZE,
@@ -111,8 +116,13 @@ def setup_cli() -> Config:
     # This ensures that even if a user provides custom ignores, essential items
     # like '.git' or binary extensions are still respected.
     
+    # Combine base name with format-specific extension
+    extension = SUPPORTED_FORMATS.get(args.format, '.xml')
+    final_output_name = f"{args.output}{extension}"
+
     return Config(
-        output=args.output,
+        output=final_output_name,
+        format=args.format,
         csv_sample_size=args.csv_sample_size,
         seed=args.seed,
         sql_sample_size=args.sql_sample_size,

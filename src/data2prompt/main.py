@@ -12,17 +12,13 @@ warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 from pathlib import Path
 from typing import Dict, Any, List, Set
 from .cli import setup_cli, Config
-from .parsers import registry, ParserResult
+from .parsers import registry, ParserResult, flatten_ir
 from .utils import ProjectScanner, count_tokens, get_dynamic_wrapper
 from .ui import ui
 from .constants import (
-    GENERATION_FLAG,
-    SYSTEM_INSTRUCTIONS,
-    TAG_PROJECT_STRUCTURE,
-    TAG_FILE_REPOSITORY,
-    TAG_FILE,
-    TAG_CONTENT
+    GENERATION_FLAG
 )
+from .output import get_generator
 
 def get_ui_action(ext: str, skip_exts: Set[str]) -> str:
     """Determines the UI action string based on file extension."""
@@ -49,7 +45,7 @@ def process_target_file(file_path: Path, config: Config) -> ParserResult:
     parser = registry.get_parser(ext)
     return parser.parse(file_path, config)
 
-def run_packager():
+def main():
     """
     The main entry point for the Data2Prompt CLI.
     Orchestrates the argument parsing, file discovery, content processing, and Markdown generation.
@@ -71,15 +67,6 @@ def run_packager():
     # Initialize UI and start process
     ui.on_start("[cyan]Starting process...[/cyan]", total=total_steps)
 
-    # 1. Build the Header with Metadata
-    md_content = [
-        f"<!-- {GENERATION_FLAG} -->",
-        f"# Project Context: {project_path.name}",
-        SYSTEM_INSTRUCTIONS,
-        f"> Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}\n",
-        ""  # Blank line for spacing
-    ]
-    
     stats = {
         "file_count": 0,
         "csv_count": 0,
@@ -97,18 +84,11 @@ def run_packager():
     with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
         # 1. Generating project tree
         handler.on_progress("[cyan]Generating project tree...[/cyan]")
-        md_content.append("## Project Structure")
-        md_content.append(f"<{TAG_PROJECT_STRUCTURE}>")
-        md_content.append("```text")
         tree_text = scanner.generate_tree()
-        md_content.append(tree_text)
-        md_content.append("```")
-        md_content.append(f"</{TAG_PROJECT_STRUCTURE}>\n---\n")
         handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)
 
         # 2. Processing files
-        md_content.append("## File Repository")
-        md_content.append(f"<{TAG_FILE_REPOSITORY}>")
+        files_data = []
         
         for file_path in all_files:
             relative_path = file_path.relative_to(project_path)
@@ -124,21 +104,14 @@ def run_packager():
                 handler.on_progress(f"[cyan]{action}[/cyan] [bold]{file_path.name}[/bold] [cyan]...[/cyan]", advance=1)
                 continue
 
-            # File Header with Metadata
-            # We use a custom anchor to ensure the TOC works reliably
-            anchor_name = f"file-{str(relative_path).lower().replace(' ', '-').replace('.', '').replace('/', '').replace('\\', '')}"
-            md_content.append(f'### <a name="{anchor_name}"></a>📄 File: `{relative_path}`')
-            md_content.append(f"> **Metadata:** Type: `{result.type}` | Tokens: `{result.tokens}` | Status: `{result.status}`")
-            
-            # XML Wrapping with Dynamic Backticks
-            wrapper = get_dynamic_wrapper(result.content)
-            lang = ext[1:] if ext and ext != '.md' else 'markdown' if ext == '.md' else 'text'
-            
-            md_content.append(f'<{TAG_FILE} path="{relative_path}">')
-            md_content.append(f"<{TAG_CONTENT}>")
-            md_content.append(f"{wrapper}{lang}\n{result.content}\n{wrapper}")
-            md_content.append(f"</{TAG_CONTENT}>")
-            md_content.append(f"</{TAG_FILE}>")
+            # Collect file data for the generator
+            files_data.append({
+                "path": str(relative_path),
+                "content": result.content,
+                "type": result.type,
+                "tokens": result.tokens,
+                "status": result.status
+            })
             
             # Update stats
             for key, value in result.stats_update.items():
@@ -151,39 +124,30 @@ def run_packager():
                 "status": result.status
             })
             
-            md_content.append("\n---\n")
             handler.on_progress(f"[cyan]{action}[/cyan] [bold]{file_path.name}[/bold] [cyan]...[/cyan]", advance=1)
-
-        md_content.append(f"</{TAG_FILE_REPOSITORY}>")
 
         # 3. Compiling project context
         handler.on_progress("[cyan]Compiling project context...[/cyan]")
-        # Calculate tokens before final save
-        full_content_temp = "\n".join(md_content)
-        total_tokens, method = count_tokens(full_content_temp)
         
-        # Insert token count into the header (after generated on line)
-        method_label = "o200k_base" if method == "o200k_base" else "regex_fallback" if method == "regex_fallback" else "word_count"
-        md_content.insert(4, f"> Tokens: {total_tokens} (est. via {method_label})")
+        # We need a temporary token count for the final report
+        # The generator will handle the final string construction
+        # We use flatten_ir to convert structured content to strings for token counting
+        temp_content = "\n".join([flatten_ir(f["content"]) for f in files_data]) + tree_text
+        total_tokens, method = count_tokens(temp_content)
         
-        # Generate Summary Table (TOC)
-        summary_table = ["## Summary Table", "| File | Type | Tokens | Status |", "| :--- | :--- | :--- | :--- |"]
-        for info in processed_files_info:
-            # Create a markdown anchor from the file path
-            # Markdown anchors for headers: lowercase, spaces to hyphens, remove special chars
-            anchor = info['name'].lower().replace(' ', '-').replace('.', '').replace('/', '').replace('\\', '')
-            # The actual header format is "### 📄 File: `path`"
-            # Rich/Markdown usually handles this by stripping the emoji and backticks
-            # Let's use a more direct approach for the anchor
-            safe_anchor = f"file-{anchor}"
-            # We'll need to update the header to include this anchor
-            summary_table.append(f"| [{info['name']}](#{safe_anchor}) | {info['type']} | {info['tokens']} | {info['status']} |")
-        
-        md_content.insert(5, "\n".join(summary_table))
-        md_content.insert(6, "\n---\n")
+        generator = get_generator(config.format)
+        final_output = generator.generate(
+            project_name=project_path.name,
+            tree_text=tree_text,
+            files_data=files_data,
+            stats=stats,
+            total_tokens=total_tokens,
+            token_method=method,
+            config=config
+        )
 
         with open(config.output, 'w', encoding='utf-8') as f:
-            f.write("\n".join(md_content))
+            f.write(final_output)
         handler.on_progress("[cyan]Compiling project context...[/cyan]", advance=1)
 
     # Final File Size Check
@@ -199,4 +163,4 @@ def run_packager():
         )
 
 if __name__ == "__main__":
-    run_packager()
+    main()
