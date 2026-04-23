@@ -1,5 +1,3 @@
-import os
-import sys
 import warnings
 
 # Suppress known noisy warnings globally for a cleaner TUI experience
@@ -10,14 +8,11 @@ import pandas as pd
 # Now that pandas is imported, we can reference its error types
 warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 from pathlib import Path
-from typing import Dict, Any, List, Set
+from typing import Set
 from .cli import setup_cli, Config
 from .parsers import registry, ParserResult, flatten_ir
-from .utils import ProjectScanner, count_tokens, get_dynamic_wrapper
+from .utils import ProjectScanner, count_tokens, check_connectivity
 from .ui import ui
-from .constants import (
-    GENERATION_FLAG
-)
 from .output import get_generator
 
 def get_ui_action(ext: str, skip_exts: Set[str]) -> str:
@@ -62,7 +57,7 @@ def main():
     
     # Collect all files first to set progress bar total
     all_files = scanner.scan()
-    total_steps = 1 + len(all_files) + 1
+    total_steps = 1 + 1 + len(all_files) + 1
 
     # Initialize UI and start process
     ui.on_start("[cyan]Starting process...[/cyan]", total=total_steps)
@@ -82,7 +77,13 @@ def main():
     processed_files_info = []
 
     with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
-        # 1. Generating project tree
+        # 1. Checking connectivity
+        handler.on_progress("[cyan]Checking online connectivity...[/cyan]")
+        is_online = check_connectivity()
+        status_msg = "[green]Online[/green]" if is_online else "[yellow]Offline (using fallback)[/yellow]"
+        handler.on_progress(f"[cyan]Checking online connectivity... {status_msg}[/cyan]", advance=1)
+
+        # 2. Generating project tree
         handler.on_progress("[cyan]Generating project tree...[/cyan]")
         tree_text = scanner.generate_tree()
         handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)

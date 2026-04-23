@@ -29,6 +29,19 @@ def is_online(timeout: float = 0.5) -> bool:
         return False
 
 
+def check_connectivity(timeout: float = 0.5) -> bool:
+    """
+    Performs a connectivity check and updates the global offline mode flag.
+    """
+    global _OFFLINE_MODE
+    if is_online(timeout):
+        _OFFLINE_MODE = False
+        return True
+    else:
+        _OFFLINE_MODE = True
+        return False
+
+
 def count_tokens(text: str, encoding_name: str = "o200k_base") -> tuple[int, str]:
     """
     Returns the number of tokens in a text string and the method used.
