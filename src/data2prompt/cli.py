@@ -42,6 +42,7 @@ class Config:
     ignore_files: Set[str] = field(default_factory=set)
     max_file_size: int = 0
     skip_exts: Set[str] = field(default_factory=set)
+    use_gitignore: bool = True
 
 def setup_cli() -> Config:
     """Configures the Command Line Interface (CLI) for the tool.
@@ -109,6 +110,9 @@ def setup_cli() -> Config:
     parser.add_argument('--skip-exts', nargs='+', default=[],
                         help='Additional file extensions to skip content for')
     
+    parser.add_argument('--no-gitignore', action='store_false', dest='use_gitignore',
+                        help='Disable automatic .gitignore detection and filtering')
+    
     args = parser.parse_args()
     
     # --- Argument Merging Logic ---
@@ -136,5 +140,6 @@ def setup_cli() -> Config:
         ignore_folders=set(args.ignore_folders) | CORE_IGNORES,
         ignore_files=set(args.ignore_files) | CORE_IGNORE_FILES,
         max_file_size=args.max_file_size,
-        skip_exts=set(args.skip_exts) | CORE_SKIP_EXTS
+        skip_exts=set(args.skip_exts) | CORE_SKIP_EXTS,
+        use_gitignore=args.use_gitignore
     )

@@ -6,6 +6,7 @@ from typing import List, Union, Set, Dict
 
 import tiktoken
 import regex as re
+import pathspec
 
 from .ui import ui
 
@@ -102,41 +103,84 @@ def is_binary(file_path: Union[str, Path]) -> bool:
 
 
 class ProjectScanner:
-    """Encapsulates file discovery and ignore logic."""
+    """Encapsulates file discovery and ignore logic using pathspec for robust pattern matching."""
 
-    def __init__(self, project_path: Path, ignore_folders: Set[str], ignore_files: Set[str], output_file: str):
+    def __init__(self, project_path: Path, ignore_folders: Set[str], ignore_files: Set[str], output_file: str, use_gitignore: bool = True):
         self.project_path = project_path
         self.ignore_folders = ignore_folders
         self.ignore_files = ignore_files
         self.output_file = output_file
-        self._load_project_ignores()
+        self.use_gitignore = use_gitignore
+        self.spec = self._build_spec()
 
-    def _load_project_ignores(self):
-        """Loads and merges project-specific ignores from .data2promptignore."""
-        project_ignores = load_ignore_file(self.project_path)
-        self.ignore_folders.update(project_ignores)
-        self.ignore_files.update(project_ignores)
+    def _build_spec(self) -> pathspec.PathSpec:
+        """Compiles all ignore patterns into a single PathSpec object."""
+        patterns = []
+        
+        # 1. Add explicit ignores from CLI/Constants (folders need trailing slash for pathspec)
+        for folder in self.ignore_folders:
+            patterns.append(f"{folder}/")
+        for file in self.ignore_files:
+            patterns.append(file)
+            
+        # 2. Add .data2promptignore
+        patterns.extend(load_ignore_file(self.project_path, '.data2promptignore'))
+        
+        # 3. Add .gitignore if enabled
+        if self.use_gitignore:
+            patterns.extend(load_ignore_file(self.project_path, '.gitignore'))
+            
+        return pathspec.PathSpec.from_lines('gitwildmatch', patterns)
+
+    def _is_ignored(self, path: Path) -> bool:
+        """Checks if a given path should be ignored based on the compiled spec and special cases."""
+        try:
+            rel_path = path.relative_to(self.project_path)
+        except ValueError:
+            return False
+            
+        if str(rel_path) == '.':
+            return False
+            
+        # Check against pathspec
+        if self.spec.match_file(str(rel_path)):
+            return True
+            
+        # Special cases: output file and the script itself
+        if path.name == self.output_file or path.name == Path(sys.argv[0]).name:
+            return True
+            
+        return False
 
     def scan(self) -> List[Path]:
         """Discovers all files in the project path, respecting ignore rules."""
         all_files = []
         for root, dirs, files in os.walk(self.project_path):
-            dirs[:] = [d for d in dirs if d not in self.ignore_folders]
+            root_path = Path(root)
+            
+            # Prune directories in-place to avoid unnecessary walking
+            dirs[:] = [d for d in dirs if not self._is_ignored(root_path / d)]
+            
             for file in files:
-                if file == self.output_file or file == Path(sys.argv[0]).name or file in self.ignore_files:
-                    continue
-                all_files.append(Path(root) / file)
+                file_path = root_path / file
+                if not self._is_ignored(file_path):
+                    all_files.append(file_path)
         return all_files
 
     def generate_tree(self) -> str:
         """Generates a flat list of files in the project structure."""
         tree = []
         for root, dirs, files in os.walk(self.project_path):
-            dirs[:] = [d for d in dirs if d not in self.ignore_folders]
+            root_path = Path(root)
+            
+            # Prune directories
+            dirs[:] = [d for d in dirs if not self._is_ignored(root_path / d)]
+            
             for f in files:
-                if f not in self.ignore_files and f != self.output_file and f != Path(sys.argv[0]).name:
-                    rel_path = Path(root).relative_to(self.project_path) / f
-                    # Use forward slashes for consistency in the output
+                file_path = root_path / f
+                if not self._is_ignored(file_path):
+                    rel_path = file_path.relative_to(self.project_path)
+                    # Use backslashes for consistency in the output as per project standard
                     tree.append(str(rel_path).replace(os.sep, '\\'))
         return "\n".join(sorted(tree))
 
@@ -155,12 +199,12 @@ def generate_tree(
                 tree.append(str(rel_path).replace(os.sep, '\\'))
     return "\n".join(sorted(tree))
 
-def load_ignore_file(directory: Union[str, Path]) -> List[str]:
+def load_ignore_file(directory: Union[str, Path], filename: str = '.data2promptignore') -> List[str]:
     """
-    Looks for a .data2promptignore file in the given directory.
+    Looks for an ignore file in the given directory.
     Returns a list of patterns to ignore, excluding comments and empty lines.
     """
-    ignore_path = os.path.join(directory, '.data2promptignore')
+    ignore_path = os.path.join(directory, filename)
     ignore_list = []
     
     if os.path.exists(ignore_path):
@@ -171,10 +215,8 @@ def load_ignore_file(directory: Union[str, Path]) -> List[str]:
                     # Skip empty lines and comments
                     if not line or line.startswith('#'):
                         continue
-                    # Strip trailing slashes and whitespace
-                    pattern = line.rstrip('/')
-                    ignore_list.append(pattern)
+                    ignore_list.append(line)
         except Exception as e:
-            ui.print_warning(f"Could not read .data2promptignore: {e}")
+            ui.print_warning(f"Could not read {filename}: {e}")
             
     return ignore_list

@@ -48,7 +48,7 @@ class MarkdownGenerator(OutputGenerator):
         lines = [
             f"<!-- {GENERATION_FLAG} -->",
             "",
-            f"# Project Context: {project_name}",
+            f"# codebase: {project_name}",
             "",
             SYSTEM_INSTRUCTIONS_MARKDOWN,
             "",
@@ -151,7 +151,7 @@ class XMLGenerator(OutputGenerator):
         lines = [
             f"<!-- {GENERATION_FLAG} -->",
             "",
-            f'<project_context name="{project_name}">',
+            f'<codebase name="{project_name}">',
             "",
             SYSTEM_INSTRUCTIONS_XML,
             "",
@@ -180,7 +180,7 @@ class XMLGenerator(OutputGenerator):
             if isinstance(content, list) and content and isinstance(content[0], NotebookCellIR):
                 # Render Notebook IR to XML
                 for cell in content:
-                    lines.append(f'    <cell path="{display_path}" number="{cell.number}" type="{cell.type}">')
+                    lines.append(f'    <cell path="{display_path}" index="{cell.number}" type="{cell.type}">')
                     lines.append(f'        <{TAG_CONTENT}>')
                     lines.append(cell.source)
                     lines.append(f'        </{TAG_CONTENT}>')
@@ -195,7 +195,7 @@ class XMLGenerator(OutputGenerator):
                 for table in content:
                     # Handle Excel Sheet Metadata
                     if table.sheet_number is not None:
-                        lines.append(f'<sheet name="{table.name}" number="{table.sheet_number}" path="{table.file_path}">')
+                        lines.append(f'<sheet name="{table.name}" sheet_number="{table.sheet_number}" path="{table.file_path}">')
                     
                     table_parts = []
                     if table.header_note:

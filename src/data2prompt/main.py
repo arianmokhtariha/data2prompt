@@ -52,7 +52,8 @@ def main():
         project_path=project_path,
         ignore_folders=config.ignore_folders,
         ignore_files=config.ignore_files,
-        output_file=config.output
+        output_file=config.output,
+        use_gitignore=config.use_gitignore
     )
     
     # Collect all files first to set progress bar total
