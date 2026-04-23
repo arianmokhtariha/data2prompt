@@ -11,7 +11,7 @@ The CLI uses a `Config` Data Transfer Object (DTO) to manage application setting
 | Argument | Description | Default |
 | :--- | :--- | :--- |
 | `-o`, `--output` | Base name of the generated file | `PROMPT` |
-| `-f`, `--format` | Output format (`xml` or `markdown`) | `xml` |
+| `-f`, `--format` | Output format (`xml` or `markdown`) | `markdown` |
 | `-s`, `--csv-sample-size` | Number of random rows to sample from CSVs | `15` |
 | `--seed` | Random seed for consistent sampling | `42` |
 | `--sql-sample-size` | Number of INSERT statements to keep in SQL files | `15` |
