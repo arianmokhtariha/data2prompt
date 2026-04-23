@@ -2,7 +2,7 @@
 
 > **High-performance codebase-to-prompt orchestration for Data Science workflows and data-heavy projects.**
 
-[`data2prompt`](src/data2prompt/main.py) is a CLI tool designed to bridge the gap between local data-heavy projects and Large Language Model (LLM) context windows. Unlike generic code-packagers, it provides an intelligent,optimized output for LLM attention mechanism, token-aware representation of a project's structure and content, specifically optimized for data-heavy environments.
+data2prompt is a CLI tool designed to bridge the gap between local data-heavy projects and Large Language Model (LLM) context windows. Unlike generic code-packagers, it provides an intelligent,optimized output for LLM attention mechanism, token-aware representation of a project's structure and content, specifically optimized for data-heavy environments.
 
 ## 📝 Important Note
 * **Data2prompt** is not designed for pure and large **code-heavy** projects.
