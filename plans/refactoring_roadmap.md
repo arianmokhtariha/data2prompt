@@ -45,12 +45,12 @@ This roadmap outlines the transition of the `data2prompt` codebase toward a more
 ## Phase 3: Orchestration Refinement
 
 ### Architectural Changes
-- **Refactor `run_packager`**: Update the main loop in [`src/data2prompt/main.py`](src/data2prompt/main.py) to use `ProjectScanner` and `ParserRegistry`.
+- **Refactor `main`**: Update the main loop in [`src/data2prompt/main.py`](src/data2prompt/main.py) to use `ProjectScanner` and `ParserRegistry`.
 - **Standardize Metadata**: Ensure all parsers return a uniform metadata structure, which `main.py` uses to build the final Markdown.
 - **Pipeline Pattern**: Consider treating the processing of a file as a pipeline: `Discovery -> Parsing -> Wrapping -> Stats Collection`.
 
 ### Expected Benefits
-- **Readability**: `run_packager` will be significantly shorter and easier to follow.
+- **Readability**: `main` will be significantly shorter and easier to follow.
 - **Robustness**: Centralized error handling within the registry or pipeline.
 
 ### Alignment with MFO

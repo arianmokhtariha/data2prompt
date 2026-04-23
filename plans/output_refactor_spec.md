@@ -166,7 +166,7 @@ The `process_notebook` function will be updated to use the new `<content>` tag s
 ## 6. Main Orchestration (`src/data2prompt/main.py`)
 
 - Import `get_generator` from `.output`.
-- In `run_packager`, instantiate the appropriate generator based on `config.format`.
+- In `main`, instantiate the appropriate generator based on `config.format`.
 - Collect all necessary data (tree, processed files, stats) into a structured format.
 - Call `generator.generate(...)` to get the final string.
 - Write the result to `config.output`.
