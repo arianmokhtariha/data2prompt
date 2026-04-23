@@ -1,33 +1,66 @@
 import os
 import sys
+import socket
 from pathlib import Path
-from typing import List, Union, Set
+from typing import List, Union, Set, Dict
 
 import tiktoken
 import regex as re
 
 from .ui import ui
 
+# Global state for tokenization
+_OFFLINE_MODE = False
+_ENCODING_CACHE: Dict[str, tiktoken.Encoding] = {}
+
+
+def is_online(timeout: float = 0.5) -> bool:
+    """
+    Quickly checks for internet connectivity by attempting to connect to OpenAI's public storage.
+    Default timeout is 0.5s to prevent hanging the tool.
+    """
+    try:
+        # tiktoken downloads from openaipublic.blob.core.windows.net
+        socket.setdefaulttimeout(timeout)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(("openaipublic.blob.core.windows.net", 443))
+        return True
+    except (socket.timeout, OSError):
+        return False
+
 
 def count_tokens(text: str, encoding_name: str = "o200k_base") -> tuple[int, str]:
     """
     Returns the number of tokens in a text string and the method used.
     Attempts to use tiktoken (requires internet/cache),
-    falls back to a robust offline regex pattern if tiktoken fails.
+    falls back to a robust offline regex pattern if tiktoken fails or is offline.
     """
-    try:
-        encoding = tiktoken.get_encoding(encoding_name)
-        return len(encoding.encode(text)), encoding_name
-    except Exception:
-        # Offline fallback: Official OpenAI o200k_base pre-tokenization pattern
-        # This pattern splits text into chunks exactly like the GPT-4o tokenizer
-        # before the BPE merging step. It is ~95-98% accurate for code.
-        pattern = r"""[^\r\n\p{L}\p{N}]?[\p{L}\p{N}]+|(?:\r?\n)|[\s\t]+|[^\s\p{L}\p{N}]+"""
+    global _OFFLINE_MODE
+
+    if not _OFFLINE_MODE:
         try:
-            return len(re.findall(pattern, text)), "regex_fallback"
+            if encoding_name not in _ENCODING_CACHE:
+                # Perform a quick connectivity check before the potentially hanging tiktoken call
+                if not is_online():
+                    _OFFLINE_MODE = True
+                    raise ConnectionError("Offline mode detected")
+                
+                _ENCODING_CACHE[encoding_name] = tiktoken.get_encoding(encoding_name)
+            
+            encoding = _ENCODING_CACHE[encoding_name]
+            return len(encoding.encode(text)), encoding_name
         except Exception:
-            # Absolute fallback to word count if regex fails
-            return len(text.split()), "word_count"
+            _OFFLINE_MODE = True
+
+    # Offline fallback: Official OpenAI o200k_base pre-tokenization pattern
+    # This pattern splits text into chunks exactly like the GPT-4o tokenizer
+    # before the BPE merging step. It is ~95-98% accurate for code.
+    pattern = r"""[^\r\n\p{L}\p{N}]?[\p{L}\p{N}]+|(?:\r?\n)|[\s\t]+|[^\s\p{L}\p{N}]+"""
+    try:
+        return len(re.findall(pattern, text)), "regex_fallback"
+    except Exception:
+        # Absolute fallback to word count if regex fails
+        return len(text.split()), "word_count"
 
 def get_dynamic_wrapper(content: str) -> str:
     """
