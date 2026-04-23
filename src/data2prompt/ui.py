@@ -60,13 +60,6 @@ class UIHandler:
         """Event handler for warnings."""
         self.print_warning(message)
 
-    def _get_matrix_color(self, t: float) -> Color:
-        """Calculates a color for a linear gradient between dark and neon green."""
-        r = int(MATRIX_DARK_GREEN[0] + (MATRIX_NEON_GREEN[0] - MATRIX_DARK_GREEN[0]) * t)
-        g = int(MATRIX_DARK_GREEN[1] + (MATRIX_NEON_GREEN[1] - MATRIX_DARK_GREEN[1]) * t)
-        b = int(MATRIX_DARK_GREEN[2] + (MATRIX_NEON_GREEN[2] - MATRIX_DARK_GREEN[2]) * t)
-        return Color.from_rgb(r, g, b)
-
     def _generate_matrix_frame(self, width: int, height: int) -> Text:
         """Generates a single frame of random binary/hex characters."""
         chars = "0123456789ABCDEF"
@@ -88,20 +81,8 @@ class UIHandler:
                 live.update(self._generate_matrix_frame(max_width, height))
                 time.sleep(ANIMATION_FRAME_DELAY)
             
-            # Final reveal with gradient
-            final_text = Text()
-            for y, line in enumerate(ASCII_ART):
-                row_text = Text()
-                t_y = y / (height - 1) if height > 1 else 0
-                for x, char in enumerate(line):
-                    t_x = x / (max_width - 1) if max_width > 1 else 0
-                    # Use a combination of x and y for the gradient
-                    t = (t_x + t_y) / 2
-                    color = self._get_matrix_color(t)
-                    row_text.append(char, style=Style(color=color, bold=True))
-                final_text.append(row_text)
-                if y < height - 1:
-                    final_text.append("\n")
+            # Final reveal with solid neon green
+            final_text = Text("\n".join(ASCII_ART), style=Style(color=Color.from_rgb(*MATRIX_NEON_GREEN), bold=True))
             
             live.update(final_text)
         
@@ -225,20 +206,7 @@ class UIHandler:
 
         # 3. Interactive Logic
         # Recreate the header for the interactive screen
-        max_width = max(len(line) for line in ASCII_ART)
-        height = len(ASCII_ART)
-        header_text = Text()
-        for y, line in enumerate(ASCII_ART):
-            row_text = Text()
-            t_y = y / (height - 1) if height > 1 else 0
-            for x, char in enumerate(line):
-                t_x = x / (max_width - 1) if max_width > 1 else 0
-                t = (t_x + t_y) / 2
-                color = self._get_matrix_color(t)
-                row_text.append(char, style=Style(color=color, bold=True))
-            header_text.append(row_text)
-            if y < height - 1:
-                header_text.append("\n")
+        header_text = Text("\n".join(ASCII_ART), style=Style(color=Color.from_rgb(*MATRIX_NEON_GREEN), bold=True))
 
         # If not on Windows or not in a TTY, just print everything and move on
         if not sys.stdin.isatty() or sys.platform != "win32":
