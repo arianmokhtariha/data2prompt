@@ -20,6 +20,7 @@ from .constants import (
     DEFAULT_TABLE_TRUNCATED_SIZE,
     DEFAULT_MAX_FILE_SIZE_KB,
     DEFAULT_OUTPUT_FILE,
+    DEFAULT_FORMAT,
     SUPPORTED_FORMATS
 )
 
@@ -60,8 +61,8 @@ def setup_cli() -> Config:
     parser.add_argument('-o', '--output', default=DEFAULT_OUTPUT_FILE,
                         help=f'Base name of the generated file (default: {DEFAULT_OUTPUT_FILE})')
     
-    parser.add_argument('-f', '--format', choices=list(SUPPORTED_FORMATS.keys()), default='xml',
-                        help='Output format: xml or markdown (default: xml)')
+    parser.add_argument('-f', '--format', choices=list(SUPPORTED_FORMATS.keys()), default=DEFAULT_FORMAT,
+                        help=f'Output format: xml or markdown (default: {DEFAULT_FORMAT})')
     
     # CSV sampling settings
     parser.add_argument('-s', '--csv-sample-size', type=int, default=DEFAULT_CSV_SAMPLE_SIZE,
@@ -121,7 +122,7 @@ def setup_cli() -> Config:
     # like '.git' or binary extensions are still respected.
     
     # Combine base name with format-specific extension
-    extension = SUPPORTED_FORMATS.get(args.format, '.xml')
+    extension = SUPPORTED_FORMATS.get(args.format, SUPPORTED_FORMATS.get(DEFAULT_FORMAT))
     final_output_name = f"{args.output}{extension}"
 
     return Config(

@@ -37,6 +37,7 @@ DEFAULT_TABLE_CHAR_LIMIT = 50000            # Max characters allowed for a singl
 DEFAULT_TABLE_TRUNCATED_SIZE = 20000        # Number of characters to keep when a table/sheet is truncated due to size.
 DEFAULT_MAX_FILE_SIZE_KB = 70               # maximum file size of unhandled type to keep enitrely (if file is larger than that only the first 10kb will be shown)
 DEFAULT_OUTPUT_FILE = 'PROMPT'              # default output base name (extension added via --format)
+DEFAULT_FORMAT = 'markdown'                 # default output format
 
 # Mapping of format types to their respective file extensions
 SUPPORTED_FORMATS = {
@@ -49,7 +50,7 @@ GENERATION_FLAG = "DATA2PROMPT_GENERATED_CONTENT"
 
 # --- LLM Structured Output Constants ---
 # Refactored System Instructions (Repomix Style)
-SYSTEM_INSTRUCTIONS_MARKDOWN = """This document is a structured representation of a codebase and data schema. It is designed to be consumed by a Large Language Model.
+SYSTEM_INSTRUCTIONS_MARKDOWN = """## purpose: \nThis document is a structured representation of a codebase and data schema. It is designed to be consumed by a Large Language Model.
 The output is organized into sections:
 1. Directory Structure: List of all files in this project.
 2. Files: The content of each file, clearly labeled with its path using '## File: {path}' headers.
@@ -57,13 +58,13 @@ For all standard files, content is wrapped in markdown code blocks using dynamic
 For notebooks, individual cells are clearly labeled with cell numbers, types, and their respective file paths.
 For Excel files, individual sheets are clearly labeled with sheet names, numbers, and their respective file paths."""
 
-SYSTEM_INSTRUCTIONS_XML = """This document is a structured representation of a codebase and data schema. It is designed to be consumed by a Large Language Model.
+SYSTEM_INSTRUCTIONS_XML = """<purpose>\nThis document is a structured representation of a codebase and data schema. It is designed to be consumed by a Large Language Model.
 The output is organized into XML tags:
 1. <directory_structure>: List of all files in this project.
 2. <files>: Contains the repository's files.
 3. <file>: Represents a single file with a 'path' attribute.
 4. <cell>: Used within notebooks to encapsulate individual cells, featuring 'path', 'number', and 'type' attributes.
-5. <sheet>: Used within Excel files to encapsulate individual sheets, featuring 'name', 'number', and 'path' attributes."""
+5. <sheet>: Used within Excel files to encapsulate individual sheets, featuring 'name', 'number', and 'path' attributes.\n</purpose>"""
 
 # Updated Tags
 TAG_DIRECTORY_STRUCTURE = "directory_structure"

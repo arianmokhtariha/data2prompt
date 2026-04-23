@@ -225,7 +225,7 @@ class XMLGenerator(OutputGenerator):
             lines.append("")
             
         lines.append(f"</{TAG_FILES}>")
-        lines.append("</project_context>")
+        lines.append("</codebase>")
         
         return "\n".join(lines)
 
