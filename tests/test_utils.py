@@ -41,6 +41,6 @@ def test_load_ignore_file():
             f.write("secrets.json\n")
         
         ignores = load_ignore_file(temp_dir)
-        assert "node_modules" in ignores  # Slash should be stripped
+        assert "node_modules/" in ignores  # Slash should be preserved for pathspec
         assert "secrets.json" in ignores
         assert len(ignores) == 2

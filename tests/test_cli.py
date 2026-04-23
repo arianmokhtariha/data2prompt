@@ -22,12 +22,12 @@ def test_setup_cli_output_naming():
     # Test default naming
     with patch.object(sys, 'argv', ["data2prompt"]):
         args = setup_cli()
-        assert args.output == "PROMPT.xml"
+        assert args.output == "PROMPT.md"
 
     # Test custom naming with default format
     with patch.object(sys, 'argv', ["data2prompt", "-o", "my_prompt"]):
         args = setup_cli()
-        assert args.output == "my_prompt.xml"
+        assert args.output == "my_prompt.md"
 
     # Test custom naming with markdown format
     with patch.object(sys, 'argv', ["data2prompt", "-o", "my_prompt", "-f", "markdown"]):

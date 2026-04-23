@@ -130,7 +130,7 @@ class ProjectScanner:
         if self.use_gitignore:
             patterns.extend(load_ignore_file(self.project_path, '.gitignore'))
             
-        return pathspec.PathSpec.from_lines('gitwildmatch', patterns)
+        return pathspec.PathSpec.from_lines('gitignore', patterns)
 
     def _is_ignored(self, path: Path) -> bool:
         """Checks if a given path should be ignored based on the compiled spec and special cases."""
