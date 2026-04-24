@@ -69,11 +69,11 @@ pip install -e .
 Run `data2prompt` in your project root to generate a structured prompt:
 
 ```bash
-# Basic usage (defaults to XML output)
+# Basic usage (defaults to markdown output)
 data2prompt
 
-# Custom output with Markdown format and specific sampling
-data2prompt --output my_analysis --format markdown --csv-sample-size 50 --ignore-folders venv .pytest_cache
+# Custom output with xml format and specific sampling
+data2prompt --output my_analysis --format xml --csv-sample-size 50 --ignore-folders venv .pytest_cache
 ```
 
 ### CLI Arguments
