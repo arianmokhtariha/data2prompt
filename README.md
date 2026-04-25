@@ -26,7 +26,7 @@ Generic code-to-prompt tools choke on data files—they either skip them entirel
 *   **Smart Jupyter Parsing**: Intelligently extracts code, markdown, and text outputs from [`.ipynb`](docs/parsers.md) files while stripping heavy Base64 images and raw HTML to preserve context.
 *   **Multi-Format Sampling**: Advanced sampling strategies for [CSV, SQL, and Excel](docs/parsers.md) files to preserve schema and data context which reduces the data size significantly while extracting the needed context for llm.
 *   **Aggressive truncations**: To preserve context, long lines are truncated to neutralize line injections and avoid exploding the context windows, if a tabular data was still to large after sampling it will get truncated to a certain amount, also if a raw text file of unhandled type was too large it will get truncated to a certain amount. 
-*   **Defensive Processing**: Automatic binary detection (Null-byte checks), size-based truncation, and line-length capping to prevent context-window poisoning.
+*   **Defensive Processing**: Automatic binary detection (Null-byte checks), Checks if a file is binary by looking for a Null byte in the first 1024 bytes.
 *   **Optimized LLM attention**: The default output format is markdown with well structured schema and another option is xml output with xml style tags to enhance LLM anchoring for complex analysis and large context windows
 *   **Token-Aware Output**: Real-time token estimation using `tiktoken` (`o200k_base`) to ensure prompts fit target LLMs (Claude 3.5, GPT-4o, Gemini 1.5) and advanced offline token counting via `regex`.
 *   **Professional TUI**: A high-fidelity terminal interface built with `Rich`, featuring a Matrix-style startup animation and interactive, scrollable reports on Windows.
