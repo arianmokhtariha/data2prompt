@@ -30,11 +30,11 @@ def process_target_file(file_path: Path, config: Config) -> ParserResult:
     
     if ext in config.skip_exts:
         return ParserResult(
-            content=f"*Note: Binary/Heavy file ({ext}). Content skipped for brevity.*\n",
+            content=f"*Note: Content skipped for ({ext}) file based on exclusion rules.*\n",
             tokens=0,
-            type=f"Binary ({ext})",
-            status="Skipped (Binary)",
-            stats_update={"binary_count": 1}
+            type=f"Excluded ({ext})",
+            status="Skipped (Exclusion)",
+            stats_update={"excluded_count": 1}
         )
     
     parser = registry.get_parser(ext)
@@ -71,7 +71,8 @@ def main():
         "excel_count": 0,
         "excel_sheets_count": 0,
         "truncated_count": 0,
-        "binary_count": 0
+        "binary_count": 0,
+        "excluded_count": 0
     }
     
     # For the summary table

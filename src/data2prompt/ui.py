@@ -157,7 +157,7 @@ class UIHandler:
         for info in processed_files_info:
             status = info.get("status", "Unknown")
             status_color = "bold green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
-                           "bold yellow" if status in ["Truncated", "Skipped (Binary)"] else "bold red"
+                           "bold yellow" if status in ["Truncated", "Skipped (Binary)", "Skipped (Exclusion)"] else "bold red"
             
             table.add_row(
                 os.path.basename(info.get("name", "Unknown")),
@@ -190,6 +190,9 @@ class UIHandler:
 
         if stats.get("binary_count", 0) > 0:
             stats_grid.add_row("[green]>[/green]", f"BINARY_SKIP:  [bold yellow]{stats.get('binary_count', 0)}[/bold yellow]")
+
+        if stats.get("excluded_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"EXCLUDED_SKIP:[bold yellow]{stats.get('excluded_count', 0)}[/bold yellow]")
 
         method_label = method.upper()
         success_panel = Panel(
@@ -226,6 +229,7 @@ class UIHandler:
         if stats.get("excel_count", 0) > 0: stats_rows += 1
         if stats.get("truncated_count", 0) > 0: stats_rows += 1
         if stats.get("binary_count", 0) > 0: stats_rows += 1
+        if stats.get("excluded_count", 0) > 0: stats_rows += 1
         summary_height = 6 + stats_rows
 
         def get_scan_list_panel(offset: int, v_height: int) -> Panel:
@@ -245,7 +249,7 @@ class UIHandler:
             for info in processed_files_info[offset : offset + v_height]:
                 status = info.get("status", "Unknown")
                 status_color = "bold green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
-                               "bold yellow" if status in ["Truncated", "Skipped (Binary)"] else "bold red"
+                               "bold yellow" if status in ["Truncated", "Skipped (Binary)", "Skipped (Exclusion)"] else "bold red"
                 
                 viewport_table.add_row(
                     os.path.basename(info.get("name", "Unknown")),
