@@ -35,3 +35,198 @@ graph TD
 3.  **Processing**: For each file, [`src/data2prompt/main.py`](src/data2prompt/main.py) uses the `ParserRegistry` in [`src/data2prompt/parsers.py`](src/data2prompt/parsers.py) to select the appropriate parser.
 4.  **Generation**: Once all files are processed, [`src/data2prompt/main.py`](src/data2prompt/main.py) uses an `OutputGenerator` strategy from [`src/data2prompt/output.py`](src/data2prompt/output.py) to compile the final output.
 5.  **Feedback**: Throughout the process, [`src/data2prompt/ui.py`](src/data2prompt/ui.py) provides real-time progress updates and final reporting.
+
+---
+
+## The Orchestration Layer: main.py
+
+[`src/data2prompt/main.py`](src/data2prompt/main.py:1) serves as the central orchestration hub for the entire application. It follows the MFO pattern by coordinating high-level workflows without implementing any specialized parsing, output generation, or UI logic.
+
+### Module Responsibilities
+
+| Module | Responsibility | Access in main.py |
+|--------|---------------|-------------------|
+| [`cli.py`](src/data2prompt/cli.py:1) | Argument parsing and Config construction | `config = setup_cli()` |
+| [`parsers.py`](src/data2prompt/parsers.py:1) | Format-specific file parsing via Registry | `registry.get_parser(ext)` |
+| [`output.py`](src/data2prompt/output.py:1) | Output generation via Strategy pattern | `get_generator(config.format)` |
+| [`utils.py`](src/data2prompt/utils.py:1) | Project scanning, tokenization, connectivity | `ProjectScanner`, `count_tokens()`, `check_connectivity()` |
+| [`ui.py`](src/data2prompt/ui.py:1) | Terminal feedback and reporting | `ui.on_start()`, `ui.progress_bar()` |
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant CLI as cli.py
+    participant Main as main.py
+    participant Scanner as ProjectScanner
+    participant Parser as ParserRegistry
+    participant Output as OutputGenerator
+    participant UI as UIHandler
+
+    CLI->>Main: setup_cli() → Config
+    Main->>Scanner: new ProjectScanner(config)
+    Main->>Scanner: scanner.scan() → List[Path]
+    Main->>UI: ui.on_start()
+    Main->>UI: ui.progress_bar()
+
+    loop For each file
+        Main->>UI: on_progress(action)
+        Main->>Parser: registry.get_parser(ext)
+        Parser-->>Main: BaseParser
+        Main->>Parser: parser.parse(file, config) → ParserResult
+        Parser-->>Main: ParserResult
+        Main->>UI: on_progress(completed)
+    end
+
+    Main->>Main: flatten_ir(files_data) → temp_content
+    Main->>Scanner: count_tokens(temp_content) → total_tokens
+    Main->>Output: get_generator(format) → generator
+    Main->>Output: generator.generate(...) → final_output
+    Main->>Filesystem: write(final_output)
+    Main->>UI: print_final_report()
+```
+
+### Processing Pipeline
+
+The [`main()`](src/data2prompt/main.py:43) function implements a three-phase processing pipeline:
+
+#### Phase 1: Initialization & Discovery
+
+```python
+config = setup_cli()
+project_path = Path.cwd()
+scanner = ProjectScanner(
+    project_path=project_path,
+    ignore_folders=config.ignore_folders,
+    ignore_files=config.ignore_files,
+    output_file=config.output,
+    use_gitignore=config.use_gitignore
+)
+all_files = scanner.scan()
+```
+
+1. **Config Construction**: [`setup_cli()`](src/data2prompt/cli.py:1) merges CLI arguments with defaults from [`constants.py`](src/data2prompt/constants.py:1)
+2. **Project Scanner**: [`ProjectScanner`](src/data2prompt/utils.py:1) discovers files while respecting ignore patterns (`.gitignore`, `.data2promptignore`, CLI exclusions)
+
+#### Phase 2: File Processing
+
+```python
+for file_path in all_files:
+    result = process_target_file(file_path, config)
+    files_data.append({...})
+```
+
+The [`process_target_file()`](src/data2prompt/main.py:27) function:
+
+1. **Checks exclusions**: Returns early for files matching `skip_exts`
+2. **Selects parser**: Uses `registry.get_parser(ext)` to obtain the appropriate [`BaseParser`](src/data2prompt/parsers.py:92)
+3. **Delegates parsing**: Calls `parser.parse(file_path, config)` and returns [`ParserResult`](src/data2prompt/parsers.py:47)
+
+The [`get_ui_action()`](src/data2prompt/main.py:18) helper determines the progress bar action based on file type:
+
+| Extension | Action |
+|-----------|--------|
+| `.csv` | "Sampling" |
+| `.ipynb` | "Cleaning" |
+| `.sql` | "Parsing" |
+| `.xlsx`, `.xls` | "Extracting" |
+| Other | "Reading" |
+
+#### Phase 3: Output Generation
+
+```python
+temp_content = flatten_ir(files_data) + tree_text
+total_tokens, method = count_tokens(temp_content)
+
+generator = get_generator(config.format)
+final_output = generator.generate(
+    project_name=project_path.name,
+    tree_text=tree_text,
+    files_data=files_data,
+    stats=stats,
+    total_tokens=total_tokens,
+    token_method=method,
+    config=config
+)
+```
+
+1. **Token Estimation**: Uses [`flatten_ir()`](src/data2prompt/parsers.py:56) to convert structured IR back to string for accurate token counting
+2. **Generator Selection**: [`get_generator()`](src/data2prompt/output.py:1) returns the appropriate [`OutputGenerator`](src/data2prompt/output.py:23) strategy based on `config.format`
+3. **Final Report**: [`ui.print_final_report()`](src/data2prompt/ui.py:1) displays the interactive summary
+
+### Design Patterns
+
+#### Parser Registry Pattern
+
+The `ParserRegistry` in [`parsers.py`](src/data2prompt/parsers.py:1) maps file extensions to specialized parser classes:
+
+```python
+class ParserRegistry:
+    _parsers: Dict[str, Type[BaseParser]]
+    
+    def get_parser(self, ext: str) -> BaseParser:
+        """Returns the appropriate parser for the given extension."""
+        
+    def register(self, ext: str, parser_cls: Type[BaseParser]) -> None:
+        """Registers a new parser for an extension."""
+```
+
+Registered parsers include:
+- [`CsvParser`](src/data2prompt/parsers.py:1) → `.csv`
+- [`SqlParser`](src/data2prompt/parsers.py:1) → `.sql`
+- [`NotebookParser`](src/data2prompt/parsers.py:1) → `.ipynb`
+- [`ExcelParser`](src/data2prompt/parsers.py:1) → `.xlsx`, `.xls`
+
+#### Output Strategy Pattern
+
+The `OutputGenerator` in [`output.py`](src/data2prompt/output.py:1) uses the Strategy pattern:
+
+```python
+class OutputGenerator(ABC):
+    @abstractmethod
+    def generate(self, ...) -> str:
+        pass
+
+class MarkdownGenerator(OutputGenerator): ...
+class XmlGenerator(OutputGenerator): ...
+
+def get_generator(format: str) -> OutputGenerator:
+    """Factory function returning the appropriate generator."""
+```
+
+#### Intermediate Representation (IR)
+
+Parsers return structured data using IR dataclasses:
+
+- [`NotebookCellIR`](src/data2prompt/parsers.py:27): Represents Jupyter notebook cells with code/markdown type, source, and outputs
+- [`TableIR`](src/data2prompt/parsers.py:36): Represents tabular data (CSV/Excel) with DataFrame, metadata, and truncation notes
+
+### Statistics Tracking
+
+The [`main()`](src/data2prompt/main.py:43) function maintains comprehensive statistics:
+
+| Stat Key | Purpose |
+|----------|---------|
+| `file_count` | Total files discovered |
+| `csv_count` | CSV files processed |
+| `notebook_count` | Jupyter notebooks processed |
+| `sql_count` | SQL files processed |
+| `excel_count` | Excel workbooks processed |
+| `excel_sheets_count` | Total Excel sheets extracted |
+| `truncated_count` | Files/content truncated due to size limits |
+| `binary_count` | Binary files detected and skipped |
+| `excluded_count` | Files excluded via ignore rules |
+
+### Defensive Measures
+
+1. **Warning Suppression**: Global suppression of `openpyxl` and `pandas` warnings for cleaner TUI output
+2. **Connectivity Check**: [`check_connectivity()`](src/data2prompt/utils.py:33) determines online/offline mode before tokenization
+3. **File Size Warning**: Triggers a warning panel if output exceeds 2MB (potential context window issues)
+4. **Graceful Skipping**: Files matching skip extensions receive a placeholder result rather than failing
+
+### Entry Points
+
+The module exposes two entry points:
+
+- `main()`: Primary CLI entry point
+- `run_packager`: Alias for backward compatibility with stale entry point scripts (line 172)
