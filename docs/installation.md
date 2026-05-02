@@ -26,7 +26,7 @@ To install `data2prompt` directly from the source repository:
     # Or install in editable mode for more control
     pip install -e .
     
-    # Use pipx instead of pip for better virtual envrironment handling 
+    # Use pipx instead of pip for better virtual environment handling 
     ```
 
 ### Linux/macOS
@@ -47,7 +47,7 @@ For developers contributing to the project, follow these steps to set up the dev
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/your-username/data2prompt.git
+    git clone https://github.com/arianmokhtariha/data2prompt.git
     cd data2prompt
     ```
 

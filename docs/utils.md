@@ -417,11 +417,10 @@ print(f"Tokens: {token_count} (method: {method})")
 
 ### Safely Wrapping Content in Markdown
 
-```python
+````python
 from data2prompt.utils import get_dynamic_wrapper
 
 content = """
-Here is a code snippet:
 ```python
 def example():
     print("Hello")
@@ -431,7 +430,7 @@ def example():
 wrapper = get_dynamic_wrapper(content)
 safe_output = f"{wrapper}\n{content}\n{wrapper}"
 # Output uses 4 backticks: ````\n{content}\n````
-```
+````
 
 ### Using ProjectScanner
 
