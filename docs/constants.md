@@ -2,7 +2,7 @@
 
 ## Overview
 
-The [`constants.py`](src/data2prompt/constants.py:1) module serves as the **Single Source of Truth** for all immutable application behavior in the data2prompt project. This module centralizes magic numbers, default values, ignore patterns, and static strings that define how the tool processes, filters, and outputs codebase representations.
+The [`constants.py`](../src/data2prompt/constants.py#L1) module serves as the **Single Source of Truth** for all immutable application behavior in the data2prompt project. This module centralizes magic numbers, default values, ignore patterns, and static strings that define how the tool processes, filters, and outputs codebase representations.
 
 ## Architectural Role
 
@@ -36,8 +36,8 @@ CORE_IGNORES = {
 **Purpose:** Folder names excluded from both project tree generation and content processing. These are high-level directories that never contain relevant source code or data.
 
 **Consumed by:**
-- [`cli.py`](src/data2prompt/cli.py:141) — Merged with user-provided `--ignore-folders` via set union
-- [`utils.py`](src/data2prompt/utils.py) — Used by `ProjectScanner` for directory traversal
+- [`cli.py`](../src/data2prompt/cli.py#L141) — Merged with user-provided `--ignore-folders` via set union
+- [`utils.py`](../src/data2prompt/utils.py) — Used by `ProjectScanner` for directory traversal
 
 #### `CORE_IGNORE_FILES` — File Exclusion Set
 
@@ -50,7 +50,7 @@ CORE_IGNORE_FILES = set()
 **Purpose:** Specific filenames to exclude from the entire process. Currently empty, but provides a hook for future expansion.
 
 **Consumed by:**
-- [`cli.py`](src/data2prompt/cli.py:142) — Merged with user-provided `--ignore-files`
+- [`cli.py`](../src/data2prompt/cli.py#L142) — Merged with user-provided `--ignore-files`
 
 #### `CORE_SKIP_EXTS` — Extension-Based Content Skip Set
 
@@ -72,14 +72,14 @@ CORE_SKIP_EXTS = {
 **Purpose:** File extensions where file names appear in the project tree but content is skipped. This preserves tree visibility while avoiding binary bloat.
 
 **Consumed by:**
-- [`cli.py`](src/data2prompt/cli.py:144) — Merged with user-provided `--skip-exts`
-- [`main.py`](src/data2prompt/main.py:31) — Checked via `config.skip_exts` in `process_target_file()`
+- [`cli.py`](../src/data2prompt/cli.py#L144) — Merged with user-provided `--skip-exts`
+- [`main.py`](../src/data2prompt/main.py#L31) — Checked via `config.skip_exts` in `process_target_file()`
 
 ---
 
 ### 2. Default Processing Values
 
-All default values are imported by [`cli.py`](src/data2prompt/cli.py:7) and used as CLI argument defaults. They control sampling, truncation, and size limits throughout the processing pipeline.
+All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and used as CLI argument defaults. They control sampling, truncation, and size limits throughout the processing pipeline.
 
 | Constant | Default | Purpose |
 |----------|---------|---------|
@@ -98,8 +98,8 @@ All default values are imported by [`cli.py`](src/data2prompt/cli.py:7) and used
 | `DEFAULT_FORMAT` | `'markdown'` | Default output format |
 
 **Consumed by:**
-- [`cli.py`](src/data2prompt/cli.py:61) — All defaults used as CLI argument defaults
-- [`parsers.py`](src/data2prompt/parsers.py:14) — Processing functions use these as parameter defaults
+- [`cli.py`](../src/data2prompt/cli.py#L61) — All defaults used as CLI argument defaults
+- [`parsers.py`](../src/data2prompt/parsers.py#L14) — Processing functions use these as parameter defaults
 
 ---
 
@@ -119,7 +119,7 @@ SUPPORTED_FORMATS = {
 **Purpose:** Maps format type identifiers to their respective file extensions. Used to construct output filenames.
 
 **Consumed by:**
-- [`cli.py`](src/data2prompt/cli.py:125) — Determines file extension based on format
+- [`cli.py`](../src/data2prompt/cli.py#L125) — Determines file extension based on format
 
 ---
 
@@ -133,11 +133,11 @@ GENERATION_FLAG = "DATA2PROMPT_GENERATED_CONTENT"
 
 **Type:** `str`
 
-**Purpose:** A unique identifier added to the top of every generated file. The [`DefaultParser`](src/data2prompt/parsers.py:507) checks for this flag to prevent re-processing previously generated output files.
+**Purpose:** A unique identifier added to the top of every generated file. The [`DefaultParser`](../src/data2prompt/parsers.py#L507) checks for this flag to prevent re-processing previously generated output files.
 
 **Consumed by:**
-- [`parsers.py`](src/data2prompt/parsers.py:511) — Checked in `DefaultParser.parse()`
-- [`output.py`](src/data2prompt/output.py:49) — Injected as HTML comment in Markdown output
+- [`parsers.py`](../src/data2prompt/parsers.py#L511) — Checked in `DefaultParser.parse()`
+- [`output.py`](../src/data2prompt/output.py#L49) — Injected as HTML comment in Markdown output
 
 ---
 
@@ -155,8 +155,8 @@ SYSTEM_INSTRUCTIONS_XML = """<purpose>\nThis document is a structured representa
 **Purpose:** Instructional headers embedded in generated output files to guide LLM consumption. These explain the document structure and section organization.
 
 **Consumed by:**
-- [`output.py`](src/data2prompt/output.py:53) — Injected into Markdown output
-- [`output.py`](src/data2prompt/output.py:156) — Injected into XML output
+- [`output.py`](../src/data2prompt/output.py#L53) — Injected into Markdown output
+- [`output.py`](../src/data2prompt/output.py#L156) — Injected into XML output
 
 #### XML Tag Constants
 
@@ -172,10 +172,10 @@ TAG_CONTENT = "content"  # Used for notebook cells
 **Purpose:** Consistent XML tag names for structured output generation. Ensures uniform tagging across all XML-formatted output.
 
 **Consumed by:**
-- [`output.py`](src/data2prompt/output.py:163) — `<directory_structure>` wrapper
-- [`output.py`](src/data2prompt/output.py:167) — `<files>` container
-- [`output.py`](src/data2prompt/output.py:178) — `<file>` element with path attribute
-- [`output.py`](src/data2prompt/output.py:184) — `<content>` for notebook cells
+- [`output.py`](../src/data2prompt/output.py#L163) — `<directory_structure>` wrapper
+- [`output.py`](../src/data2prompt/output.py#L167) — `<files>` container
+- [`output.py`](../src/data2prompt/output.py#L178) — `<file>` element with path attribute
+- [`output.py`](../src/data2prompt/output.py#L184) — `<content>` for notebook cells
 
 ---
 
@@ -240,7 +240,7 @@ The centralized constant configuration provides several defensive programming ad
 
 1. **Single Source of Truth**: When limits or patterns need adjustment, only `constants.py` requires modification
 2. **Consistent Defaults**: All modules reference the same default values, preventing drift
-3. **User Override Safety**: [`cli.py`](src/data2prompt/cli.py:141) merges user input with core constants using set union, ensuring essential exclusions are never bypassed
+3. **User Override Safety**: [`cli.py`](../src/data2prompt/cli.py#L141) merges user input with core constants using set union, ensuring essential exclusions are never bypassed
 4. **Magic Number Elimination**: All thresholds and limits are named constants with documented purposes
 5. **Easy Tuning**: Users and developers can quickly identify adjustment points without code archaeology
 
@@ -264,7 +264,7 @@ constants.py
 
 Some modules use constants indirectly through the `Config` object created by `cli.py`:
 
-- [`main.py`](src/data2prompt/main.py) — Accesses constants via `config.*` attributes
-- [`utils.py`](src/data2prompt/utils.py) — Uses ignore sets passed from `Config`
+- [`main.py`](../src/data2prompt/main.py) — Accesses constants via `config.*` attributes
+- [`utils.py`](../src/data2prompt/utils.py) — Uses ignore sets passed from `Config`
 
 This indirection allows runtime configuration to override defaults while maintaining the fallback values in `constants.py`.

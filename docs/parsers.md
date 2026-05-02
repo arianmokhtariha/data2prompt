@@ -24,7 +24,7 @@ graph TD
 
 ## ParserRegistry Pattern
 
-The [`ParserRegistry`](src/data2prompt/parsers.py:561) class manages the mapping between file extensions and their corresponding parser implementations:
+The [`ParserRegistry`](../src/data2prompt/parsers.py#L561) class manages the mapping between file extensions and their corresponding parser implementations:
 
 ```python
 class ParserRegistry:
@@ -45,22 +45,22 @@ class ParserRegistry:
 
 | Parser | Extensions | Description |
 |--------|------------|-------------|
-| [`CSVParser`](src/data2prompt/parsers.py:419) | `.csv` | Samples rows to fit context limits |
-| [`NotebookParser`](src/data2prompt/parsers.py:438) | `.ipynb` | Cleans and truncates notebook cells and outputs |
-| [`SQLParser`](src/data2prompt/parsers.py:456) | `.sql` | Parses SQL files, sampling table data while preserving schema |
-| [`ExcelParser`](src/data2prompt/parsers.py:478) | `.xlsx`, `.xls` | Extracts data from sheets, detecting visual elements |
-| [`DefaultParser`](src/data2prompt/parsers.py:507) | All others | Fallback for text files with binary detection and size truncation |
+| [`CSVParser`](../src/data2prompt/parsers.py#L419) | `.csv` | Samples rows to fit context limits |
+| [`NotebookParser`](../src/data2prompt/parsers.py#L438) | `.ipynb` | Cleans and truncates notebook cells and outputs |
+| [`SQLParser`](../src/data2prompt/parsers.py#L456) | `.sql` | Parses SQL files, sampling table data while preserving schema |
+| [`ExcelParser`](../src/data2prompt/parsers.py#L478) | `.xlsx`, `.xls` | Extracts data from sheets, detecting visual elements |
+| [`DefaultParser`](../src/data2prompt/parsers.py#L507) | All others | Fallback for text files with binary detection and size truncation |
 
 ### Dispatch Flow
 
-1. [`main.py`](src/data2prompt/main.py:27) calls [`process_target_file()`](src/data2prompt/main.py:27) for each discovered file
-2. The file extension is extracted and passed to [`registry.get_parser(ext)`](src/data2prompt/parsers.py:571)
-3. The appropriate parser's [`parse()`](src/data2prompt/parsers.py:94) method is invoked
-4. A [`ParserResult`](src/data2prompt/parsers.py:47) is returned containing the IR and metadata
+1. [`main.py`](../src/data2prompt/main.py#L27) calls [`process_target_file()`](../src/data2prompt/main.py#L27) for each discovered file
+2. The file extension is extracted and passed to [`registry.get_parser(ext)`](../src/data2prompt/parsers.py#L571)
+3. The appropriate parser's [`parse()`](../src/data2prompt/parsers.py#L94) method is invoked
+4. A [`ParserResult`](../src/data2prompt/parsers.py#L47) is returned containing the IR and metadata
 
 ## BaseParser Protocol
 
-All parsers implement the [`BaseParser`](src/data2prompt/parsers.py:92) protocol, ensuring a consistent interface:
+All parsers implement the [`BaseParser`](../src/data2prompt/parsers.py#L92) protocol, ensuring a consistent interface:
 
 ```python
 class BaseParser(Protocol):
@@ -137,7 +137,7 @@ Standardized output container containing:
 
 ### flatten_ir Function
 
-The [`flatten_ir()`](src/data2prompt/parsers.py:56) function converts IR objects to strings for token counting:
+The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function converts IR objects to strings for token counting:
 
 ```python
 def flatten_ir(content: Union[str, List[NotebookCellIR], List[TableIR]]) -> str:
@@ -160,7 +160,7 @@ class CSVParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
 ```
 
-Uses [`process_csv()`](src/data2prompt/parsers.py:149) to:
+Uses [`process_csv()`](../src/data2prompt/parsers.py#L149) to:
 1. Read CSV into a pandas DataFrame
 2. Sample `config.csv_sample_size` rows using `config.seed` for reproducibility
 3. Add header/footer notes indicating sampling
@@ -177,10 +177,10 @@ class NotebookParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
 ```
 
-Uses [`process_notebook()`](src/data2prompt/parsers.py:178) to:
+Uses [`process_notebook()`](../src/data2prompt/parsers.py#L178) to:
 1. Parse JSON notebook structure
 2. For each cell:
-   - Truncate long lines using [`truncate_long_lines()`](src/data2prompt/parsers.py:118)
+   - Truncate long lines using [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118)
    - Filter outputs (stream text, execute_result data)
    - Apply max_lines limit per output block
 3. Return a list of `NotebookCellIR` objects
@@ -196,12 +196,12 @@ class SQLParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
 ```
 
-Uses [`process_sql()`](src/data2prompt/parsers.py:237) to:
+Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
 1. Read SQL file line-by-line
 2. Detect `CREATE TABLE` and `BEGIN TABLE` blocks
 3. Buffer `INSERT INTO` statements and data rows
 4. Sample `config.sql_sample_size` rows per table using seeded random selection
-5. Apply secondary truncation via [`enforce_table_limit()`](src/data2prompt/parsers.py:97) if sampled block exceeds `config.table_limit`
+5. Apply secondary truncation via [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) if sampled block exceeds `config.table_limit`
 6. Preserve schema keywords (`ALTER`, `CONSTRAINT`, `VIEW`, `DROP`, `INDEX`, `TABLE`)
 7. Cap total non-data lines at `config.sql_max_lines`
 
@@ -217,7 +217,7 @@ class ExcelParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
 ```
 
-Uses [`process_excel()`](src/data2prompt/parsers.py:335) to:
+Uses [`process_excel()`](../src/data2prompt/parsers.py#L335) to:
 1. Open workbook with `openpyxl` in read-only mode
 2. Detect visual elements (images, charts) per sheet
 3. Process up to `config.max_sheets` sheets
@@ -242,19 +242,19 @@ class DefaultParser:
 
 Handles all unhandled file types with defensive measures:
 1. **Generation flag check**: Skip files containing `GENERATION_FLAG` marker
-2. **Binary detection**: Use [`is_binary()`](src/data2prompt/utils.py) to detect binary content
+2. **Binary detection**: Use [`is_binary()`](../src/data2prompt/utils.py) to detect binary content
 3. **File size check**: If file exceeds `config.max_file_size` KB, read only first 10KB
-4. **Line truncation**: Apply [`truncate_long_lines()`](src/data2prompt/parsers.py:118) for remaining content
+4. **Line truncation**: Apply [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118) for remaining content
 
 ## Defensive Programming Measures
 
 ### Binary Detection
 
-The [`DefaultParser`](src/data2prompt/parsers.py:507) implements binary detection via [`is_binary()`](src/data2prompt/utils.py) to prevent attempting to read binary files as text. Binary files receive a standardized skip message.
+The [`DefaultParser`](../src/data2prompt/parsers.py#L507) implements binary detection via [`is_binary()`](../src/data2prompt/utils.py) to prevent attempting to read binary files as text. Binary files receive a standardized skip message.
 
 ### Line Truncation
 
-The [`truncate_long_lines()`](src/data2prompt/parsers.py:118) function prevents excessively long lines from consuming disproportionate context:
+The [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118) function prevents excessively long lines from consuming disproportionate context:
 
 ```python
 def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
@@ -269,7 +269,7 @@ def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
 
 ### Table Size Enforcement
 
-The [`enforce_table_limit()`](src/data2prompt/parsers.py:97) function provides secondary protection against oversized table representations:
+The [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) function provides secondary protection against oversized table representations:
 
 ```python
 def enforce_table_limit(text: str, limit: int, truncate_to: int) -> str:
@@ -289,7 +289,7 @@ All parsing functions implement try-except blocks with graceful degradation:
 
 ## Constants Used
 
-The parsers module imports configuration constants from [`constants.py`](src/data2prompt/constants.py):
+The parsers module imports configuration constants from [`constants.py`](../src/data2prompt/constants.py):
 
 | Constant | Default | Purpose |
 |----------|---------|---------|
@@ -309,7 +309,7 @@ The parsers module imports configuration constants from [`constants.py`](src/dat
 
 ### With main.py
 
-The [`process_target_file()`](src/data2prompt/main.py:27) function in main.py:
+The [`process_target_file()`](../src/data2prompt/main.py#L27) function in main.py#L
 1. Checks if extension is in `config.skip_exts`
 2. Calls `registry.get_parser(ext)` to obtain the appropriate parser
 3. Invokes `parser.parse(file_path, config)`
@@ -317,17 +317,17 @@ The [`process_target_file()`](src/data2prompt/main.py:27) function in main.py:
 
 ### With output.py
 
-The output generators in [`output.py`](src/data2prompt/output.py) receive `ParserResult` objects:
+The output generators in [`output.py`](../src/data2prompt/output.py) receive `ParserResult` objects:
 - **MarkdownGenerator**: Formats `NotebookCellIR` and `TableIR` into markdown code blocks
 - **XMLGenerator**: Formats IR into XML tags with attributes
 
-The [`flatten_ir()`](src/data2prompt/parsers.py:56) function is used to convert IR to strings for token estimation before output generation.
+The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function is used to convert IR to strings for token estimation before output generation.
 
 ### With utils.py
 
-Parsers use utility functions from [`utils.py`](src/data2prompt/utils.py):
-- [`count_tokens()`](src/data2prompt/utils.py): Token counting using tiktoken
-- [`is_binary()`](src/data2prompt/utils.py): Binary file detection
+Parsers use utility functions from [`utils.py`](../src/data2prompt/utils.py):
+- [`count_tokens()`](../src/data2prompt/utils.py): Token counting using tiktoken
+- [`is_binary()`](../src/data2prompt/utils.py): Binary file detection
 
 ## Statistics Tracking
 

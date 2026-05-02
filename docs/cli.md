@@ -18,7 +18,7 @@ The CLI module serves as the **entry point** for user configuration, responsible
 
 ## The `Config` Data Transfer Object
 
-The [`Config`](src/data2prompt/cli.py:27) dataclass encapsulates all application settings:
+The [`Config`](../src/data2prompt/cli.py#L27) dataclass encapsulates all application settings:
 
 ```python
 @dataclass
@@ -104,7 +104,7 @@ class Config:
 
 ## Argument Merging Logic
 
-The CLI implements a **Safe-by-Default** philosophy through intelligent argument merging. This is the critical logic in [`setup_cli()`](src/data2prompt/cli.py:119):
+The CLI implements a **Safe-by-Default** philosophy through intelligent argument merging. This is the critical logic in [`setup_cli()`](../src/data2prompt/cli.py#L119):
 
 ```python
 # Combine user's terminal input with CORE constants
@@ -119,9 +119,9 @@ skip_exts=set(args.skip_exts) | CORE_SKIP_EXTS,
 
 | Config Field | User Input | Core Constants | Final Value |
 |:-------------|:-----------|:---------------|:------------|
-| `ignore_folders` | User-provided folders | [`CORE_IGNORES`](src/data2prompt/constants.py:4) | Union of both |
-| `ignore_files` | User-provided files | [`CORE_IGNORE_FILES`](src/data2prompt/constants.py:12) | Union of both |
-| `skip_exts` | User-provided extensions | [`CORE_SKIP_EXTS`](src/data2prompt/constants.py:16) | Union of both |
+| `ignore_folders` | User-provided folders | [`CORE_IGNORES`](../src/data2prompt/constants.py#L4) | Union of both |
+| `ignore_files` | User-provided files | [`CORE_IGNORE_FILES`](../src/data2prompt/constants.py#L12) | Union of both |
+| `skip_exts` | User-provided extensions | [`CORE_SKIP_EXTS`](../src/data2prompt/constants.py#L16) | Union of both |
 
 ### Output Naming Logic
 
@@ -139,7 +139,7 @@ final_output_name = f"{args.output}{extension}"
 
 ## Integration with Constants
 
-The CLI imports defaults from [`src/data2prompt/constants.py`](src/data2prompt/constants.py:1):
+The CLI imports defaults from [`src/data2prompt/constants.py`](../src/data2prompt/constants.py#L1):
 
 ```python
 from .constants import (
@@ -165,16 +165,16 @@ from .constants import (
 
 ### Core Ignore Sets
 
-These sets are defined in [`constants.py`](src/data2prompt/constants.py:4) and always applied:
+These sets are defined in [`constants.py`](../src/data2prompt/constants.py#L4) and always applied:
 
-**[`CORE_IGNORES`](src/data2prompt/constants.py:4)** - Folder names excluded from tree and content:
+**[`CORE_IGNORES`](../src/data2prompt/constants.py#L4)** - Folder names excluded from tree and content:
 ```python
 {'.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
  'node_modules', '.idea', 'dist', 'build', '.mypy_cache',
  '.pytest_cache', 'target', '.docker', '.aws', '.gcloud', '__MACOSX'}
 ```
 
-**[`CORE_SKIP_EXTS`](src/data2prompt/constants.py:16)** - Extensions skipped (name listed, content excluded):
+**[`CORE_SKIP_EXTS`](../src/data2prompt/constants.py#L16)** - Extensions skipped (name listed, content excluded):
 ```python
 # Data & Databases
 '.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
@@ -188,7 +188,7 @@ These sets are defined in [`constants.py`](src/data2prompt/constants.py:4) and a
 
 ## Integration with Main Module
 
-The [`setup_cli()`](src/data2prompt/cli.py:48) function is called from [`main.py`](src/data2prompt/main.py:48):
+The [`setup_cli()`](../src/data2prompt/cli.py#L48) function is called from [`main.py`](../src/data2prompt/main.py#L48):
 
 ```python
 # In main.py
@@ -200,7 +200,7 @@ def main():
 ```
 
 The `Config` object is then passed to:
-- [`ProjectScanner`](src/data2prompt/utils.py) - For file discovery with exclusion rules
+- [`ProjectScanner`](../src/data2prompt/utils.py) - For file discovery with exclusion rules
 - Parser registry - For format-specific content processing
 - Output generator - For generating the final prompt file
 
@@ -290,7 +290,7 @@ data2prompt \
 
 ## Testing
 
-The CLI merging logic is validated by [`tests/test_cli.py`](tests/test_cli.py:1):
+The CLI merging logic is validated by [`tests/test_cli.py`](tests/test_cli.py#L1):
 
 ```python
 def test_setup_cli_merges_defaults():
@@ -305,7 +305,8 @@ def test_setup_cli_merges_defaults():
 
 ## See Also
 
-- [`src/data2prompt/main.py`](src/data2prompt/main.py:1) - Orchestration layer that consumes `Config`
-- [`src/data2prompt/constants.py`](src/data2prompt/constants.py:1) - Core constants and default values
-- [`src/data2prompt/utils.py`](src/data2prompt/utils.py:1) - `ProjectScanner` that uses exclusion config
-- [`docs/architecture.md`](docs/architecture.md:1) - System architecture overview
+- [`src/data2prompt/main.py`](../src/data2prompt/main.py#L1) - Orchestration layer that consumes `Config`
+
+- [`src/data2prompt/constants.py`](../src/data2prompt/constants.py#L1) - Core constants and default values
+
+- [`docs/architecture.md`](docs/architecture.md#L1) - System architecture overview

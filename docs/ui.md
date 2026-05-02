@@ -1,10 +1,10 @@
 # User Interface (UI)
 
-The `data2prompt` project utilizes a sophisticated Terminal User Interface (TUI) built with the [`rich`](https://github.com/Textualize/rich) library to provide real-time feedback and a professional, tech-focused experience. All UI logic is encapsulated in the [`UIHandler`](src/data2prompt/ui.py:34) class.
+The `data2prompt` project utilizes a sophisticated Terminal User Interface (TUI) built with the [`rich`](https://github.com/Textualize/rich) library to provide real-time feedback and a professional, tech-focused experience. All UI logic is encapsulated in the [`UIHandler`](../src/data2prompt/ui.py#L34) class.
 
 ## UIHandler Class
 
-The [`UIHandler`](src/data2prompt/ui.py:34) class in [`src/data2prompt/ui.py`](src/data2prompt/ui.py) serves as the central point for all terminal output. It encapsulates Rich-based display components, formatting, and progress tracking.
+The [`UIHandler`](../src/data2prompt/ui.py#L34) class in [`src/data2prompt/ui.py`](../src/data2prompt/ui.py) serves as the central point for all terminal output. It encapsulates Rich-based display components, formatting, and progress tracking.
 
 ### Core Responsibilities
 
@@ -18,7 +18,7 @@ The [`UIHandler`](src/data2prompt/ui.py:34) class in [`src/data2prompt/ui.py`](s
 
 ### Event Handlers
 
-The [`UIHandler`](src/data2prompt/ui.py:34) provides four event handler methods that integrate with the main processing flow:
+The [`UIHandler`](../src/data2prompt/ui.py#L34) provides four event handler methods that integrate with the main processing flow:
 
 ```python
 def on_start(self, description: str, total: int) -> None:
@@ -51,7 +51,7 @@ def on_warning(self, message: str) -> None:
 
 ### Matrix Startup Animation
 
-The [`print_header()`](src/data2prompt/ui.py:73) method displays an ASCII art banner with a Matrix-style decryption animation:
+The [`print_header()`](../src/data2prompt/ui.py#L73) method displays an ASCII art banner with a Matrix-style decryption animation:
 
 ```mermaid
 graph LR
@@ -63,13 +63,13 @@ graph LR
     E --> F[Neon Green Banner]
 ```
 
-**Animation Parameters** (from [`constants.py`](src/data2prompt/constants.py:76)):
+**Animation Parameters** (from [`constants.py`](../src/data2prompt/constants.py#L76)):
 - `MATRIX_DARK_GREEN = (0, 150, 0)` - Initial frame color
 - `MATRIX_NEON_GREEN = (0, 255, 0)` - Final reveal color
 - `STARTUP_ANIMATION_DURATION = 0.9` - Animation duration in seconds
 - `ANIMATION_FRAME_DELAY = 0.03` - Frame delay in seconds
 
-The [`_generate_matrix_frame()`](src/data2prompt/ui.py:63) method generates random binary/hex characters for each frame:
+The [`_generate_matrix_frame()`](../src/data2prompt/ui.py#L63) method generates random binary/hex characters for each frame:
 ```python
 def _generate_matrix_frame(self, width: int, height: int) -> Text:
     """Generates a single frame of random binary/hex characters."""
@@ -83,7 +83,7 @@ def _generate_matrix_frame(self, width: int, height: int) -> Text:
 
 ### Progress Bar
 
-The [`progress_bar()`](src/data2prompt/ui.py:98) context manager provides a stable, two-line hacker-style progress bar:
+The [`progress_bar()`](../src/data2prompt/ui.py#L98) context manager provides a stable, two-line hacker-style progress bar:
 
 ```python
 @contextmanager
@@ -106,7 +106,7 @@ def progress_bar(self, description: str, total: int) -> Generator[Any, None, Non
 
 ### Status Spinner
 
-The [`status()`](src/data2prompt/ui.py:91) context manager shows a temporary status spinner:
+The [`status()`](../src/data2prompt/ui.py#L91) context manager shows a temporary status spinner:
 
 ```python
 @contextmanager
@@ -118,7 +118,7 @@ def status(self, message: str) -> Generator[Any, None, None]:
 
 ## Final Report
 
-The [`print_final_report()`](src/data2prompt/ui.py:129) method displays the comprehensive scan summary with two main sections:
+The [`print_final_report()`](../src/data2prompt/ui.py#L129) method displays the comprehensive scan summary with two main sections:
 
 ### Success Panel
 
@@ -173,7 +173,7 @@ graph TD
 
 ### Scroll Bar Logic
 
-The [`get_scan_list_panel()`](src/data2prompt/ui.py:235) function calculates scroll bar dimensions:
+The [`get_scan_list_panel()`](../src/data2prompt/ui.py#L235) function calculates scroll bar dimensions:
 
 ```python
 if total_items > v_height:
@@ -199,7 +199,7 @@ finally:
 
 ### Warning Panel
 
-The [`print_warning_panel()`](src/data2prompt/ui.py:340) displays a styled warning panel:
+The [`print_warning_panel()`](../src/data2prompt/ui.py#L340) displays a styled warning panel:
 
 ```python
 def print_warning_panel(self, message: str) -> None:
@@ -213,7 +213,7 @@ def print_warning_panel(self, message: str) -> None:
 
 ### Inline Warning/Error
 
-The [`print_warning()`](src/data2prompt/ui.py:348) and [`print_error()`](src/data2prompt/ui.py:352) methods provide inline messages:
+The [`print_warning()`](../src/data2prompt/ui.py#L348) and [`print_error()`](../src/data2prompt/ui.py#L352) methods provide inline messages:
 
 ```python
 def print_warning(self, message: str) -> None:
@@ -227,7 +227,7 @@ def print_error(self, message: str) -> None:
 
 ## Integration with Main Processing
 
-The [`UIHandler`](src/data2prompt/ui.py:34) integrates with [`main.py`](src/data2prompt/main.py:43) through event handlers:
+The [`UIHandler`](../src/data2prompt/ui.py#L34) integrates with [`main.py`](../src/data2prompt/main.py#L43) through event handlers:
 
 ```python
 # From main.py
@@ -251,7 +251,7 @@ if not sys.stdin.isatty() or sys.platform != "win32":
 
 ## Global Instance
 
-A global [`ui`](src/data2prompt/ui.py:357) instance is exported for use throughout the application:
+A global [`ui`](../src/data2prompt/ui.py#L357) instance is exported for use throughout the application:
 
 ```python
 # Global UI instance

@@ -124,8 +124,8 @@ token_count, method = count_tokens("def hello(): return 'world'")
 This pattern implements the pre-tokenization step of the GPT-4o tokenizer (o200k_base) before BPE merging.
 
 **Usage in Other Modules:**
-- [`parsers.py`](src/data2prompt/parsers.py:1): Used to calculate prompt density and truncate large files
-- [`main.py`](src/data2prompt/main.py:1): Used for total token estimation in summary output
+- [`parsers.py`](../src/data2prompt/parsers.py#L1): Used to calculate prompt density and truncate large files
+- [`main.py`](../src/data2prompt/main.py#L1): Used for total token estimation in summary output
 
 ---
 
@@ -163,7 +163,7 @@ When embedding code in markdown, using standard triple backticks (` ``` `) can b
 | Double backticks `` ` ` `` | ` ``` ` (4) |
 | Triple backticks `` ` ` ` `` | ` ```` ` (5) |
 
-**Usage in [`output.py`](src/data2prompt/output.py:1):** Used to safely embed file contents in markdown output.
+**Usage in [`output.py`](../src/data2prompt/output.py#L1):** Used to safely embed file contents in markdown output.
 
 ---
 
@@ -192,7 +192,7 @@ def is_binary(file_path):
 - Returns `False` on `OSError` (assumes text if unreadable)
 - Uses null byte (`\0`) detection, the standard Unix heuristic
 
-**Usage in [`parsers.py`](src/data2prompt/parsers.py:1):** Prevents attempting to parse binary files as text, which would corrupt output and token counts.
+**Usage in [`parsers.py`](../src/data2prompt/parsers.py#L1):** Prevents attempting to parse binary files as text, which would corrupt output and token counts.
 
 ---
 
@@ -488,7 +488,7 @@ All functions in `utils.py` follow defensive programming principles:
 
 ## Constants Used
 
-The module references constants from [`constants.py`](src/data2prompt/constants.py:1) when instantiated through the main flow:
+The module references constants from [`constants.py`](../src/data2prompt/constants.py#L1) when instantiated through the main flow:
 
 - `DEFAULT_IGNORE_FOLDERS`: Default folder names to ignore
 - `DEFAULT_IGNORE_FILES`: Default file patterns to ignore

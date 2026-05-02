@@ -4,7 +4,7 @@ The `data2prompt` project supports multiple output formats to ensure compatibili
 
 ## Architecture Overview
 
-The output module ([`src/data2prompt/output.py`](src/data2prompt/output.py:1)) is responsible for transforming parsed file data into structured text representations optimized for LLM consumption. It receives Intermediate Representations (IR) from the parsing layer and produces either Markdown or XML output.
+The output module ([`src/data2prompt/output.py`](../src/data2prompt/output.py#L1)) is responsible for transforming parsed file data into structured text representations optimized for LLM consumption. It receives Intermediate Representations (IR) from the parsing layer and produces either Markdown or XML output.
 
 ```mermaid
 graph LR
@@ -19,7 +19,7 @@ graph LR
 
 ### Abstract Base Class
 
-The [`OutputGenerator`](src/data2prompt/output.py:23) abstract class defines the interface for all output generation strategies:
+The [`OutputGenerator`](../src/data2prompt/output.py#L23) abstract class defines the interface for all output generation strategies:
 
 ```python
 class OutputGenerator(ABC):
@@ -37,7 +37,7 @@ class OutputGenerator(ABC):
 
 ### Factory Function
 
-The [`get_generator()`](src/data2prompt/output.py:232) function provides simple factory access to concrete implementations:
+The [`get_generator()`](../src/data2prompt/output.py#L232) function provides simple factory access to concrete implementations:
 
 ```python
 def get_generator(format_type: str) -> OutputGenerator:
@@ -50,7 +50,7 @@ def get_generator(format_type: str) -> OutputGenerator:
 
 ### 1. Markdown (`MarkdownGenerator`)
 
-The [`MarkdownGenerator`](src/data2prompt/output.py:35) produces structured Markdown documents optimized for human readability and LLM context windows that prefer Markdown formatting.
+The [`MarkdownGenerator`](../src/data2prompt/output.py#L35) produces structured Markdown documents optimized for human readability and LLM context windows that prefer Markdown formatting.
 
 #### Output Structure
 
@@ -58,27 +58,27 @@ The [`MarkdownGenerator`](src/data2prompt/output.py:35) produces structured Mark
 |---------|-------------|
 | Generation Flag | `<!-- DATA2PROMPT_GENERATED_CONTENT -->` marker for recursive scanning prevention |
 | Header | `# codebase: {project_name}` |
-| System Instructions | LLM instructions from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](src/data2prompt/constants.py:53) |
-| Metadata | Timestamp and token estimation via [`o200k_base`](src/data2prompt/utils.py:62) |
+| System Instructions | LLM instructions from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py#L53) |
+| Metadata | Timestamp and token estimation via [`o200k_base`](../src/data2prompt/utils.py#L62) |
 | Directory Structure | Code block with tree output |
 | Files | Individual files with `## File: {path}` headers |
 
 #### Notebook Rendering
 
-Jupyter Notebooks are rendered using [`NotebookCellIR`](src/data2prompt/parsers.py:27) with cell-level headers:
+Jupyter Notebooks are rendered using [`NotebookCellIR`](../src/data2prompt/parsers.py#L27) with cell-level headers:
 
-```markdown
+````markdown
 ### Cell {number} ({type}) - {path}
 ```{lang}
 {cell.source}
 ```
-```
+````
 
 Cell outputs are displayed in text code blocks when present.
 
 #### Table Rendering
 
-CSV/Excel data is rendered using [`TableIR`](src/data2prompt/parsers.py:35) with Markdown table formatting via `pandas.DataFrame.to_markdown()`:
+CSV/Excel data is rendered using [`TableIR`](../src/data2prompt/parsers.py#L35) with Markdown table formatting via `pandas.DataFrame.to_markdown()`:
 
 ```markdown
 ### Sheet {sheet_number}: {name} - {path}
@@ -86,11 +86,11 @@ CSV/Excel data is rendered using [`TableIR`](src/data2prompt/parsers.py:35) with
 ---
 ```
 
-Table truncation is handled by [`enforce_table_limit()`](src/data2prompt/parsers.py:97) when a `Config` object is provided.
+Table truncation is handled by [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) when a `Config` object is provided.
 
 ### 2. XML (`XMLGenerator`)
 
-The [`XMLGenerator`](src/data2prompt/output.py:138) produces structured XML documents for LLM context windows that benefit from explicit tagging.
+The [`XMLGenerator`](../src/data2prompt/output.py#L138) produces structured XML documents for LLM context windows that benefit from explicit tagging.
 
 #### Output Structure
 
@@ -156,7 +156,7 @@ class TableIR:
 
 ## Dynamic Wrapping
 
-To prevent nested code blocks from breaking Markdown rendering, the module uses [`get_dynamic_wrapper()`](src/data2prompt/utils.py:79) from [`src/data2prompt/utils.py`](src/data2prompt/utils.py:1).
+To prevent nested code blocks from breaking Markdown rendering, the module uses [`get_dynamic_wrapper()`](../src/data2prompt/utils.py#L79) from [`src/data2prompt/utils.py`](../src/data2prompt/utils.py#L1).
 
 ### Algorithm
 
@@ -175,7 +175,7 @@ To prevent nested code blocks from breaking Markdown rendering, the module uses 
 
 ## Token Estimation
 
-Token estimation is performed by the parsing layer using [`count_tokens()`](src/data2prompt/utils.py:42) and passed to output generators for inclusion in metadata.
+Token estimation is performed by the parsing layer using [`count_tokens()`](../src/data2prompt/utils.py#L42) and passed to output generators for inclusion in metadata.
 
 ### Methods
 
@@ -197,25 +197,25 @@ The method label is included in output metadata:
 
 ## Configuration Integration
 
-Output generators accept an optional [`Config`](src/data2prompt/cli.py) parameter for table limit enforcement:
+Output generators accept an optional [`Config`](../src/data2prompt/cli.py) parameter for table limit enforcement:
 
 ```python
 def generate(self, ..., config: 'Config' = None) -> str:
 ```
 
-When `config` is provided, table content is truncated via [`enforce_table_limit()`](src/data2prompt/parsers.py:97) using:
+When `config` is provided, table content is truncated via [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) using:
 - `config.table_limit`: Maximum characters allowed
 - `config.table_truncate`: Characters to retain when truncated
 
 ## Output Format Configuration
 
-Output formats are configured via CLI arguments defined in [`src/data2prompt/cli.py`](src/data2prompt/cli.py:1):
+Output formats are configured via CLI arguments defined in [`src/data2prompt/cli.py`](../src/data2prompt/cli.py#L1):
 
 | Constant | Value | Usage |
 |----------|-------|-------|
-| [`DEFAULT_FORMAT`](src/data2prompt/constants.py:40) | `'markdown'` | Default output format |
-| [`SUPPORTED_FORMATS`](src/data2prompt/constants.py:43) | `{'xml': '.xml', 'markdown': '.md'}` | Format-to-extension mapping |
-| [`DEFAULT_OUTPUT_FILE`](src/data2prompt/constants.py:39) | `'PROMPT'` | Default output filename base |
+| [`DEFAULT_FORMAT`](../src/data2prompt/constants.py#L40) | `'markdown'` | Default output format |
+| [`SUPPORTED_FORMATS`](../src/data2prompt/constants.py#L43) | `{'xml': '.xml', 'markdown': '.md'}` | Format-to-extension mapping |
+| [`DEFAULT_OUTPUT_FILE`](../src/data2prompt/constants.py#L39) | `'PROMPT'` | Default output filename base |
 
 ## Extension Points
 
@@ -223,17 +223,17 @@ To add a new output format:
 
 1. Create a new class inheriting from `OutputGenerator`
 2. Implement the `generate()` method
-3. Update [`get_generator()`](src/data2prompt/output.py:232) to handle the new format
-4. Add format constant to [`SUPPORTED_FORMATS`](src/data2prompt/constants.py:43) if file extension mapping is needed
+3. Update [`get_generator()`](../src/data2prompt/output.py#L232) to handle the new format
+4. Add format constant to [`SUPPORTED_FORMATS`](../src/data2prompt/constants.py#L43) if file extension mapping is needed
 
 ## Constants Reference
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| [`GENERATION_FLAG`](src/data2prompt/constants.py:49) | `"DATA2PROMPT_GENERATED_CONTENT"` | Recursive scanning prevention marker |
-| [`SYSTEM_INSTRUCTIONS_MARKDOWN`](src/data2prompt/constants.py:53) | Multi-line string | LLM instructions for Markdown format |
-| [`SYSTEM_INSTRUCTIONS_XML`](src/data2prompt/constants.py:61) | Multi-line string | LLM instructions for XML format |
-| [`TAG_DIRECTORY_STRUCTURE`](src/data2prompt/constants.py:70) | `"directory_structure"` | XML tag name |
-| [`TAG_FILES`](src/data2prompt/constants.py:71) | `"files"` | XML tag name |
-| [`TAG_FILE`](src/data2prompt/constants.py:72) | `"file"` | XML tag name |
-| [`TAG_CONTENT`](src/data2prompt/constants.py:73) | `"content"` | XML tag for notebook cells |
+| [`GENERATION_FLAG`](../src/data2prompt/constants.py#L49) | `"DATA2PROMPT_GENERATED_CONTENT"` | Recursive scanning prevention marker |
+| [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py#L53) | Multi-line string | LLM instructions for Markdown format |
+| [`SYSTEM_INSTRUCTIONS_XML`](../src/data2prompt/constants.py#L61) | Multi-line string | LLM instructions for XML format |
+| [`TAG_DIRECTORY_STRUCTURE`](../src/data2prompt/constants.py#L70) | `"directory_structure"` | XML tag name |
+| [`TAG_FILES`](../src/data2prompt/constants.py#L71) | `"files"` | XML tag name |
+| [`TAG_FILE`](../src/data2prompt/constants.py#L72) | `"file"` | XML tag name |
+| [`TAG_CONTENT`](../src/data2prompt/constants.py#L73) | `"content"` | XML tag for notebook cells |

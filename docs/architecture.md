@@ -4,15 +4,15 @@ The `data2prompt` project is built upon the **Modular Functional Orchestration (
 
 ## Core Principles
 
-1.  **Centralized Configuration**: All default values, ignore lists, and static strings are managed in [`src/data2prompt/constants.py`](src/data2prompt/constants.py), providing a single source of truth.
+1.  **Centralized Configuration**: All default values, ignore lists, and static strings are managed in [`src/data2prompt/constants.py`](../src/data2prompt/constants.py), providing a single source of truth.
 2.  **Functional Specialization**: Logic is encapsulated into focused, pure-ish functions within specialized modules (`parsers.py`, `utils.py`).
-3.  **Orchestration Layer**: The main execution path in [`src/data2prompt/main.py`](src/data2prompt/main.py) coordinates high-level logic, dispatching tasks to specialized modules.
-4.  **UI Encapsulation**: All terminal output is handled exclusively by the `UIHandler` in [`src/data2prompt/ui.py`](src/data2prompt/ui.py).
+3.  **Orchestration Layer**: The main execution path in [`src/data2prompt/main.py`](../src/data2prompt/main.py) coordinates high-level logic, dispatching tasks to specialized modules.
+4.  **UI Encapsulation**: All terminal output is handled exclusively by the `UIHandler` in [`src/data2prompt/ui.py`](../src/data2prompt/ui.py).
 5.  **Defensive Programming**: Robust error handling and resource management are implemented throughout the codebase.
 
 ## Module Flow
 
-The high-level workflow is orchestrated by [`src/data2prompt/main.py`](src/data2prompt/main.py):
+The high-level workflow is orchestrated by [`src/data2prompt/main.py`](../src/data2prompt/main.py):
 
 ```mermaid
 graph TD
@@ -30,27 +30,27 @@ graph TD
 
 ### Workflow Steps
 
-1.  **Initialization**: [`src/data2prompt/cli.py`](src/data2prompt/cli.py) parses user input and merges it with defaults from [`src/data2prompt/constants.py`](src/data2prompt/constants.py).
-2.  **Discovery**: [`src/data2prompt/main.py`](src/data2prompt/main.py) uses [`src/data2prompt/utils.py`](src/data2prompt/utils.py) to scan the project directory, respecting ignore rules.
-3.  **Processing**: For each file, [`src/data2prompt/main.py`](src/data2prompt/main.py) uses the `ParserRegistry` in [`src/data2prompt/parsers.py`](src/data2prompt/parsers.py) to select the appropriate parser.
-4.  **Generation**: Once all files are processed, [`src/data2prompt/main.py`](src/data2prompt/main.py) uses an `OutputGenerator` strategy from [`src/data2prompt/output.py`](src/data2prompt/output.py) to compile the final output.
-5.  **Feedback**: Throughout the process, [`src/data2prompt/ui.py`](src/data2prompt/ui.py) provides real-time progress updates and final reporting.
+1.  **Initialization**: [`src/data2prompt/cli.py`](../src/data2prompt/cli.py) parses user input and merges it with defaults from [`src/data2prompt/constants.py`](../src/data2prompt/constants.py).
+2.  **Discovery**: [`src/data2prompt/main.py`](../src/data2prompt/main.py) uses [`src/data2prompt/utils.py`](../src/data2prompt/utils.py) to scan the project directory, respecting ignore rules.
+3.  **Processing**: For each file, [`src/data2prompt/main.py`](../src/data2prompt/main.py) uses the `ParserRegistry` in [`src/data2prompt/parsers.py`](../src/data2prompt/parsers.py) to select the appropriate parser.
+4.  **Generation**: Once all files are processed, [`src/data2prompt/main.py`](../src/data2prompt/main.py) uses an `OutputGenerator` strategy from [`src/data2prompt/output.py`](../src/data2prompt/output.py) to compile the final output.
+5.  **Feedback**: Throughout the process, [`src/data2prompt/ui.py`](../src/data2prompt/ui.py) provides real-time progress updates and final reporting.
 
 ---
 
 ## The Orchestration Layer: main.py
 
-[`src/data2prompt/main.py`](src/data2prompt/main.py:1) serves as the central orchestration hub for the entire application. It follows the MFO pattern by coordinating high-level workflows without implementing any specialized parsing, output generation, or UI logic.
+[`src/data2prompt/main.py`](../src/data2prompt/main.py#L1) serves as the central orchestration hub for the entire application. It follows the MFO pattern by coordinating high-level workflows without implementing any specialized parsing, output generation, or UI logic.
 
 ### Module Responsibilities
 
 | Module | Responsibility | Access in main.py |
 |--------|---------------|-------------------|
-| [`cli.py`](src/data2prompt/cli.py:1) | Argument parsing and Config construction | `config = setup_cli()` |
-| [`parsers.py`](src/data2prompt/parsers.py:1) | Format-specific file parsing via Registry | `registry.get_parser(ext)` |
-| [`output.py`](src/data2prompt/output.py:1) | Output generation via Strategy pattern | `get_generator(config.format)` |
-| [`utils.py`](src/data2prompt/utils.py:1) | Project scanning, tokenization, connectivity | `ProjectScanner`, `count_tokens()`, `check_connectivity()` |
-| [`ui.py`](src/data2prompt/ui.py:1) | Terminal feedback and reporting | `ui.on_start()`, `ui.progress_bar()` |
+| [`cli.py`](../src/data2prompt/cli.py#L1) | Argument parsing and Config construction | `config = setup_cli()` |
+| [`parsers.py`](../src/data2prompt/parsers.py#L1) | Format-specific file parsing via Registry | `registry.get_parser(ext)` |
+| [`output.py`](../src/data2prompt/output.py#L1) | Output generation via Strategy pattern | `get_generator(config.format)` |
+| [`utils.py`](../src/data2prompt/utils.py#L1) | Project scanning, tokenization, connectivity | `ProjectScanner`, `count_tokens()`, `check_connectivity()` |
+| [`ui.py`](../src/data2prompt/ui.py#L1) | Terminal feedback and reporting | `ui.on_start()`, `ui.progress_bar()` |
 
 ### Data Flow
 
@@ -88,7 +88,7 @@ sequenceDiagram
 
 ### Processing Pipeline
 
-The [`main()`](src/data2prompt/main.py:43) function implements a three-phase processing pipeline:
+The [`main()`](../src/data2prompt/main.py#L43) function implements a three-phase processing pipeline:
 
 #### Phase 1: Initialization & Discovery
 
@@ -105,8 +105,8 @@ scanner = ProjectScanner(
 all_files = scanner.scan()
 ```
 
-1. **Config Construction**: [`setup_cli()`](src/data2prompt/cli.py:1) merges CLI arguments with defaults from [`constants.py`](src/data2prompt/constants.py:1)
-2. **Project Scanner**: [`ProjectScanner`](src/data2prompt/utils.py:1) discovers files while respecting ignore patterns (`.gitignore`, `.data2promptignore`, CLI exclusions)
+1. **Config Construction**: [`setup_cli()`](../src/data2prompt/cli.py#L48) merges CLI arguments with defaults from [`constants.py`](../src/data2prompt/constants.py#L1)
+2. **Project Scanner**: [`ProjectScanner`](../src/data2prompt/utils.py#L105) discovers files while respecting ignore patterns (`.gitignore`, `.data2promptignore`, CLI exclusions)
 
 #### Phase 2: File Processing
 
@@ -116,13 +116,13 @@ for file_path in all_files:
     files_data.append({...})
 ```
 
-The [`process_target_file()`](src/data2prompt/main.py:27) function:
+The [`process_target_file()`](../src/data2prompt/main.py#L27) function:
 
 1. **Checks exclusions**: Returns early for files matching `skip_exts`
-2. **Selects parser**: Uses `registry.get_parser(ext)` to obtain the appropriate [`BaseParser`](src/data2prompt/parsers.py:92)
-3. **Delegates parsing**: Calls `parser.parse(file_path, config)` and returns [`ParserResult`](src/data2prompt/parsers.py:47)
+2. **Selects parser**: Uses `registry.get_parser(ext)` to obtain the appropriate [`BaseParser`](../src/data2prompt/parsers.py#L92)
+3. **Delegates parsing**: Calls `parser.parse(file_path, config)` and returns [`ParserResult`](../src/data2prompt/parsers.py#L47)
 
-The [`get_ui_action()`](src/data2prompt/main.py:18) helper determines the progress bar action based on file type:
+The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the progress bar action based on file type:
 
 | Extension | Action |
 |-----------|--------|
@@ -150,15 +150,15 @@ final_output = generator.generate(
 )
 ```
 
-1. **Token Estimation**: Uses [`flatten_ir()`](src/data2prompt/parsers.py:56) to convert structured IR back to string for accurate token counting
-2. **Generator Selection**: [`get_generator()`](src/data2prompt/output.py:1) returns the appropriate [`OutputGenerator`](src/data2prompt/output.py:23) strategy based on `config.format`
-3. **Final Report**: [`ui.print_final_report()`](src/data2prompt/ui.py:1) displays the interactive summary
+1. **Token Estimation**: Uses [`flatten_ir()`](../src/data2prompt/parsers.py#L56) to convert structured IR back to string for accurate token counting
+2. **Generator Selection**: [`get_generator()`](../src/data2prompt/output.py#L232) returns the appropriate [`OutputGenerator`](../src/data2prompt/output.py#L23) strategy based on `config.format`
+3. **Final Report**: [`ui.print_final_report()`](../src/data2prompt/ui.py#L129) displays the interactive summary
 
 ### Design Patterns
 
 #### Parser Registry Pattern
 
-The `ParserRegistry` in [`parsers.py`](src/data2prompt/parsers.py:1) maps file extensions to specialized parser classes:
+The `ParserRegistry` in [`parsers.py`](../src/data2prompt/parsers.py#L1) maps file extensions to specialized parser classes:
 
 ```python
 class ParserRegistry:
@@ -172,14 +172,14 @@ class ParserRegistry:
 ```
 
 Registered parsers include:
-- [`CsvParser`](src/data2prompt/parsers.py:1) → `.csv`
-- [`SqlParser`](src/data2prompt/parsers.py:1) → `.sql`
-- [`NotebookParser`](src/data2prompt/parsers.py:1) → `.ipynb`
-- [`ExcelParser`](src/data2prompt/parsers.py:1) → `.xlsx`, `.xls`
+- [`CsvParser`](../src/data2prompt/parsers.py#L1) → `.csv`
+- [`SqlParser`](../src/data2prompt/parsers.py#L1) → `.sql`
+- [`NotebookParser`](../src/data2prompt/parsers.py#L1) → `.ipynb`
+- [`ExcelParser`](../src/data2prompt/parsers.py#L1) → `.xlsx`, `.xls`
 
 #### Output Strategy Pattern
 
-The `OutputGenerator` in [`output.py`](src/data2prompt/output.py:1) uses the Strategy pattern:
+The `OutputGenerator` in [`output.py`](../src/data2prompt/output.py#L1) uses the Strategy pattern:
 
 ```python
 class OutputGenerator(ABC):
@@ -198,12 +198,12 @@ def get_generator(format: str) -> OutputGenerator:
 
 Parsers return structured data using IR dataclasses:
 
-- [`NotebookCellIR`](src/data2prompt/parsers.py:27): Represents Jupyter notebook cells with code/markdown type, source, and outputs
-- [`TableIR`](src/data2prompt/parsers.py:36): Represents tabular data (CSV/Excel) with DataFrame, metadata, and truncation notes
+- [`NotebookCellIR`](../src/data2prompt/parsers.py#L27): Represents Jupyter notebook cells with code/markdown type, source, and outputs
+- [`TableIR`](../src/data2prompt/parsers.py#L36): Represents tabular data (CSV/Excel) with DataFrame, metadata, and truncation notes
 
 ### Statistics Tracking
 
-The [`main()`](src/data2prompt/main.py:43) function maintains comprehensive statistics:
+The [`main()`](../src/data2prompt/main.py#L43) function maintains comprehensive statistics:
 
 | Stat Key | Purpose |
 |----------|---------|
@@ -220,7 +220,7 @@ The [`main()`](src/data2prompt/main.py:43) function maintains comprehensive stat
 ### Defensive Measures
 
 1. **Warning Suppression**: Global suppression of `openpyxl` and `pandas` warnings for cleaner TUI output
-2. **Connectivity Check**: [`check_connectivity()`](src/data2prompt/utils.py:33) determines online/offline mode before tokenization
+2. **Connectivity Check**: [`check_connectivity()`](../src/data2prompt/utils.py#L33) determines online/offline mode before tokenization
 3. **File Size Warning**: Triggers a warning panel if output exceeds 2MB (potential context window issues)
 4. **Graceful Skipping**: Files matching skip extensions receive a placeholder result rather than failing
 
