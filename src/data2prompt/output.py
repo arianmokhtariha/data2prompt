@@ -3,7 +3,7 @@ import pandas as pd
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, TYPE_CHECKING
 from pathlib import Path
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 if TYPE_CHECKING:
     from .cli import Config
@@ -114,7 +114,7 @@ class MarkdownGenerator(OutputGenerator):
                     if config:
                         table_text = enforce_table_limit(table_text, config.table_limit, config.table_truncate)
                     
-                    lines.append(escape(table_text))
+                    lines.append(table_text)
                     
                     # Close Sheet block if applicable
                     if table.sheet_number is not None:
@@ -151,7 +151,7 @@ class XMLGenerator(OutputGenerator):
         lines = [
             f"<!-- {GENERATION_FLAG} -->",
             "",
-            f'<codebase name="{project_name}">',
+            f'<codebase name={quoteattr(project_name)}>',
             "",
             SYSTEM_INSTRUCTIONS_XML,
             "",
@@ -161,7 +161,7 @@ class XMLGenerator(OutputGenerator):
             "</metadata>",
             "",
             f"<{TAG_DIRECTORY_STRUCTURE}>",
-            tree_text,
+            escape(tree_text),
             f"</{TAG_DIRECTORY_STRUCTURE}>",
             "",
             f"<{TAG_FILES}>",
@@ -182,11 +182,11 @@ class XMLGenerator(OutputGenerator):
                 for cell in content:
                     lines.append(f'    <cell path="{display_path}" index="{cell.number}" type="{cell.type}">')
                     lines.append(f'        <{TAG_CONTENT}>')
-                    lines.append(cell.source)
+                    lines.append(escape(cell.source))
                     lines.append(f'        </{TAG_CONTENT}>')
                     if cell.outputs:
                         lines.append('        <outputs>')
-                        lines.append(cell.outputs)
+                        lines.append(escape(cell.outputs))
                         lines.append('        </outputs>')
                     lines.append('    </cell>')
             
@@ -211,7 +211,7 @@ class XMLGenerator(OutputGenerator):
                     if config:
                         table_text = enforce_table_limit(table_text, config.table_limit, config.table_truncate)
                     
-                    lines.append(table_text)
+                    lines.append(escape(table_text))
                     
                     # Close Sheet block if applicable
                     if table.sheet_number is not None:
