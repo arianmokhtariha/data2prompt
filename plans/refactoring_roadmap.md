@@ -5,8 +5,8 @@ This roadmap outlines the transition of the `data2prompt` codebase toward a more
 ## Phase 1: Configuration & Discovery Decoupling
 
 ### Architectural Changes
-- **Config DTO**: Introduce a `Config` dataclass in [`src/data2prompt/cli.py`](src/data2prompt/cli.py) (or a new `config.py`) to replace the raw `argparse.Namespace`. This DTO will provide type-safe access to all application settings.
-- **ProjectScanner**: Create a `ProjectScanner` class in [`src/data2prompt/utils.py`](src/data2prompt/utils.py) (or a new `scanner.py`).
+- **Config DTO**: Introduce a `Config` dataclass in [`src/data2prompt/cli.py`](../src/data2prompt/cli.py) (or a new `config.py`) to replace the raw `argparse.Namespace`. This DTO will provide type-safe access to all application settings.
+- **ProjectScanner**: Create a `ProjectScanner` class in [`src/data2prompt/utils.py`](../src/data2prompt/utils.py) (or a new `scanner.py`).
     - Encapsulate `os.walk` logic.
     - Centralize ignore logic (folders, files, extensions).
     - Handle `.data2promptignore` loading and merging.
@@ -25,7 +25,7 @@ This roadmap outlines the transition of the `data2prompt` codebase toward a more
 ## Phase 2: Parser Abstraction (Registry Pattern)
 
 ### Architectural Changes
-- **BaseParser Interface**: Define a `BaseParser` protocol or abstract base class in [`src/data2prompt/parsers.py`](src/data2prompt/parsers.py).
+- **BaseParser Interface**: Define a `BaseParser` protocol or abstract base class in [`src/data2prompt/parsers.py`](../src/data2prompt/parsers.py).
     - Method: `parse(file_path: Path, config: Config) -> ParserResult`.
 - **ParserResult DTO**: Standardize the output of all parsers (content, tokens, metadata, stats).
 - **ParserRegistry**: Implement a registry that maps file extensions to `BaseParser` implementations.
@@ -45,7 +45,7 @@ This roadmap outlines the transition of the `data2prompt` codebase toward a more
 ## Phase 3: Orchestration Refinement
 
 ### Architectural Changes
-- **Refactor `main`**: Update the main loop in [`src/data2prompt/main.py`](src/data2prompt/main.py) to use `ProjectScanner` and `ParserRegistry`.
+- **Refactor `main`**: Update the main loop in [`src/data2prompt/main.py`](../src/data2prompt/main.py) to use `ProjectScanner` and `ParserRegistry`.
 - **Standardize Metadata**: Ensure all parsers return a uniform metadata structure, which `main.py` uses to build the final Markdown.
 - **Pipeline Pattern**: Consider treating the processing of a file as a pipeline: `Discovery -> Parsing -> Wrapping -> Stats Collection`.
 
@@ -62,7 +62,7 @@ This roadmap outlines the transition of the `data2prompt` codebase toward a more
 
 ### Architectural Changes
 - **Event/Callback Mechanism**: Introduce a simple event system (e.g., `on_file_processed`, `on_progress_update`) so that logic modules don't call `ui` directly.
-- **Passive UIHandler**: Transition `UIHandler` in [`src/data2prompt/ui.py`](src/data2prompt/ui.py) to listen for these events.
+- **Passive UIHandler**: Transition `UIHandler` in [`src/data2prompt/ui.py`](../src/data2prompt/ui.py) to listen for these events.
 - **Dependency Injection**: Pass the UI handler (or an event bus) to the orchestrator, rather than using a global instance everywhere.
 
 ### Expected Benefits
