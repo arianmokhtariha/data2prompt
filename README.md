@@ -11,7 +11,7 @@
 
 > **High-performance codebase-to-prompt orchestration for Data Science workflows and data-heavy projects.**
 
-data2prompt is a CLI tool designed to bridge the gap between local data-heavy projects and Large Language Model (LLM) context windows. Unlike generic code-packagers, it provides an intelligent,optimized output for LLM attention mechanism, token-aware representation of a project's structure and content, specifically designed for data-heavy environments.
+data2prompt is a CLI tool designed to bridge the gap between local data-heavy projects and Large Language Model (LLM) context windows. Unlike generic code-packagers, it provides an intelligent,optimized output for LLM attention mechanism, token-aware representation of a project's structure and content.
 
 ## 📝 Important Note
 **Data2prompt** is purpose-built for **data-heavy projects** (`.csv`, `.sql`, `.xlsx`, `.ipynb`), not large pure-code repositories. It intelligently samples and truncates data files to prevent context window explosion while preserving semantic structure.
