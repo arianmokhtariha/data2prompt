@@ -13,8 +13,8 @@ build/
 dist/
 *.egg-info/
 
-# roo folder
-.roo/
+# ai assistants
+.kilo/
 
 # repomix output files
 repomix-output.xml
