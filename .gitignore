@@ -15,3 +15,7 @@ dist/
 
 # roo folder
 .roo/
+
+# repomix output files
+repomix-output.xml
+repomix-output.md

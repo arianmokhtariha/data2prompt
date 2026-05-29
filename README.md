@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/data2prompt/"><img src="https://img.shields.io/pypi/v/data2prompt.svg" alt="PyPI version"></a>
   <a href="https://github.com/arianmokhtariha/data2prompt/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
   <a href="https://github.com/arianmokhtariha/data2prompt"><img src="https://img.shields.io/badge/status-active-brightgreen.svg" alt="Status"></a>
@@ -50,6 +51,35 @@ For a deep dive into the system design, see the [Architecture Documentation](doc
 
 Ensure you have Python 3.10+ installed.
 
+**Recommended — using pipx (installs as a global CLI tool):**
+
+Don't have pipx? Install it first:
+```bash
+pip install pipx
+pipx ensurepath
+```
+
+Then install data2prompt:
+```bash
+pipx install data2prompt
+```
+
+**Alternative — using pip (requires an active virtual environment):**
+```bash
+pip install data2prompt
+```
+
+**Update to the latest version:**
+```bash
+# with pipx
+pipx upgrade data2prompt
+
+# with pip
+pip install --upgrade data2prompt
+```
+
+### Install from the source
+
 ```bash
 # Clone the repository
 git clone https://github.com/arianmokhtariha/data2prompt.git
@@ -58,10 +88,8 @@ cd data2prompt
 # Install normally
 pip install .
 
-# Install in editable mode
+# Or Install in editable mode
 pip install -e .
-
-# Its Recommended to use pipx instead of pip for easier venv handling
 ```
 
 ### Usage

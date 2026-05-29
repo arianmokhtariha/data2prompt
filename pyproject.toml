@@ -12,6 +12,13 @@ license = {file = "LICENSE"}
 authors = [
     {name = "Arian Mokhtariha", email = "arian1385mokhtarihaa@gmail.com"}
 ]
+keywords = ["llm", "cli", "data", "prompt", "ai", "data-science", "context"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+]
 dependencies = [
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",
@@ -29,3 +36,6 @@ data2prompt = "data2prompt.main:main"
 dev = [
     "pytest>=8.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/arianmokhtariha/data2prompt"
