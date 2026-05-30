@@ -13,8 +13,9 @@ build/
 dist/
 *.egg-info/
 
-# ai assistants
+# ai assistants files
 .kilo/
+AGENTS.md 
 
 # repomix output files
 repomix-output.xml

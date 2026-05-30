@@ -1,8 +1,7 @@
 import argparse
 from dataclasses import dataclass, field
-from typing import List, Set
-from pathlib import Path
-from argparse import Namespace
+from typing import Set
+
 
 from .constants import (
     CORE_IGNORES,

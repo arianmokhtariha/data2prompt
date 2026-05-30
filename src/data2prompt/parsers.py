@@ -3,7 +3,7 @@ import random
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple, Union, Dict, Any, Protocol, Optional, TYPE_CHECKING
+from typing import List, Union, Dict, Protocol, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .cli import Config
