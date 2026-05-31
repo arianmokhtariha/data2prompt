@@ -22,7 +22,7 @@ data2prompt is a CLI tool designed to bridge the gap between local data-heavy pr
 Generic code-to-prompt tools choke on data files—they either skip them entirely or dump raw CSVs that waste 90% of your context window. Data2Prompt solves this with intelligent sampling, schema extraction, and LLM-optimized formatting specifically designed for data science workflows.
 
 <p align="center">
-  <img src="assets/data2prompt-comparison.png" alt="Data2Prompt Comparison" width="1200">
+  <img src="assets/data2prompt-fair-comparison.png" alt="Data2Prompt Comparison" width="1200">
 </p>
 
 
