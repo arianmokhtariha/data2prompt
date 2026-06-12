@@ -147,5 +147,15 @@ If Data2Prompt saves you token costs or speeds up your workflow, consider:
 - 🐛 Reporting issues or suggesting features
 - 🔀 Contributing parsers for new file types
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=arianmokhtariha%2Fdata2prompt&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=arianmokhtariha/data2prompt&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=arianmokhtariha/data2prompt&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=arianmokhtariha/data2prompt&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ---
 *Built with precision for the modern AI-assisted development workflow.*
