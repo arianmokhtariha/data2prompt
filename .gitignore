@@ -18,6 +18,7 @@ dist/
 .claude/
 .kilo/
 AGENTS.md 
+CLAUDE.md 
 
 # repomix output files
 repomix-output.xml
