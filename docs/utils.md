@@ -14,6 +14,7 @@ is_online()          # Connectivity check
 check_connectivity() # Sets global offline mode
 count_tokens()       # Primary token counting with fallbacks
 get_dynamic_wrapper()# Markdown code block safety
+copy_to_clipboard()  # OS-native clipboard copy (no third-party dep)
 is_binary()          # Binary file detection
 
 # Classes
@@ -164,6 +165,36 @@ When embedding code in markdown, using standard triple backticks (` ``` `) can b
 | Triple backticks `` ` ` ` `` | ` ```` ` (5) |
 
 **Usage in [`output.py`](../src/data2prompt/output.py#L1):** Used to safely embed file contents in markdown output.
+
+---
+
+## Clipboard Output
+
+#### `copy_to_clipboard(text: str) -> bool`
+
+Copies text to the system clipboard using OS-native command-line tools, with **no
+third-party dependency**.
+
+```python
+if copy_to_clipboard(final_output):
+    ...  # copied successfully
+else:
+    ...  # no clipboard tool available — fall back to writing a file
+```
+
+**Implementation Details:**
+- Selects the tool by platform: `clip` (Windows), `pbcopy` (macOS), and the first
+  available of `wl-copy` / `xclip` / `xsel` (Linux).
+- Feeds the text via `subprocess.run(..., input=..., check=True)`, encoded as UTF-8 with
+  `errors="replace"`.
+- Returns `True` on success; `False` on any failure (`OSError` for a missing tool,
+  `subprocess.SubprocessError` for a non-zero exit).
+
+**Consumed by:** [`main.py`](../src/data2prompt/main.py#L1) for the `-c`/`--clipboard`
+flag. When it returns `False`, `main.py` falls back to writing the output file and warns.
+
+**Note:** On Windows, `clip` interprets input using the active console code page, so rare
+non-ASCII characters may not round-trip exactly.
 
 ---
 

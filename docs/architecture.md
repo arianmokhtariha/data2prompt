@@ -118,9 +118,10 @@ for file_path in all_files:
 
 The [`process_target_file()`](../src/data2prompt/main.py#L27) function:
 
-1. **Checks exclusions**: Returns early for files matching `skip_exts`
-2. **Selects parser**: Uses `registry.get_parser(ext)` to obtain the appropriate [`BaseParser`](../src/data2prompt/parsers.py#L92)
-3. **Delegates parsing**: Calls `parser.parse(file_path, config)` and returns [`ParserResult`](../src/data2prompt/parsers.py#L47)
+1. **Routes env files by name**: if `is_env_file(name)`, delegates to the shared `env_parser` (redacts values) — this runs *before* the extension checks because a bare `.env` has no suffix
+2. **Checks exclusions**: Returns early for files matching `skip_exts`
+3. **Selects parser**: Uses `registry.get_parser(ext)` to obtain the appropriate [`BaseParser`](../src/data2prompt/parsers.py#L92)
+4. **Delegates parsing**: Calls `parser.parse(file_path, config)` and returns [`ParserResult`](../src/data2prompt/parsers.py#L47)
 
 The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the progress bar action based on file type:
 
@@ -150,9 +151,10 @@ final_output = generator.generate(
 )
 ```
 
-1. **Token Estimation**: Uses [`flatten_ir()`](../src/data2prompt/parsers.py#L56) to convert structured IR back to string for accurate token counting
+1. **Token Estimation**: Uses [`flatten_ir()`](../src/data2prompt/parsers.py#L56) (with the `schema_only`/`stats_summary` flags) to convert structured IR back to string for accurate token counting
 2. **Generator Selection**: [`get_generator()`](../src/data2prompt/output.py#L232) returns the appropriate [`OutputGenerator`](../src/data2prompt/output.py#L23) strategy based on `config.format`
-3. **Final Report**: [`ui.print_final_report()`](../src/data2prompt/ui.py#L129) displays the interactive summary
+3. **Output Destination**: when `config.clipboard` is set, the generated output is copied to the system clipboard via [`copy_to_clipboard()`](../src/data2prompt/utils.py) and no file is written; if no clipboard utility is available it falls back to writing `config.output` and warns. Otherwise the output is written to `config.output` as usual.
+4. **Final Report**: [`ui.print_final_report()`](../src/data2prompt/ui.py#L129) displays the interactive summary
 
 ### Design Patterns
 
@@ -177,6 +179,10 @@ Registered parsers include:
 - [`NotebookParser`](../src/data2prompt/parsers.py#L1) → `.ipynb`
 - [`ExcelParser`](../src/data2prompt/parsers.py#L1) → `.xlsx`, `.xls`
 
+In addition, `EnvParser` handles `.env` files. It is dispatched **by filename** (not via
+the extension registry) because a bare `.env` has no suffix; it emits variable names with
+redacted values so secrets never reach the output.
+
 #### Output Strategy Pattern
 
 The `OutputGenerator` in [`output.py`](../src/data2prompt/output.py#L1) uses the Strategy pattern:
@@ -200,6 +206,7 @@ Parsers return structured data using IR dataclasses:
 
 - [`NotebookCellIR`](../src/data2prompt/parsers.py#L27): Represents Jupyter notebook cells with code/markdown type, source, and outputs
 - [`TableIR`](../src/data2prompt/parsers.py#L36): Represents tabular data (CSV/Excel) with DataFrame, metadata, and truncation notes
+- `TableSchema` / `ColumnSchema`: Per-table and per-column metadata (dtype, missing counts/%, optional `describe()`) computed on the full DataFrame; powers the `--schema-only` mode and the stats-summary block
 
 ### Statistics Tracking
 
@@ -216,6 +223,7 @@ The [`main()`](../src/data2prompt/main.py#L43) function maintains comprehensive 
 | `truncated_count` | Files/content truncated due to size limits |
 | `binary_count` | Binary files detected and skipped |
 | `excluded_count` | Files excluded via ignore rules |
+| `env_count` | `.env` files redacted (or skipped via `--no-env-keys`) |
 
 ### Defensive Measures
 

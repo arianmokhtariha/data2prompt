@@ -30,6 +30,10 @@ Generic code-to-prompt tools choke on data files—they either skip them entirel
 
 *   **Smart Jupyter Parsing**: Intelligently extracts code, markdown, and text outputs from [`.ipynb`](docs/parsers.md) files while stripping heavy Base64 images and raw HTML to preserve context.
 *   **Multi-Format Sampling**: Advanced sampling strategies for [CSV, SQL, and Excel](docs/parsers.md) files to preserve schema and data context which reduces the data size significantly while extracting the needed context for llm.
+*   **Stats-Aware Metadata**: Each table is annotated with a metadata block — column dtypes, missing counts/percentages, and a `describe()` summary — all computed on the *full* dataset (not the sample), so the LLM sees true data quality. Toggle with `--no-stats-summary`.
+*   **Schema-Only Mode**: `--schema-only` emits just the structure (columns + dtypes) of your data files, dropping rows entirely — ideal for sharing a project's data shape cheaply.
+*   **Secret-Safe `.env` Handling**: `.env` files are surfaced as variable *names* with redacted values (`KEY=<redacted>`) so the LLM understands the project's configuration without ever leaking secrets. Disable with `--no-env-keys`.
+*   **Direct Clipboard Output**: `--clipboard` copies the generated prompt straight to your system clipboard (no file), using native OS tools with a graceful file fallback.
 *   **Aggressive truncations**: To preserve context, long lines are truncated to neutralize line injections and avoid exploding the context windows, if a tabular data was still to large after sampling it will get truncated to a certain amount, also if a raw text file of unhandled type was too large it will get truncated to a certain amount. 
 *   **Defensive Processing**: Automatic binary detection (Null-byte checks), Checks if a file is binary by looking for a Null byte in the first 1024 bytes.
 *   **Optimized LLM attention**: The default output format is markdown with well structured schema and another option is xml output with xml style tags to enhance LLM anchoring for complex analysis and large context windows
@@ -117,6 +121,10 @@ data2prompt --output my_analysis --format xml --csv-sample-size 50 --ignore-fold
 | `-s`, `--csv-sample-size` | Number of random rows to sample from CSVs | `15` |
 | `--max-lines` | Max lines of text output per notebook cell | `40` |
 | `--max-file-size` | Max file size in KB to read entirely | `70` |
+| `-c`, `--clipboard` | Copy the output to the system clipboard instead of writing a file | `off` |
+| `--schema-only` | Emit only the schema (columns + dtypes) of data files, no rows | `off` |
+| `--no-stats-summary` | Disable the per-table stats block (dtypes, missing %, `describe()`) | `on` |
+| `--no-env-keys` | Skip `.env` files entirely instead of listing redacted variable names | `on` |
 
 See the [CLI Reference](docs/cli.md) for a full list of arguments.
 

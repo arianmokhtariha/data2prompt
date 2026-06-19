@@ -63,13 +63,20 @@ CORE_SKIP_EXTS = {
     # Media
     '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
     # Environment & Secrets
-    '.env', '.venv', '.pyc', '.ds_store'
+    # Note: '.env' is intentionally NOT here — env files are detected by name and
+    # routed to EnvParser, which emits variable names with redacted values.
+    '.venv', '.pyc', '.ds_store'
 }
 ```
 
 **Type:** `set[str]`
 
 **Purpose:** File extensions where file names appear in the project tree but content is skipped. This preserves tree visibility while avoiding binary bloat.
+
+> **Note:** `.env` was previously listed here, but a bare `.env` file has an empty
+> suffix (`Path(".env").suffix == ""`), so extension-based skipping never matched it.
+> Env files are now detected **by name** and handled by [`EnvParser`](../src/data2prompt/parsers.py)
+> (variable names with redacted values). See [`docs/parsers.md`](parsers.md).
 
 **Consumed by:**
 - [`cli.py`](../src/data2prompt/cli.py#L144) — Merged with user-provided `--skip-exts`
@@ -96,6 +103,30 @@ All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and 
 | `DEFAULT_MAX_FILE_SIZE_KB` | `70` | Max file size (KB) for unhandled types to be read entirely |
 | `DEFAULT_OUTPUT_FILE` | `'PROMPT'` | Default output base name |
 | `DEFAULT_FORMAT` | `'markdown'` | Default output format |
+
+#### Boolean Feature Toggles
+
+Every CLI boolean flag reads its default from `constants.py`, so the flag-to-default
+logic is uniform across the tool.
+
+| Constant | Default | Flag | Purpose |
+|----------|---------|------|---------|
+| `DEFAULT_USE_GITIGNORE` | `True` | `--no-gitignore` | Respect `.gitignore` rules |
+| `DEFAULT_CLIPBOARD` | `False` | `-c`, `--clipboard` | Copy output to clipboard instead of writing a file |
+| `DEFAULT_SCHEMA_ONLY` | `False` | `--schema-only` | Emit only data-file schemas (no rows) |
+| `DEFAULT_STATS_SUMMARY` | `True` | `--no-stats-summary` | Include the per-table stats metadata block |
+| `DEFAULT_ENV_KEYS` | `True` | `--no-env-keys` | List `.env` variable names with redacted values |
+
+#### `ENV_VALUE_PLACEHOLDER` — Secret Redaction Token
+
+```python
+ENV_VALUE_PLACEHOLDER = '<redacted>'
+```
+
+**Type:** `str`
+
+**Purpose:** Substituted for every value in a `.env` file so secrets never leak into
+output. Consumed by [`process_env()`](../src/data2prompt/parsers.py) / `EnvParser`.
 
 **Consumed by:**
 - [`cli.py`](../src/data2prompt/cli.py#L61) — All defaults used as CLI argument defaults

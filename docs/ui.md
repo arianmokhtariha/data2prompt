@@ -123,10 +123,10 @@ The [`print_final_report()`](../src/data2prompt/ui.py#L129) method displays the 
 ### Success Panel
 
 A styled panel showing compilation statistics:
-- Output file path and size
+- Output destination (file path, or `(clipboard)` when `--clipboard` is used) and size
 - Total token count and method used
 - File type counts (CSV, Notebook, SQL, Excel)
-- Truncation and skip counts
+- Truncation and skip counts, including `ENV_REDACTED` (count of `.env` files redacted)
 
 ### Summary Table
 
@@ -136,7 +136,7 @@ A Rich table displaying processed files with columns:
 - `TOKENS` - Token count (right-aligned, yellow)
 - `STATUS` - Processing status with color coding:
   - **Green**: Read, Sampled, Cleaned, Parsed, Extracted
-  - **Yellow**: Truncated, Skipped (Binary), Skipped (Exclusion)
+  - **Yellow**: Truncated, Skipped (Binary), Skipped (Exclusion), Schema Only, Redacted, Skipped (Env)
   - **Red**: Error states
 
 ## Interactive TUI (Windows)

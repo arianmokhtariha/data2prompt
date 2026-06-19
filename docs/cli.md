@@ -41,6 +41,10 @@ class Config:
     max_file_size: int                   # Max file size (KB) for full read
     skip_exts: Set[str]                  # File extensions to skip content
     use_gitignore: bool                  # Whether to respect .gitignore
+    clipboard: bool                      # Copy output to clipboard instead of a file
+    schema_only: bool                    # Emit only data-file schemas (no rows)
+    stats_summary: bool                  # Include the per-table stats metadata block
+    env_keys: bool                       # List .env variable names (redacted values)
 ```
 
 ## CLI Arguments Reference
@@ -100,7 +104,30 @@ class Config:
 | `--ignore-files` | `List[str]` | `[]` | Additional specific filenames to exclude. Core ignores are always applied. |
 | `--max-file-size` | `int` | `70` | Maximum file size in KB for unhandled file types to read entirely. Files larger than this only have their first 10KB included. |
 | `--skip-exts` | `List[str]` | `[]` | Additional file extensions to skip content processing (content is still listed in tree). |
-| `--no-gitignore` | `flag` | `True` | When specified, disables automatic `.gitignore` detection and filtering. |
+| `--no-gitignore` | `flag` | `True` | When specified, disables automatic `.gitignore` detection and filtering. Default sourced from [`DEFAULT_USE_GITIGNORE`](../src/data2prompt/constants.py). |
+
+### Output Destination
+
+| Argument | Short | Type | Default | Description |
+|:---------|:-----:|:----:|:-------:|:------------|
+| `--clipboard` | `-c` | `flag` | `False` | Copy the generated output directly to the system clipboard instead of writing a file. Uses OS-native tools (`clip`/`pbcopy`/`xclip`/`xsel`/`wl-copy`). If no clipboard utility is available, falls back to writing the output file and warns. |
+
+### Data Representation Settings
+
+| Argument | Type | Default | Description |
+|:---------|:----:|:-------:|:------------|
+| `--schema-only` | `flag` | `False` | Emit only the schema (column names + dtypes) of data files (CSV/Excel), omitting all data rows. SQL files keep `CREATE TABLE`/schema statements and drop `INSERT` data. Non-data files (code, notebooks, text) are unaffected. Schema metadata is computed on the **full** DataFrame. |
+| `--no-stats-summary` | `flag` | `True` | When specified, disables the per-table stats metadata block (dtypes, missing count/%, and a `describe()` summary). The block is **on by default** and computed on the **full** DataFrame. |
+
+### Secrets Handling
+
+| Argument | Type | Default | Description |
+|:---------|:----:|:-------:|:------------|
+| `--no-env-keys` | `flag` | `True` | When specified, skips `.env` files entirely. By default (`env_keys` true), `.env` files are detected by name and rendered as variable names with redacted values (`KEY=<redacted>`) — values are never emitted. |
+
+All boolean flags above read their defaults from `constants.py`
+(`DEFAULT_CLIPBOARD`, `DEFAULT_SCHEMA_ONLY`, `DEFAULT_STATS_SUMMARY`,
+`DEFAULT_ENV_KEYS`, `DEFAULT_USE_GITIGNORE`) for uniform flag-to-default logic.
 
 ## Argument Merging Logic
 
@@ -159,6 +186,11 @@ from .constants import (
     DEFAULT_MAX_FILE_SIZE_KB,
     DEFAULT_OUTPUT_FILE,
     DEFAULT_FORMAT,
+    DEFAULT_USE_GITIGNORE,
+    DEFAULT_CLIPBOARD,
+    DEFAULT_SCHEMA_ONLY,
+    DEFAULT_STATS_SUMMARY,
+    DEFAULT_ENV_KEYS,
     SUPPORTED_FORMATS
 )
 ```
@@ -182,8 +214,8 @@ These sets are defined in [`constants.py`](../src/data2prompt/constants.py#L4) a
 '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
 # Media
 '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
-# Environment & Secrets
-'.env', '.venv', '.pyc', '.ds_store'
+# Environment & Secrets ('.env' is NOT here — handled by EnvParser, see parsers.md)
+'.venv', '.pyc', '.ds_store'
 ```
 
 ## Integration with Main Module

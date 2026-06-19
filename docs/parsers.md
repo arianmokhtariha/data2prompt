@@ -49,7 +49,14 @@ class ParserRegistry:
 | [`NotebookParser`](../src/data2prompt/parsers.py#L438) | `.ipynb` | Cleans and truncates notebook cells and outputs |
 | [`SQLParser`](../src/data2prompt/parsers.py#L456) | `.sql` | Parses SQL files, sampling table data while preserving schema |
 | [`ExcelParser`](../src/data2prompt/parsers.py#L478) | `.xlsx`, `.xls` | Extracts data from sheets, detecting visual elements |
+| [`EnvParser`](../src/data2prompt/parsers.py) | `.env` & variants (by name) | Lists variable names with redacted values; never emits a value |
 | [`DefaultParser`](../src/data2prompt/parsers.py#L507) | All others | Fallback for text files with binary detection and size truncation |
+
+> **Name-based dispatch for env files.** `EnvParser` is *not* in the extension registry,
+> because a bare `.env` file has an empty suffix. Instead,
+> [`process_target_file()`](../src/data2prompt/main.py) checks `is_env_file(name)` first
+> and routes matching files to the shared `env_parser` instance, before the extension
+> registry is consulted.
 
 ### Dispatch Flow
 
@@ -104,6 +111,7 @@ class TableIR:
     visual_warning: bool = False
     sheet_number: Optional[int] = None
     file_path: Optional[str] = None
+    schema: Optional[TableSchema] = None
 ```
 
 Represents tabular data (CSV, Excel), capturing:
@@ -112,6 +120,36 @@ Represents tabular data (CSV, Excel), capturing:
 - **Header/footer notes** for sampling indicators
 - **Visual warning flag** for detecting charts/images in Excel
 - **Sheet metadata** for multi-sheet Excel files
+- **Schema** — optional [`TableSchema`](#columnschema--tableschema) metadata computed on
+  the **full** DataFrame (before sampling)
+
+### ColumnSchema / TableSchema
+
+```python
+@dataclass
+class ColumnSchema:
+    """Per-column metadata computed on the full (unsampled) DataFrame."""
+    name: str
+    dtype: str
+    missing: int
+    missing_pct: float
+
+@dataclass
+class TableSchema:
+    """Structural and statistical metadata for a table, computed on the full df."""
+    row_count: int
+    col_count: int
+    columns: List[ColumnSchema]
+    describe_df: Optional[pd.DataFrame] = None
+```
+
+`TableSchema` is the shared data structure read by **two independent features**:
+- `--schema-only` (feature #3) — emit columns + dtypes only, dropping data rows.
+- the stats-summary block (feature #4) — dtype, missing count/%, and `describe()` summary.
+
+Both compute their metadata on the **full** DataFrame, *before* any row sampling, so
+missing counts/percentages reflect the entire dataset even when only a sample is shown.
+`describe_df` is only populated when a statistics summary is requested.
 
 ### ParserResult
 
@@ -137,10 +175,15 @@ Standardized output container containing:
 
 ### flatten_ir Function
 
-The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function converts IR objects to strings for token counting:
+The [`flatten_ir()`](../src/data2prompt/parsers.py) function converts IR objects to strings for token counting:
 
 ```python
-def flatten_ir(content: Union[str, List[NotebookCellIR], List[TableIR]]) -> str:
+def flatten_ir(
+    content: Union[str, List[NotebookCellIR], List[TableIR]],
+    *,
+    schema_only: bool = False,
+    stats_summary: bool = False,
+) -> str:
     """
     Flattens the Intermediate Representation (IR) into a string for token counting.
     This provides a rough estimate of the final output size.
@@ -150,6 +193,31 @@ def flatten_ir(content: Union[str, List[NotebookCellIR], List[TableIR]]) -> str:
 - **String content**: Returned as-is
 - **NotebookCellIR list**: Concatenates source and outputs
 - **TableIR list**: Converts DataFrames to string representation with metadata
+
+The keyword-only `schema_only` and `stats_summary` flags mirror the rendering decisions
+in [`output.py`](output.md) so the token estimate tracks the real output: the schema
+block is included when either flag is set, and data rows are dropped under `schema_only`.
+Defaults are `False`, keeping legacy callers unaffected; the parser classes and `main.py`
+pass the real `Config` flags.
+
+### Schema Helpers
+
+Two module-level helpers back the schema/stats features:
+
+```python
+def build_table_schema(df: pd.DataFrame, include_describe: bool) -> TableSchema: ...
+def render_schema_block(schema, *, show_missing: bool, show_describe: bool) -> str: ...
+```
+
+- [`build_table_schema()`](../src/data2prompt/parsers.py) computes row/column counts,
+  per-column dtype and missing stats from the **full** DataFrame, plus an optional
+  transposed `describe()` summary (`include_describe`). `describe()` is wrapped in
+  try/except and empty frames are handled gracefully.
+- [`render_schema_block()`](../src/data2prompt/parsers.py) renders a `TableSchema` to a
+  Markdown snippet (rows × cols header, a `column | dtype [| missing | missing %]` table,
+  and a `describe()` summary table when `show_describe`). It is the **single source of
+  truth** for schema rendering, used by both `flatten_ir()` (token estimate) and the
+  output generators in [`output.py`](output.md).
 
 ## Parser Implementations
 
@@ -162,9 +230,12 @@ class CSVParser:
 
 Uses [`process_csv()`](../src/data2prompt/parsers.py#L149) to:
 1. Read CSV into a pandas DataFrame
-2. Sample `config.csv_sample_size` rows using `config.seed` for reproducibility
-3. Add header/footer notes indicating sampling
-4. Return a single-element `TableIR` list
+2. Compute a [`TableSchema`](#columnschema--tableschema) on the **full** df when
+   `config.stats_summary` or `config.schema_only` is set (before sampling)
+3. If `config.schema_only`: return an empty-df `TableIR` carrying only the schema (no rows)
+4. Otherwise sample `config.csv_sample_size` rows using `config.seed` for reproducibility
+5. Add header/footer notes indicating sampling; attach the schema
+6. Return a single-element `TableIR` list (status `"Schema Only"` when `schema_only`)
 
 **Error Handling:**
 - Empty CSV files → Empty DataFrame with note
@@ -210,6 +281,11 @@ Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
 - Remaining rows are randomly sampled
 - Secondary truncation ensures large sampled blocks don't exceed character limits
 
+**Schema-only mode:** when `config.schema_only` is set, `process_sql()` drops all buffered
+data rows (`INSERT`/data lines) and emits a single `-- [N data row(s) omitted: schema-only]
+--` note per table while preserving `CREATE TABLE` blocks and schema keywords. Status
+becomes `"Schema Only"`.
+
 ### ExcelParser
 
 ```python
@@ -223,7 +299,9 @@ Uses [`process_excel()`](../src/data2prompt/parsers.py#L335) to:
 3. Process up to `config.max_sheets` sheets
 4. For each sheet:
    - Read into DataFrame with pandas
-   - Sample `config.csv_sample_size` rows if exceeding limit
+   - Compute a `TableSchema` on the **full** sheet when `stats_summary`/`schema_only` set
+   - Under `schema_only`: append a schema-only `TableIR` (empty df) and skip rows
+   - Otherwise sample `config.csv_sample_size` rows if exceeding limit
    - Add visual warning note if charts/images detected
    - Add truncation note if sampling applied
 5. Return list of `TableIR` objects (one per sheet)
@@ -245,6 +323,44 @@ Handles all unhandled file types with defensive measures:
 2. **Binary detection**: Use [`is_binary()`](../src/data2prompt/utils.py) to detect binary content
 3. **File size check**: If file exceeds `config.max_file_size` KB, read only first 10KB
 4. **Line truncation**: Apply [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118) for remaining content
+
+### EnvParser
+
+```python
+class EnvParser:
+    """Parser for environment files: lists variable names with redacted values."""
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+```
+
+Handles `.env` files (detected by name, not extension — see the dispatch note above):
+
+1. If `config.env_keys` is `False` → returns a skip note (`status="Skipped (Env)"`).
+2. Otherwise delegates to [`process_env()`](../src/data2prompt/parsers.py), which:
+   - reads the file with `errors="ignore"`
+   - drops blank lines and `#` comments, strips an optional `export ` prefix
+   - splits each `KEY=value` on the first `=`, and for identifier-like keys emits
+     `KEY=<redacted>` using [`ENV_VALUE_PLACEHOLDER`](constants.md)
+   - **never includes any value** from the file
+
+Returns a `ParserResult` of `type="Env"`, `status="Redacted"`, and
+`stats_update={"env_count": 1}`.
+
+**Security rationale:** previously `.env` was listed in `CORE_SKIP_EXTS`, but a bare
+`.env` has an empty suffix so it was never skipped and fell through to `DefaultParser`,
+which dumped its full contents. Name-based routing to `EnvParser` closes that leak while
+still surfacing the variable names for project understanding.
+
+### `is_env_file()`
+
+```python
+def is_env_file(name: str) -> bool:
+    return name == ".env" or name.startswith(".env.") or name.endswith(".env")
+```
+
+Matches `.env`, dotted variants (`.env.local`, `.env.production`) and suffixed variants
+(`prod.env`); intentionally excludes `.envrc`. Used by
+[`process_target_file()`](../src/data2prompt/main.py) and exposed alongside the shared
+`env_parser` singleton.
 
 ## Defensive Programming Measures
 
@@ -309,11 +425,12 @@ The parsers module imports configuration constants from [`constants.py`](../src/
 
 ### With main.py
 
-The [`process_target_file()`](../src/data2prompt/main.py#L27) function in main.py#L
-1. Checks if extension is in `config.skip_exts`
-2. Calls `registry.get_parser(ext)` to obtain the appropriate parser
-3. Invokes `parser.parse(file_path, config)`
-4. Returns `ParserResult` to the orchestration layer
+The [`process_target_file()`](../src/data2prompt/main.py#L27) function in main.py
+1. Routes env files first: if `is_env_file(file_path.name)`, calls `env_parser.parse(...)`
+2. Checks if extension is in `config.skip_exts`
+3. Calls `registry.get_parser(ext)` to obtain the appropriate parser
+4. Invokes `parser.parse(file_path, config)`
+5. Returns `ParserResult` to the orchestration layer
 
 ### With output.py
 
@@ -339,6 +456,18 @@ Each parser returns a `stats_update` dictionary that is aggregated by the main o
 | NotebookParser | `{"notebook_count": 1}` |
 | SQLParser | `{"sql_count": 1}` |
 | ExcelParser | `{"excel_count": 1, "excel_sheets_count": sheet_count}` |
+| EnvParser | `{"env_count": 1}` |
 | DefaultParser | `{"binary_count": 1}` or `{"truncated_count": 1}` |
+
+### Parser Status Values
+
+Beyond the established statuses (`Read`, `Sampled`, `Cleaned`, `Parsed`, `Extracted`,
+`Truncated`, `Skipped (Binary)`, `Skipped (Exclusion)`), the new behaviors introduce:
+
+| Status | Meaning |
+|--------|---------|
+| `Schema Only` | A data file rendered as schema only (`--schema-only`) |
+| `Redacted` | A `.env` file rendered as variable names with redacted values |
+| `Skipped (Env)` | A `.env` file skipped entirely (`--no-env-keys`) |
 
 These statistics feed into the UI progress reporting system.

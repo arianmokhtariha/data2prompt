@@ -88,6 +88,33 @@ CSV/Excel data is rendered using [`TableIR`](../src/data2prompt/parsers.py#L35) 
 
 Table truncation is handled by [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) when a `Config` object is provided.
 
+#### Schema / Stats Metadata Block
+
+Two **independent** flags drive table rendering in both generators (computed once per
+`generate()` call from `config`):
+
+```python
+stats_summary = bool(config and config.stats_summary)   # feature #4
+schema_only   = bool(config and config.schema_only)     # feature #3
+render_block  = stats_summary or schema_only            # render the schema block?
+render_data   = not schema_only                         # render the data rows?
+```
+
+- When `render_block` and `table.schema` is present, the generators call the shared
+  [`render_schema_block()`](parsers.md) with `show_missing=stats_summary,
+  show_describe=stats_summary`. In Markdown the block is emitted above the table; in XML
+  it is wrapped in an escaped `<schema>…</schema>` element.
+- The data table (`to_markdown`) is only emitted when `render_data` is true.
+
+Resulting behavior (all metadata is computed on the **full** DataFrame):
+
+| `--schema-only` | stats (default on) | Data-file output |
+|:---:|:---:|:---|
+| off | on | stats block (dtype + missing + describe) + sampled rows |
+| off | `--no-stats-summary` | sampled rows only (legacy behavior) |
+| on | on | stats block, no rows |
+| on | `--no-stats-summary` | bare column + dtype schema, no rows |
+
 ### 2. XML (`XMLGenerator`)
 
 The [`XMLGenerator`](../src/data2prompt/output.py#L138) produces structured XML documents for LLM context windows that benefit from explicit tagging.
@@ -152,6 +179,7 @@ class TableIR:
     visual_warning: bool = False      # Display flag
     sheet_number: Optional[int] = None # Excel sheet index
     file_path: Optional[str] = None   # Source file path
+    schema: Optional[TableSchema] = None # Full-df schema/stats metadata
 ```
 
 ## Dynamic Wrapping
