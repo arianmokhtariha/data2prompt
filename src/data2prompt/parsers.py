@@ -124,33 +124,53 @@ def render_schema_block(
 
     Single source of truth used both for token estimation and by the output
     generators. ``show_missing`` adds missing count/percentage columns;
-    ``show_describe`` appends a ``describe()`` summary table when available.
+    ``show_describe`` merges describe() stats as additional columns in the
+    same table rather than as a separate section.
     """
     lines: List[str] = [
         f"**Schema** — {schema.row_count:,} rows × {schema.col_count} columns",
         "",
     ]
 
-    if show_missing:
-        lines.append("| column | dtype | missing | missing % |")
-        lines.append("|---|---|---|---|")
-    else:
-        lines.append("| column | dtype |")
-        lines.append("|---|---|")
-
-    for col in schema.columns:
-        if show_missing:
-            lines.append(
-                f"| {col.name} | {col.dtype} | {col.missing} | {col.missing_pct} |"
-            )
-        else:
-            lines.append(f"| {col.name} | {col.dtype} |")
-
     if show_describe and schema.describe_df is not None:
-        lines.append("")
-        lines.append("**Summary statistics**")
-        lines.append("")
-        lines.append(schema.describe_df.to_markdown())
+        desc = schema.describe_df
+        stat_cols = list(desc.columns)
+
+        header = ["column", "dtype"]
+        if show_missing:
+            header += ["missing", "missing %"]
+        header += stat_cols
+
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+
+        for col in schema.columns:
+            row: List[str] = [col.name, col.dtype]
+            if show_missing:
+                row += [str(col.missing), str(col.missing_pct)]
+            if col.name in desc.index:
+                for stat in stat_cols:
+                    val = desc.loc[col.name, stat]
+                    row.append("" if pd.isna(val) else str(val))
+            else:
+                row += [""] * len(stat_cols)
+            lines.append("| " + " | ".join(row) + " |")
+
+    else:
+        if show_missing:
+            lines.append("| column | dtype | missing | missing % |")
+            lines.append("|---|---|---|---|")
+        else:
+            lines.append("| column | dtype |")
+            lines.append("|---|---|")
+
+        for col in schema.columns:
+            if show_missing:
+                lines.append(
+                    f"| {col.name} | {col.dtype} | {col.missing} | {col.missing_pct} |"
+                )
+            else:
+                lines.append(f"| {col.name} | {col.dtype} |")
 
     return "\n".join(lines)
 

@@ -9,6 +9,7 @@ from src.data2prompt.parsers import (
     process_sql,
     process_csv,
     build_table_schema,
+    render_schema_block,
     is_env_file,
     process_env,
     EnvParser,
@@ -171,6 +172,59 @@ INSERT INTO users VALUES (1, 'a@example.com')
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+
+def test_render_schema_block_merged_table():
+    """When show_describe=True, schema and describe stats appear in one unified table."""
+    df = pd.DataFrame({
+        "score": [1.0, 2.0, 3.0],
+        "label": ["a", "b", "a"],
+    })
+    schema = build_table_schema(df, include_describe=True)
+    result = render_schema_block(schema, show_missing=True, show_describe=True)
+
+    # No separate summary statistics section.
+    assert "**Summary statistics**" not in result
+
+    # Stat column headers are in the same header row as column/dtype.
+    header_line = [l for l in result.splitlines() if l.startswith("| column")][0]
+    assert "dtype" in header_line
+    assert "missing" in header_line
+    assert "count" in header_line
+    assert "mean" in header_line
+
+    # Numeric column: mean is present, unique/top/freq are empty.
+    score_line = [l for l in result.splitlines() if l.startswith("| score")][0]
+    assert "| score |" in score_line
+    assert "2.0" in score_line  # mean of [1, 2, 3]
+
+    # String column: top is present, mean is empty.
+    label_line = [l for l in result.splitlines() if l.startswith("| label")][0]
+    assert "| label |" in label_line
+    assert "a" in label_line  # most frequent value
+
+
+def test_render_schema_block_no_describe_fallback():
+    """When show_describe=False, only column/dtype columns are rendered."""
+    df = pd.DataFrame({"x": [1, 2, 3]})
+    schema = build_table_schema(df, include_describe=False)
+    result = render_schema_block(schema, show_missing=False, show_describe=False)
+
+    assert "| column | dtype |" in result
+    assert "count" not in result
+    assert "**Summary statistics**" not in result
+
+
+def test_render_schema_block_nan_becomes_empty_string():
+    """NaN cells in the merged table must render as empty strings, not 'nan'."""
+    df = pd.DataFrame({
+        "num": [1.0, 2.0, 3.0],
+        "cat": ["x", "y", "x"],
+    })
+    schema = build_table_schema(df, include_describe=True)
+    result = render_schema_block(schema, show_missing=True, show_describe=True)
+
+    assert "nan" not in result.lower()
 
 
 def test_is_env_file():

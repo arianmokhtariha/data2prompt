@@ -214,10 +214,14 @@ def render_schema_block(schema, *, show_missing: bool, show_describe: bool) -> s
   transposed `describe()` summary (`include_describe`). `describe()` is wrapped in
   try/except and empty frames are handled gracefully.
 - [`render_schema_block()`](../src/data2prompt/parsers.py) renders a `TableSchema` to a
-  Markdown snippet (rows × cols header, a `column | dtype [| missing | missing %]` table,
-  and a `describe()` summary table when `show_describe`). It is the **single source of
-  truth** for schema rendering, used by both `flatten_ir()` (token estimate) and the
-  output generators in [`output.py`](output.md).
+  Markdown snippet (rows × cols header followed by a single unified table). When
+  `show_describe=True` and a `describe_df` is available, the `describe()` statistics
+  (`count`, `unique`, `top`, `freq`, `mean`, `std`, `min`, `25%`, `50%`, `75%`, `max`)
+  are appended as additional columns in the same table alongside `column`, `dtype`,
+  `missing`, and `missing %` — one row per column, NaN cells rendered as empty strings.
+  When `show_describe=False`, only `column | dtype [| missing | missing %]` are shown.
+  It is the **single source of truth** for schema rendering, used by both `flatten_ir()`
+  (token estimate) and the output generators in [`output.py`](output.md).
 
 ## Parser Implementations
 
