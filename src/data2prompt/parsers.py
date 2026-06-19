@@ -21,7 +21,8 @@ from .constants import (
     DEFAULT_LINE_LENGTH_THRESHOLD,
     DEFAULT_TRUNCATED_LINE_LENGTH,
     DEFAULT_TABLE_CHAR_LIMIT,
-    DEFAULT_TABLE_TRUNCATED_SIZE
+    DEFAULT_TABLE_TRUNCATED_SIZE,
+    ENV_VALUE_PLACEHOLDER
 )
 
 @dataclass
@@ -33,6 +34,26 @@ class NotebookCellIR:
     outputs: Optional[str] = None
 
 @dataclass
+class ColumnSchema:
+    """Per-column metadata computed on the full (unsampled) DataFrame."""
+    name: str
+    dtype: str
+    missing: int
+    missing_pct: float
+
+@dataclass
+class TableSchema:
+    """Structural and statistical metadata for a table, computed on the full df.
+
+    Both the ``--schema-only`` mode and the stats-summary block read from this.
+    ``describe_df`` is only populated when a statistics summary is requested.
+    """
+    row_count: int
+    col_count: int
+    columns: List[ColumnSchema]
+    describe_df: Optional[pd.DataFrame] = None
+
+@dataclass
 class TableIR:
     """Intermediate representation for tabular data (CSV, Excel)."""
     name: str
@@ -42,6 +63,7 @@ class TableIR:
     visual_warning: bool = False
     sheet_number: Optional[int] = None
     file_path: Optional[str] = None
+    schema: Optional[TableSchema] = None
 
 @dataclass
 class ParserResult:
@@ -53,14 +75,103 @@ class ParserResult:
     stats_update: Dict[str, int] = field(default_factory=dict)
     skip_file: bool = False
 
-def flatten_ir(content: Union[str, List[NotebookCellIR], List[TableIR]]) -> str:
+
+def build_table_schema(df: pd.DataFrame, include_describe: bool) -> TableSchema:
+    """Compute column metadata for a table from its full (unsampled) DataFrame.
+
+    Args:
+        df: The complete DataFrame, before any row sampling.
+        include_describe: Whether to attach a ``describe()`` summary.
+
+    Returns:
+        TableSchema: Row/column counts, per-column dtype and missing stats, and
+        (optionally) a transposed ``describe()`` summary.
+    """
+    row_count = int(len(df))
+    columns: List[ColumnSchema] = []
+    for name in df.columns:
+        missing = int(df[name].isna().sum())
+        missing_pct = round(missing / row_count * 100, 2) if row_count else 0.0
+        columns.append(ColumnSchema(
+            name=str(name),
+            dtype=str(df[name].dtype),
+            missing=missing,
+            missing_pct=missing_pct,
+        ))
+
+    describe_df: Optional[pd.DataFrame] = None
+    if include_describe and not df.empty:
+        try:
+            describe_df = df.describe(include="all").transpose()
+        except Exception:
+            describe_df = None
+
+    return TableSchema(
+        row_count=row_count,
+        col_count=int(df.shape[1]),
+        columns=columns,
+        describe_df=describe_df,
+    )
+
+
+def render_schema_block(
+    schema: TableSchema,
+    *,
+    show_missing: bool,
+    show_describe: bool,
+) -> str:
+    """Render a table's schema metadata as a Markdown snippet.
+
+    Single source of truth used both for token estimation and by the output
+    generators. ``show_missing`` adds missing count/percentage columns;
+    ``show_describe`` appends a ``describe()`` summary table when available.
+    """
+    lines: List[str] = [
+        f"**Schema** — {schema.row_count:,} rows × {schema.col_count} columns",
+        "",
+    ]
+
+    if show_missing:
+        lines.append("| column | dtype | missing | missing % |")
+        lines.append("|---|---|---|---|")
+    else:
+        lines.append("| column | dtype |")
+        lines.append("|---|---|")
+
+    for col in schema.columns:
+        if show_missing:
+            lines.append(
+                f"| {col.name} | {col.dtype} | {col.missing} | {col.missing_pct} |"
+            )
+        else:
+            lines.append(f"| {col.name} | {col.dtype} |")
+
+    if show_describe and schema.describe_df is not None:
+        lines.append("")
+        lines.append("**Summary statistics**")
+        lines.append("")
+        lines.append(schema.describe_df.to_markdown())
+
+    return "\n".join(lines)
+
+
+def flatten_ir(
+    content: Union[str, List[NotebookCellIR], List[TableIR]],
+    *,
+    schema_only: bool = False,
+    stats_summary: bool = False,
+) -> str:
     """
     Flattens the Intermediate Representation (IR) into a string for token counting.
     This provides a rough estimate of the final output size.
+
+    ``schema_only`` and ``stats_summary`` mirror the rendering decisions in
+    ``output.py`` so the token estimate tracks the real output: the schema block is
+    included when either flag is set, and data rows are dropped under ``schema_only``.
     """
     if isinstance(content, str):
         return content
-    
+
     if not content:
         return ""
 
@@ -71,22 +182,30 @@ def flatten_ir(content: Union[str, List[NotebookCellIR], List[TableIR]]) -> str:
             if cell.outputs:
                 parts.append(cell.outputs)
         return "\n".join(parts)
-    
+
     if isinstance(content[0], TableIR):
         parts = []
         for table in content:
             # Include sheet metadata in estimation if present
             if table.sheet_number is not None:
                 parts.append(f"Sheet {table.sheet_number}: {table.name} - {table.file_path}")
-            
+
+            if (stats_summary or schema_only) and table.schema is not None:
+                parts.append(render_schema_block(
+                    table.schema,
+                    show_missing=stats_summary,
+                    show_describe=stats_summary,
+                ))
+
             # Use a simple string representation for token estimation
             if table.header_note:
                 parts.append(table.header_note)
-            parts.append(table.df.to_string(index=False))
+            if not schema_only and not table.df.empty:
+                parts.append(table.df.to_string(index=False))
             if table.footer_note:
                 parts.append(table.footer_note)
         return "\n".join(parts)
-    
+
     return ""
 
 class BaseParser(Protocol):
@@ -151,23 +270,40 @@ def process_csv(
     sample_size: int = DEFAULT_CSV_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
     table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
-    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
+    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE,
+    stats_summary: bool = True,
+    schema_only: bool = False
 ) -> List[TableIR]:
     try:
         df = pd.read_csv(file_path, low_memory=False)
+
+        # Column metadata is always computed on the FULL df, before sampling.
+        schema = None
+        if stats_summary or schema_only:
+            schema = build_table_schema(df, include_describe=stats_summary)
+
+        if schema_only:
+            return [TableIR(
+                name=Path(file_path).name,
+                df=pd.DataFrame(),
+                header_note="-- [Schema only - data rows omitted] --",
+                schema=schema
+            )]
+
         header_note = None
         footer_note = None
-        
+
         if len(df) > sample_size:
             df = df.sample(sample_size, random_state=seed)
             header_note = f"-- [Sample - Random {sample_size} rows] --"
             footer_note = f"-- [CSV truncated: Showing random {sample_size} rows to save context] --"
-        
+
         return [TableIR(
             name=Path(file_path).name,
             df=df,
             header_note=header_note,
-            footer_note=footer_note
+            footer_note=footer_note,
+            schema=schema
         )]
     except pd.errors.EmptyDataError:
         return [TableIR(name=Path(file_path).name, df=pd.DataFrame(), footer_note="-- [Note: CSV file is empty] --")]
@@ -242,12 +378,13 @@ def process_sql(
     line_threshold: int = DEFAULT_LINE_LENGTH_THRESHOLD,
     truncate_to: int = DEFAULT_TRUNCATED_LINE_LENGTH,
     table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
-    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
+    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE,
+    schema_only: bool = False
 ) -> str:
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
-        
+
         processed_lines = []
         table_data_buffer: List[str] = []
         in_create_block = False
@@ -256,7 +393,15 @@ def process_sql(
         def flush_buffer():
             if not table_data_buffer:
                 return
-            
+
+            # Schema-only: drop the buffered data rows, leaving just a note.
+            if schema_only:
+                processed_lines.append(
+                    f"-- [{len(table_data_buffer)} data row(s) omitted: schema-only] --\n"
+                )
+                table_data_buffer.clear()
+                return
+
             if len(table_data_buffer) > sample_size:
                 # Always keep the first line (usually the INSERT header)
                 first_line = table_data_buffer[0]
@@ -339,7 +484,9 @@ def process_excel(
     max_sheets: int = DEFAULT_MAX_SHEETS,
     seed: int = DEFAULT_SEED,
     table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
-    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE
+    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE,
+    stats_summary: bool = True,
+    schema_only: bool = False
 ) -> List[TableIR]:
     try:
         # 1. Sheet Discovery & Visual Element Check using openpyxl
@@ -377,9 +524,27 @@ def process_excel(
                 df = pd.read_excel(file_path, sheet_name=sheet_name)
                 header_note = None
                 footer_note = None
-                
+
                 if has_visuals:
                     header_note = "-- [Note: Visual elements (images/charts) detected in this sheet] --"
+
+                # Column metadata is always computed on the FULL sheet, before sampling.
+                schema = None
+                if stats_summary or schema_only:
+                    schema = build_table_schema(df, include_describe=stats_summary)
+
+                if schema_only:
+                    header_note = (header_note or "") + "-- [Schema only - data rows omitted] --"
+                    tables_ir.append(TableIR(
+                        name=sheet_name,
+                        df=pd.DataFrame(),
+                        header_note=header_note,
+                        visual_warning=has_visuals,
+                        sheet_number=i,
+                        file_path=display_path,
+                        schema=schema
+                    ))
+                    continue
 
                 if df.empty:
                     footer_note = f"-- [Note: Sheet '{sheet_name}' appears to be a visual dashboard or empty. No tabular data extracted] --"
@@ -389,7 +554,7 @@ def process_excel(
                         df = df.sample(n=max_rows, random_state=seed)
                         footer_note = (footer_note or "") + f"-- [Sheet truncated: Showing random {max_rows} rows to save context] --"
                         header_note = (header_note or "") + f"-- [Sample - Random {max_rows} rows] --"
-                    
+
                 tables_ir.append(TableIR(
                     name=sheet_name,
                     df=df,
@@ -397,7 +562,8 @@ def process_excel(
                     footer_note=footer_note,
                     visual_warning=has_visuals,
                     sheet_number=i,
-                    file_path=display_path
+                    file_path=display_path,
+                    schema=schema
                 ))
 
             except Exception as e:
@@ -424,14 +590,20 @@ class CSVParser:
             config.csv_sample_size,
             config.seed,
             config.table_limit,
-            config.table_truncate
+            config.table_truncate,
+            config.stats_summary,
+            config.schema_only
         )
-        tokens, _ = count_tokens(flatten_ir(content))
+        tokens, _ = count_tokens(flatten_ir(
+            content,
+            schema_only=config.schema_only,
+            stats_summary=config.stats_summary
+        ))
         return ParserResult(
             content=content,
             tokens=tokens,
             type="CSV",
-            status="Sampled",
+            status="Schema Only" if config.schema_only else "Sampled",
             stats_update={"csv_count": 1}
         )
 
@@ -464,14 +636,15 @@ class SQLParser:
             config.line_length_threshold,
             config.truncated_line_length,
             config.table_limit,
-            config.table_truncate
+            config.table_truncate,
+            config.schema_only
         )
         tokens, _ = count_tokens(content)
         return ParserResult(
             content=content,
             tokens=tokens,
             type="SQL",
-            status="Parsed",
+            status="Schema Only" if config.schema_only else "Parsed",
             stats_update={"sql_count": 1}
         )
 
@@ -492,15 +665,21 @@ class ExcelParser:
             config.max_sheets,
             config.seed,
             config.table_limit,
-            config.table_truncate
+            config.table_truncate,
+            config.stats_summary,
+            config.schema_only
         )
         sheet_count = len(content)
-        tokens, _ = count_tokens(flatten_ir(content))
+        tokens, _ = count_tokens(flatten_ir(
+            content,
+            schema_only=config.schema_only,
+            stats_summary=config.stats_summary
+        ))
         return ParserResult(
             content=content,
             tokens=tokens,
             type=f"Excel ({sheet_count} sheets)",
-            status="Extracted",
+            status="Schema Only" if config.schema_only else "Extracted",
             stats_update={"excel_count": 1, "excel_sheets_count": sheet_count}
         )
 
@@ -558,6 +737,70 @@ class DefaultParser:
         except Exception:
             return ParserResult(content="*Could not read file.*", tokens=0, type="Error", status="Error")
 
+
+def is_env_file(name: str) -> bool:
+    """Return True if a filename denotes an environment-variable file.
+
+    Matches ``.env``, dotted variants like ``.env.local`` / ``.env.production``,
+    and suffixed variants like ``prod.env``. Intentionally excludes ``.envrc``.
+    """
+    return name == ".env" or name.startswith(".env.") or name.endswith(".env")
+
+
+def process_env(
+    file_path: Union[str, Path],
+    placeholder: str = ENV_VALUE_PLACEHOLDER,
+) -> str:
+    """Extract variable names from a .env file, redacting every value.
+
+    Comments and blank lines are dropped, and an ``export`` prefix is stripped.
+    Only lines of the form ``KEY=...`` with an identifier-like key are emitted, as
+    ``KEY=<placeholder>``. No value from the file is ever included in the output.
+    """
+    lines = ["# Environment variables (names only, values redacted)"]
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.lower().startswith("export "):
+                    line = line[len("export "):].strip()
+                if "=" not in line:
+                    continue
+                key = line.split("=", 1)[0].strip()
+                if key.isidentifier():
+                    lines.append(f"{key}={placeholder}")
+    except Exception as e:
+        lines.append(f"-- [Error reading .env file: {e}] --")
+    return "\n".join(lines)
+
+
+class EnvParser:
+    """Parser for environment files: lists variable names with redacted values."""
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        from .utils import count_tokens
+
+        if not config.env_keys:
+            return ParserResult(
+                content="*Note: .env file content skipped (--no-env-keys).*\n",
+                tokens=0,
+                type="Env",
+                status="Skipped (Env)",
+                stats_update={"env_count": 1}
+            )
+
+        content = process_env(file_path)
+        tokens, _ = count_tokens(content)
+        return ParserResult(
+            content=content,
+            tokens=tokens,
+            type="Env",
+            status="Redacted",
+            stats_update={"env_count": 1}
+        )
+
+
 class ParserRegistry:
     """Handles file-to-parser mapping."""
     def __init__(self):
@@ -577,3 +820,7 @@ registry.register(['.csv'], CSVParser())
 registry.register(['.ipynb'], NotebookParser())
 registry.register(['.sql'], SQLParser())
 registry.register(['.xlsx', '.xls'], ExcelParser())
+
+# Env files are dispatched by name (not extension) in main.process_target_file,
+# because a bare '.env' has no suffix. This shared instance handles all variants.
+env_parser = EnvParser()

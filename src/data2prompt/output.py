@@ -18,7 +18,7 @@ from .constants import (
     GENERATION_FLAG
 )
 from .utils import get_dynamic_wrapper
-from .parsers import NotebookCellIR, TableIR, enforce_table_limit
+from .parsers import NotebookCellIR, TableIR, enforce_table_limit, render_schema_block
 
 class OutputGenerator(ABC):
     @abstractmethod
@@ -44,7 +44,13 @@ class MarkdownGenerator(OutputGenerator):
         
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
         method_label = "o200k_base" if token_method == "o200k_base" else "regex_fallback" if token_method == "regex_fallback" else "word_count"
-        
+
+        # Independent table flags: stats block (#4) and schema-only data drop (#3).
+        stats_summary = bool(config and config.stats_summary)
+        schema_only = bool(config and config.schema_only)
+        render_block = stats_summary or schema_only
+        render_data = not schema_only
+
         lines = [
             f"<!-- {GENERATION_FLAG} -->",
             "",
@@ -95,31 +101,39 @@ class MarkdownGenerator(OutputGenerator):
             elif isinstance(content, list) and content and isinstance(content[0], TableIR):
                 # Render Table IR (CSV/Excel)
                 for table in content:
-                    table_parts = []
-                    
                     # Handle Excel Sheet Metadata
                     if table.sheet_number is not None:
                         lines.append(f"### Sheet {table.sheet_number}: {table.name} - {table.file_path}")
-                    
+
+                    # Schema / stats metadata block (computed on the full df)
+                    if render_block and table.schema is not None:
+                        lines.append(render_schema_block(
+                            table.schema,
+                            show_missing=stats_summary,
+                            show_describe=stats_summary,
+                        ))
+                        lines.append("")
+
+                    table_parts = []
                     if table.header_note:
                         table_parts.append(table.header_note)
-                    
-                    if not table.df.empty:
+
+                    if render_data and not table.df.empty:
                         table_parts.append(table.df.to_markdown(index=False))
-                    
+
                     if table.footer_note:
                         table_parts.append(table.footer_note)
-                    
+
                     table_text = "\n".join(table_parts)
                     if config:
                         table_text = enforce_table_limit(table_text, config.table_limit, config.table_truncate)
-                    
+
                     lines.append(table_text)
-                    
+
                     # Close Sheet block if applicable
                     if table.sheet_number is not None:
                         lines.append("---")
-                    
+
                     lines.append("")
             
             else:
@@ -147,7 +161,13 @@ class XMLGenerator(OutputGenerator):
         
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
         method_label = "o200k_base" if token_method == "o200k_base" else "regex_fallback" if token_method == "regex_fallback" else "word_count"
-        
+
+        # Independent table flags: stats block (#4) and schema-only data drop (#3).
+        stats_summary = bool(config and config.stats_summary)
+        schema_only = bool(config and config.schema_only)
+        render_block = stats_summary or schema_only
+        render_data = not schema_only
+
         lines = [
             f"<!-- {GENERATION_FLAG} -->",
             "",
@@ -196,23 +216,33 @@ class XMLGenerator(OutputGenerator):
                     # Handle Excel Sheet Metadata
                     if table.sheet_number is not None:
                         lines.append(f'<sheet name="{table.name}" sheet_number="{table.sheet_number}" path="{table.file_path}">')
-                    
+
+                    # Schema / stats metadata block (computed on the full df)
+                    if render_block and table.schema is not None:
+                        lines.append('<schema>')
+                        lines.append(escape(render_schema_block(
+                            table.schema,
+                            show_missing=stats_summary,
+                            show_describe=stats_summary,
+                        )))
+                        lines.append('</schema>')
+
                     table_parts = []
                     if table.header_note:
                         table_parts.append(table.header_note)
-                    
-                    if not table.df.empty:
+
+                    if render_data and not table.df.empty:
                         table_parts.append(table.df.to_markdown(index=False))
-                    
+
                     if table.footer_note:
                         table_parts.append(table.footer_note)
-                    
+
                     table_text = "\n".join(table_parts)
                     if config:
                         table_text = enforce_table_limit(table_text, config.table_limit, config.table_truncate)
-                    
+
                     lines.append(escape(table_text))
-                    
+
                     # Close Sheet block if applicable
                     if table.sheet_number is not None:
                         lines.append('</sheet>')

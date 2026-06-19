@@ -10,8 +10,8 @@ warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 from pathlib import Path
 from typing import Set
 from .cli import setup_cli, Config
-from .parsers import registry, ParserResult, flatten_ir
-from .utils import ProjectScanner, count_tokens, check_connectivity
+from .parsers import registry, ParserResult, flatten_ir, is_env_file, env_parser
+from .utils import ProjectScanner, count_tokens, check_connectivity, copy_to_clipboard
 from .ui import ui
 from .output import get_generator
 
@@ -27,7 +27,12 @@ def get_ui_action(ext: str, skip_exts: Set[str]) -> str:
 def process_target_file(file_path: Path, config: Config) -> ParserResult:
     """Handles a single file and returns its content, tokens, and metadata."""
     ext = file_path.suffix.lower()
-    
+
+    # Env files are detected by name (a bare '.env' has no suffix) and routed to a
+    # dedicated parser that redacts values instead of leaking the whole file.
+    if is_env_file(file_path.name):
+        return env_parser.parse(file_path, config)
+
     if ext in config.skip_exts:
         return ParserResult(
             content=f"*Note: Content skipped for ({ext}) file based on exclusion rules.*\n",
@@ -36,7 +41,7 @@ def process_target_file(file_path: Path, config: Config) -> ParserResult:
             status="Skipped (Exclusion)",
             stats_update={"excluded_count": 1}
         )
-    
+
     parser = registry.get_parser(ext)
     return parser.parse(file_path, config)
 
@@ -72,7 +77,8 @@ def main():
         "excel_sheets_count": 0,
         "truncated_count": 0,
         "binary_count": 0,
-        "excluded_count": 0
+        "excluded_count": 0,
+        "env_count": 0
     }
     
     # For the summary table
@@ -135,9 +141,16 @@ def main():
         # We need a temporary token count for the final report
         # The generator will handle the final string construction
         # We use flatten_ir to convert structured content to strings for token counting
-        temp_content = "\n".join([flatten_ir(f["content"]) for f in files_data]) + tree_text
+        temp_content = "\n".join([
+            flatten_ir(
+                f["content"],
+                schema_only=config.schema_only,
+                stats_summary=config.stats_summary,
+            )
+            for f in files_data
+        ]) + tree_text
         total_tokens, method = count_tokens(temp_content)
-        
+
         generator = get_generator(config.format)
         final_output = generator.generate(
             project_name=project_path.name,
@@ -149,16 +162,29 @@ def main():
             config=config
         )
 
-        with open(config.output, 'w', encoding='utf-8') as f:
-            f.write(final_output)
+        # Output destination: clipboard (if requested and available) or a file.
+        clipboard_failed = False
+        if config.clipboard and copy_to_clipboard(final_output):
+            output_destination = "(clipboard)"
+            file_size_kb = len(final_output.encode('utf-8')) / 1024
+        else:
+            # Either a normal file run, or a clipboard run with no utility available.
+            clipboard_failed = config.clipboard
+            with open(config.output, 'w', encoding='utf-8') as f:
+                f.write(final_output)
+            output_destination = config.output
+            file_size_kb = Path(config.output).stat().st_size / 1024
         handler.on_progress("[cyan]Compiling project context...[/cyan]", advance=1)
 
-    # Final File Size Check
-    file_size_kb = Path(config.output).stat().st_size / 1024
-    
+    if clipboard_failed:
+        ui.print_warning_panel(
+            "[bold yellow]WARNING:[/bold yellow] No clipboard utility was available.\n"
+            f"[bold cyan]Fallback:[/bold cyan] Output written to {config.output} instead."
+        )
+
     # Display Final Report (Interactive Summary + Success Panel)
-    ui.print_final_report(processed_files_info, config.output, file_size_kb, total_tokens, stats, method)
-    
+    ui.print_final_report(processed_files_info, output_destination, file_size_kb, total_tokens, stats, method)
+
     if file_size_kb > 2000:
         ui.print_warning_panel(
             "[bold yellow]WARNING:[/bold yellow] File is over 2MB. This might be too large for some context windows.\n"

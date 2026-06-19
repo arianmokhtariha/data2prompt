@@ -1,6 +1,7 @@
 import os
 import sys
 import socket
+import subprocess
 from pathlib import Path
 from typing import List, Union, Set, Dict
 
@@ -90,6 +91,39 @@ def get_dynamic_wrapper(content: str) -> str:
     
     # We need at least 3 backticks for a markdown code block
     return '`' * max(3, max_backticks + 1)
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text to the system clipboard using OS-native tools (no third-party dep).
+
+    Uses ``clip`` on Windows, ``pbcopy`` on macOS, and ``wl-copy``/``xclip``/``xsel``
+    on Linux (first available wins). Returns True on success, or False if no
+    clipboard utility is available or the copy fails — callers can then fall back to
+    writing a file.
+
+    Note: on Windows, ``clip`` interprets input using the active console code page,
+    so rare non-ASCII characters may not round-trip exactly.
+    """
+    data = text.encode("utf-8", errors="replace")
+
+    if sys.platform == "win32":
+        commands: List[List[str]] = [["clip"]]
+    elif sys.platform == "darwin":
+        commands = [["pbcopy"]]
+    else:
+        commands = [
+            ["wl-copy"],
+            ["xclip", "-selection", "clipboard"],
+            ["xsel", "--clipboard", "--input"],
+        ]
+
+    for command in commands:
+        try:
+            subprocess.run(command, input=data, check=True)
+            return True
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return False
 
 
 def is_binary(file_path: Union[str, Path]) -> bool:

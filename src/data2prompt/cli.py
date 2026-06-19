@@ -20,6 +20,11 @@ from .constants import (
     DEFAULT_MAX_FILE_SIZE_KB,
     DEFAULT_OUTPUT_FILE,
     DEFAULT_FORMAT,
+    DEFAULT_USE_GITIGNORE,
+    DEFAULT_CLIPBOARD,
+    DEFAULT_SCHEMA_ONLY,
+    DEFAULT_STATS_SUMMARY,
+    DEFAULT_ENV_KEYS,
     SUPPORTED_FORMATS
 )
 
@@ -43,6 +48,10 @@ class Config:
     max_file_size: int = 0
     skip_exts: Set[str] = field(default_factory=set)
     use_gitignore: bool = True
+    clipboard: bool = False
+    schema_only: bool = False
+    stats_summary: bool = True
+    env_keys: bool = True
 
 def setup_cli() -> Config:
     """Configures the Command Line Interface (CLI) for the tool.
@@ -111,8 +120,27 @@ def setup_cli() -> Config:
                         help='Additional file extensions to skip content for')
     
     parser.add_argument('--no-gitignore', action='store_false', dest='use_gitignore',
+                        default=DEFAULT_USE_GITIGNORE,
                         help='Disable automatic .gitignore detection and filtering')
-    
+
+    # Output destination
+    parser.add_argument('-c', '--clipboard', action='store_true', dest='clipboard',
+                        default=DEFAULT_CLIPBOARD,
+                        help='Copy the generated output to the system clipboard instead of writing a file')
+
+    # Data representation toggles
+    parser.add_argument('--schema-only', action='store_true', dest='schema_only',
+                        default=DEFAULT_SCHEMA_ONLY,
+                        help='Emit only the schema (columns and dtypes) of data files, omitting data rows')
+    parser.add_argument('--no-stats-summary', action='store_false', dest='stats_summary',
+                        default=DEFAULT_STATS_SUMMARY,
+                        help='Disable the per-table stats metadata block (dtypes, missing counts/%%, describe summary)')
+
+    # Secrets handling
+    parser.add_argument('--no-env-keys', action='store_false', dest='env_keys',
+                        default=DEFAULT_ENV_KEYS,
+                        help='Skip .env files entirely instead of listing their variable names with redacted values')
+
     args = parser.parse_args()
     
     # --- Argument Merging Logic ---
@@ -141,5 +169,9 @@ def setup_cli() -> Config:
         ignore_files=set(args.ignore_files) | CORE_IGNORE_FILES,
         max_file_size=args.max_file_size,
         skip_exts=set(args.skip_exts) | CORE_SKIP_EXTS,
-        use_gitignore=args.use_gitignore
+        use_gitignore=args.use_gitignore,
+        clipboard=args.clipboard,
+        schema_only=args.schema_only,
+        stats_summary=args.stats_summary,
+        env_keys=args.env_keys
     )

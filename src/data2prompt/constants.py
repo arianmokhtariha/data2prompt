@@ -21,7 +21,9 @@ CORE_SKIP_EXTS = {
     # Media
     '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
     # Environment & Secrets
-    '.env', '.venv', '.pyc', '.ds_store'
+    # Note: '.env' is intentionally NOT here — env files are detected by name and
+    # routed to EnvParser, which emits variable names with redacted values.
+    '.venv', '.pyc', '.ds_store'
 }
 
 # Default values for CLI arguments and processing functions
@@ -38,6 +40,17 @@ DEFAULT_TABLE_TRUNCATED_SIZE = 20000        # Number of characters to keep when 
 DEFAULT_MAX_FILE_SIZE_KB = 70               # maximum file size of unhandled type to keep enitrely (if file is larger than that only the first 10kb will be shown)
 DEFAULT_OUTPUT_FILE = 'PROMPT'              # default output base name (extension added via --format)
 DEFAULT_FORMAT = 'markdown'                 # default output format
+
+# Boolean feature toggles — every CLI boolean flag reads its default from here so
+# the flag-to-default logic is uniform across the tool.
+DEFAULT_USE_GITIGNORE = True                # respect .gitignore by default (--no-gitignore disables)
+DEFAULT_CLIPBOARD = False                   # copy output to clipboard instead of writing a file (--clipboard)
+DEFAULT_SCHEMA_ONLY = False                 # emit only the schema of data files, no data rows (--schema-only)
+DEFAULT_STATS_SUMMARY = True               # include per-table stats metadata block (--no-stats-summary disables)
+DEFAULT_ENV_KEYS = True                     # show env variable names with redacted values (--no-env-keys skips entirely)
+
+# Placeholder substituted for every value in a .env file so secrets never leak.
+ENV_VALUE_PLACEHOLDER = '<redacted>'
 
 # Mapping of format types to their respective file extensions
 SUPPORTED_FORMATS = {
