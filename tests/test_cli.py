@@ -38,3 +38,26 @@ def test_setup_cli_output_naming():
     with patch.object(sys, 'argv', ["data2prompt", "-o", "test.md", "-f", "xml"]):
         args = setup_cli()
         assert args.output == "test.md.xml"
+
+def test_setup_cli_boolean_flag_defaults():
+    # All boolean toggles should fall back to their constant-backed defaults.
+    with patch.object(sys, 'argv', ["data2prompt"]):
+        cfg = setup_cli()
+        assert cfg.use_gitignore is True
+        assert cfg.clipboard is False
+        assert cfg.schema_only is False
+        assert cfg.stats_summary is True
+        assert cfg.env_keys is True
+
+def test_setup_cli_boolean_flags_toggle():
+    test_args = [
+        "data2prompt", "-c", "--schema-only",
+        "--no-stats-summary", "--no-env-keys", "--no-gitignore",
+    ]
+    with patch.object(sys, 'argv', test_args):
+        cfg = setup_cli()
+        assert cfg.clipboard is True
+        assert cfg.schema_only is True
+        assert cfg.stats_summary is False
+        assert cfg.env_keys is False
+        assert cfg.use_gitignore is False

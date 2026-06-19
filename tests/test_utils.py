@@ -1,7 +1,8 @@
 import os
 import tempfile
 from pathlib import Path
-from src.data2prompt.utils import count_tokens, is_binary, load_ignore_file
+from unittest.mock import patch, MagicMock
+from src.data2prompt.utils import count_tokens, is_binary, load_ignore_file, copy_to_clipboard
 
 def test_count_tokens():
     # A simple string should return a deterministic token count
@@ -44,3 +45,22 @@ def test_load_ignore_file():
         assert "node_modules/" in ignores  # Slash should be preserved for pathspec
         assert "secrets.json" in ignores
         assert len(ignores) == 2
+
+
+def test_copy_to_clipboard_success():
+    # Mock subprocess so we never touch the real system clipboard.
+    with patch("src.data2prompt.utils.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        ok = copy_to_clipboard("hello world")
+
+        assert ok is True
+        assert mock_run.called
+        # Text is passed as UTF-8 encoded bytes via stdin.
+        _, kwargs = mock_run.call_args
+        assert kwargs["input"] == b"hello world"
+
+
+def test_copy_to_clipboard_no_tool_returns_false():
+    # A missing clipboard utility (FileNotFoundError) must be handled gracefully.
+    with patch("src.data2prompt.utils.subprocess.run", side_effect=FileNotFoundError):
+        assert copy_to_clipboard("data") is False
