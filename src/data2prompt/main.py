@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 from pathlib import Path
 from typing import Set
 from .cli import setup_cli, Config
-from .parsers import registry, ParserResult, flatten_ir, is_env_file, env_parser
+from .parsers import registry, ParserResult, is_env_file, env_parser
 from .utils import ProjectScanner, count_tokens, check_connectivity, copy_to_clipboard
 from .ui import ui
 from .output import get_generator
@@ -137,19 +137,6 @@ def main():
 
         # 3. Compiling project context
         handler.on_progress("[cyan]Compiling project context...[/cyan]")
-        
-        # We need a temporary token count for the final report
-        # The generator will handle the final string construction
-        # We use flatten_ir to convert structured content to strings for token counting
-        temp_content = "\n".join([
-            flatten_ir(
-                f["content"],
-                schema_only=config.schema_only,
-                stats_summary=config.stats_summary,
-            )
-            for f in files_data
-        ]) + tree_text
-        total_tokens, method = count_tokens(temp_content)
 
         generator = get_generator(config.format)
         final_output = generator.generate(
@@ -157,10 +144,16 @@ def main():
             tree_text=tree_text,
             files_data=files_data,
             stats=stats,
-            total_tokens=total_tokens,
-            token_method=method,
             config=config
         )
+
+        # Count on the full rendered output so the reported total includes the
+        # structural scaffolding (tags, headers, fences, metadata, system prompt).
+        # Count once on the placeholder string and substitute; inserting the digits
+        # shifts the true count by a token or two, which the metadata labels an estimate.
+        total_tokens, method = count_tokens(final_output)
+        final_output = final_output.replace("{{TOTAL_TOKENS}}", str(total_tokens))
+        final_output = final_output.replace("{{TOKEN_METHOD}}", method)
 
         # Output destination: clipboard (if requested and available) or a file.
         clipboard_failed = False

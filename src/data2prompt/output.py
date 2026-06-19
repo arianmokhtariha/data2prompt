@@ -22,28 +22,23 @@ from .parsers import NotebookCellIR, TableIR, enforce_table_limit, render_schema
 
 class OutputGenerator(ABC):
     @abstractmethod
-    def generate(self, 
-                 project_name: str, 
-                 tree_text: str, 
-                 files_data: List[Dict[str, Any]], 
+    def generate(self,
+                 project_name: str,
+                 tree_text: str,
+                 files_data: List[Dict[str, Any]],
                  stats: Dict[str, Any],
-                 total_tokens: int,
-                 token_method: str,
                  config: 'Config' = None) -> str:
         pass
 
 class MarkdownGenerator(OutputGenerator):
-    def generate(self, 
-                 project_name: str, 
-                 tree_text: str, 
-                 files_data: List[Dict[str, Any]], 
+    def generate(self,
+                 project_name: str,
+                 tree_text: str,
+                 files_data: List[Dict[str, Any]],
                  stats: Dict[str, Any],
-                 total_tokens: int,
-                 token_method: str,
                  config: 'Config' = None) -> str:
-        
+
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
-        method_label = "o200k_base" if token_method == "o200k_base" else "regex_fallback" if token_method == "regex_fallback" else "word_count"
 
         # Independent table flags: stats block (#4) and schema-only data drop (#3).
         stats_summary = bool(config and config.stats_summary)
@@ -59,7 +54,8 @@ class MarkdownGenerator(OutputGenerator):
             SYSTEM_INSTRUCTIONS_MARKDOWN,
             "",
             f"> Generated on: {timestamp}",
-            f"> Tokens: {total_tokens} (est. via {method_label})",
+            # Placeholders substituted by main.py once the full output is counted.
+            "> Tokens: {{TOTAL_TOKENS}} (est. via {{TOKEN_METHOD}})",
             "",
             "# Directory Structure",
             "```text",
@@ -150,17 +146,14 @@ class MarkdownGenerator(OutputGenerator):
         return "\n".join(lines)
 
 class XMLGenerator(OutputGenerator):
-    def generate(self, 
-                 project_name: str, 
-                 tree_text: str, 
-                 files_data: List[Dict[str, Any]], 
+    def generate(self,
+                 project_name: str,
+                 tree_text: str,
+                 files_data: List[Dict[str, Any]],
                  stats: Dict[str, Any],
-                 total_tokens: int,
-                 token_method: str,
                  config: 'Config' = None) -> str:
-        
+
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
-        method_label = "o200k_base" if token_method == "o200k_base" else "regex_fallback" if token_method == "regex_fallback" else "word_count"
 
         # Independent table flags: stats block (#4) and schema-only data drop (#3).
         stats_summary = bool(config and config.stats_summary)
@@ -177,7 +170,8 @@ class XMLGenerator(OutputGenerator):
             "",
             "<metadata>",
             f"    <generated_on>{timestamp}</generated_on>",
-            f'    <total_tokens method="{method_label}">{total_tokens}</total_tokens>',
+            # Placeholders substituted by main.py once the full output is counted.
+            '    <total_tokens method="{{TOKEN_METHOD}}">{{TOTAL_TOKENS}}</total_tokens>',
             "</metadata>",
             "",
             f"<{TAG_DIRECTORY_STRUCTURE}>",

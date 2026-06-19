@@ -24,16 +24,19 @@ The [`OutputGenerator`](../src/data2prompt/output.py#L23) abstract class defines
 ```python
 class OutputGenerator(ABC):
     @abstractmethod
-    def generate(self, 
-                 project_name: str, 
-                 tree_text: str, 
-                 files_data: List[Dict[str, Any]], 
+    def generate(self,
+                 project_name: str,
+                 tree_text: str,
+                 files_data: List[Dict[str, Any]],
                  stats: Dict[str, Any],
-                 total_tokens: int,
-                 token_method: str,
                  config: 'Config' = None) -> str:
         pass
 ```
+
+Generators no longer receive a pre-computed token count. They emit
+`{{TOTAL_TOKENS}}` and `{{TOKEN_METHOD}}` placeholders in their metadata block;
+[`main.py`](../src/data2prompt/main.py#L1) counts the fully rendered output and
+substitutes the real values. See [Token Estimation](#token-estimation) below.
 
 ### Factory Function
 
@@ -203,9 +206,27 @@ To prevent nested code blocks from breaking Markdown rendering, the module uses 
 
 ## Token Estimation
 
-Token estimation is performed by the parsing layer using [`count_tokens()`](../src/data2prompt/utils.py#L42) and passed to output generators for inclusion in metadata.
+The reported token count reflects the **fully rendered output**, including all
+structural scaffolding the generator adds (XML tags, `## File:` headers, dynamic
+backtick fences, the metadata block, the system-instruction preamble, and XML
+escaping). To achieve this without counting a string before it exists, generation
+and counting are split via placeholders:
+
+1. `generate()` emits the literal placeholders `{{TOTAL_TOKENS}}` and
+   `{{TOKEN_METHOD}}` in its metadata block (plain, non-f-string lines so the
+   double braces survive).
+2. [`main.py`](../src/data2prompt/main.py#L1) calls `count_tokens()` on the returned
+   string, then `str.replace()`s both placeholders with the real values before
+   writing or copying.
+
+The count runs **once** on the placeholder string; inserting the digits shifts the
+true total by a token or two, which is acceptable since the metadata labels it an
+estimate. No fixed-point iteration is performed.
 
 ### Methods
+
+Token counting is performed by [`count_tokens()`](../src/data2prompt/utils.py#L47),
+which returns both the count and the method used:
 
 | Method | Source | Accuracy |
 |--------|--------|----------|
@@ -213,14 +234,15 @@ Token estimation is performed by the parsing layer using [`count_tokens()`](../s
 | `regex_fallback` | Custom regex pattern | ~95-98% for code |
 | `word_count` | Simple split | Baseline fallback |
 
-The method label is included in output metadata:
+The method string doubles as the label substituted into the metadata
+(`{{TOKEN_METHOD}}`), which renders as:
 
 ```markdown
-> Tokens: {total_tokens} (est. via o200k_base)
+> Tokens: 12345 (est. via o200k_base)
 ```
 
 ```xml
-<total_tokens method="o200k_base">{total_tokens}</total_tokens>
+<total_tokens method="o200k_base">12345</total_tokens>
 ```
 
 ## Configuration Integration

@@ -78,10 +78,10 @@ sequenceDiagram
         Main->>UI: on_progress(completed)
     end
 
-    Main->>Main: flatten_ir(files_data) → temp_content
-    Main->>Scanner: count_tokens(temp_content) → total_tokens
     Main->>Output: get_generator(format) → generator
-    Main->>Output: generator.generate(...) → final_output
+    Main->>Output: generator.generate(...) → final_output (with token placeholders)
+    Main->>Scanner: count_tokens(final_output) → total_tokens, method
+    Main->>Main: final_output.replace({{TOTAL_TOKENS}}, {{TOKEN_METHOD}})
     Main->>Filesystem: write(final_output)
     Main->>UI: print_final_report()
 ```
@@ -136,23 +136,23 @@ The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the pr
 #### Phase 3: Output Generation
 
 ```python
-temp_content = flatten_ir(files_data) + tree_text
-total_tokens, method = count_tokens(temp_content)
-
 generator = get_generator(config.format)
 final_output = generator.generate(
     project_name=project_path.name,
     tree_text=tree_text,
     files_data=files_data,
     stats=stats,
-    total_tokens=total_tokens,
-    token_method=method,
     config=config
 )
+
+# Count the fully rendered output, then fill in the metadata placeholders.
+total_tokens, method = count_tokens(final_output)
+final_output = final_output.replace("{{TOTAL_TOKENS}}", str(total_tokens))
+final_output = final_output.replace("{{TOKEN_METHOD}}", method)
 ```
 
-1. **Token Estimation**: Uses [`flatten_ir()`](../src/data2prompt/parsers.py#L56) (with the `schema_only`/`stats_summary` flags) to convert structured IR back to string for accurate token counting
-2. **Generator Selection**: [`get_generator()`](../src/data2prompt/output.py#L232) returns the appropriate [`OutputGenerator`](../src/data2prompt/output.py#L23) strategy based on `config.format`
+1. **Generator Selection**: [`get_generator()`](../src/data2prompt/output.py#L232) returns the appropriate [`OutputGenerator`](../src/data2prompt/output.py#L23) strategy based on `config.format`. `generate()` emits `{{TOTAL_TOKENS}}`/`{{TOKEN_METHOD}}` placeholders in its metadata block instead of receiving a pre-computed count.
+2. **Token Estimation**: [`count_tokens()`](../src/data2prompt/utils.py#L47) runs on the **full rendered string** — so the reported total includes structural scaffolding (tags, headers, fences, metadata, system prompt) — and the two placeholders are substituted via `str.replace()`. Counted once on the placeholder string; inserting the digits shifts the true total by a token or two (labeled an estimate).
 3. **Output Destination**: when `config.clipboard` is set, the generated output is copied to the system clipboard via [`copy_to_clipboard()`](../src/data2prompt/utils.py) and no file is written; if no clipboard utility is available it falls back to writing `config.output` and warns. Otherwise the output is written to `config.output` as usual.
 4. **Final Report**: [`ui.print_final_report()`](../src/data2prompt/ui.py#L129) displays the interactive summary
 

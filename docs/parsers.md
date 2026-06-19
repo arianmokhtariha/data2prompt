@@ -442,7 +442,7 @@ The output generators in [`output.py`](../src/data2prompt/output.py) receive `Pa
 - **MarkdownGenerator**: Formats `NotebookCellIR` and `TableIR` into markdown code blocks
 - **XMLGenerator**: Formats IR into XML tags with attributes
 
-The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function is used to convert IR to strings for token estimation before output generation.
+The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function converts IR to strings for **per-file** token estimation during parsing (the `tokens` field on each `ParserResult`). The headline output total is counted separately by `main.py` on the fully rendered string, not via `flatten_ir()`.
 
 ### With utils.py
 
