@@ -426,9 +426,9 @@ def process_sql(
                 # Always keep the first line (usually the INSERT header)
                 first_line = table_data_buffer[0]
                 
-                # Sample from the rest of the buffer
-                # We need sample_size - 1 more rows
-                rest_indices = sorted(rng.sample(range(1, len(table_data_buffer)), sample_size - 1))
+                # Sample from the rest of the buffer, clamping to a valid range.
+                n_extra = max(0, min(sample_size - 1, len(table_data_buffer) - 1))
+                rest_indices = sorted(rng.sample(range(1, len(table_data_buffer)), n_extra))
                 sampled_rows = [first_line] + [table_data_buffer[idx] for idx in rest_indices]
                 sampled_text = "".join(sampled_rows)
                 

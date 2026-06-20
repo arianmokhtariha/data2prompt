@@ -174,6 +174,77 @@ INSERT INTO users VALUES (1, 'a@example.com')
             os.remove(path)
 
 
+def test_process_sql_sample_size_zero_does_not_raise():
+    """process_sql with sample_size=0 must return valid output, not an error string."""
+    sql_content = (
+        "CREATE TABLE t (id int);\n"
+        "INSERT INTO t VALUES (1)\n"
+        ", (2)\n"
+        ", (3)\n"
+        ", (4)\n"
+        ", (5)\n"
+    )
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
+        tmp.write(sql_content)
+        path = tmp.name
+
+    try:
+        result = process_sql(path, sample_size=0)
+        assert not result.startswith("⚠️"), f"Got error string: {result}"
+        assert "CREATE TABLE t" in result
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_sql_sample_size_one_keeps_only_first_row():
+    """With sample_size=1, only the first INSERT/data row per table is kept."""
+    sql_content = (
+        "CREATE TABLE t (id int);\n"
+        "INSERT INTO t VALUES (1)\n"
+        ", (2)\n"
+        ", (3)\n"
+        ", (4)\n"
+        ", (5)\n"
+    )
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
+        tmp.write(sql_content)
+        path = tmp.name
+
+    try:
+        result = process_sql(path, sample_size=1)
+        assert not result.startswith("⚠️"), f"Got error string: {result}"
+        # The first INSERT line must appear; no extra data rows should be sampled.
+        assert "INSERT INTO t VALUES (1)" in result
+        assert "Table data truncated" in result
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_sql_sample_larger_than_buffer_returns_all_rows():
+    """When sample_size > number of buffered rows the else-branch returns all rows intact."""
+    sql_content = (
+        "CREATE TABLE t (id int);\n"
+        "INSERT INTO t VALUES (1)\n"
+        ", (2)\n"
+    )
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
+        tmp.write(sql_content)
+        path = tmp.name
+
+    try:
+        result = process_sql(path, sample_size=100)
+        assert not result.startswith("⚠️"), f"Got error string: {result}"
+        assert "(1)" in result
+        assert "(2)" in result
+        # No truncation footer should appear when the buffer fits within sample_size.
+        assert "Table data truncated" not in result
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def test_render_schema_block_merged_table():
     """When show_describe=True, schema and describe stats appear in one unified table."""
     df = pd.DataFrame({
