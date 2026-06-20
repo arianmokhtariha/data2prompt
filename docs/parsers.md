@@ -255,14 +255,22 @@ class NotebookParser:
 Uses [`process_notebook()`](../src/data2prompt/parsers.py#L178) to:
 1. Parse JSON notebook structure
 2. For each cell:
+   - Read `cell_type` and `source` defensively via `.get()` with safe defaults
+     (`'code'` and `[]` respectively), so a malformed cell degrades to empty
+     content rather than aborting the whole notebook via the outer exception handler
    - Truncate long lines using [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118)
-   - Filter outputs (stream text, execute_result data)
+   - Filter outputs: `stream` text, `execute_result`/`display_data` plain text,
+     and `error` tracebacks (joined from the `traceback` list, prefixed with
+     `-- [Error output] --`)
    - Apply max_lines limit per output block
 3. Return a list of `NotebookCellIR` objects
 
 **Error Handling:**
 - JSON decode errors → Single error cell with malformed notebook message
 - General exceptions → Single error cell with exception message
+- Missing `cell_type` or `source` keys in an individual cell → safe defaults;
+  the loop continues; only a truly unrecoverable file-level exception returns the
+  global error cell
 
 ### SQLParser
 
@@ -403,7 +411,9 @@ def enforce_table_limit(text: str, limit: int, truncate_to: int) -> str:
 
 All parsing functions implement try-except blocks with graceful degradation:
 - **CSV**: Empty DataFrame with error note
-- **Notebook**: Error cell with exception message
+- **Notebook**: File-level failures → single error cell with exception message;
+  individual cells with missing keys degrade to empty/typed content via `.get()`
+  defaults rather than aborting the whole notebook
 - **SQL**: Error string with exception message
 - **Excel**: Empty sheet entry with error note
 

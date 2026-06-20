@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -8,6 +9,7 @@ import pandas as pd
 from src.data2prompt.parsers import (
     process_sql,
     process_csv,
+    process_notebook,
     build_table_schema,
     render_schema_block,
     is_env_file,
@@ -358,6 +360,89 @@ def test_env_parser_respects_no_env_keys():
         assert redacted.status == "Redacted"
         assert "API_KEY=<redacted>" in redacted.content
         assert "super-secret-value" not in redacted.content
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_notebook_missing_source_key_does_not_abort():
+    """A cell without 'source' must not trigger the global error cell (number=0)."""
+    nb = {
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "metadata": {},
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": ["print('hello')"],
+                "outputs": [],
+                "execution_count": None,
+            },
+            {
+                # 'source' key deliberately absent
+                "cell_type": "code",
+                "outputs": [],
+                "execution_count": None,
+            },
+        ],
+    }
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".ipynb", delete=False, encoding="utf-8"
+    ) as tmp:
+        json.dump(nb, tmp)
+        path = tmp.name
+
+    try:
+        cells = process_notebook(path)
+        # Both cells must be returned; the global error cell has number=0.
+        assert len(cells) == 2
+        assert all(c.number != 0 for c in cells)
+        assert "print('hello')" in cells[0].source
+        # Malformed cell degrades to empty source rather than aborting.
+        assert cells[1].source == ""
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_notebook_error_output_captured():
+    """An 'error' output type must appear in the cell's outputs with a clear marker."""
+    nb = {
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "metadata": {},
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": ["raise ValueError('boom')"],
+                "outputs": [
+                    {
+                        "output_type": "error",
+                        "ename": "ValueError",
+                        "evalue": "boom",
+                        "traceback": [
+                            "Traceback (most recent call last):",
+                            "  File \"<ipython>\", line 1, in <module>",
+                            "ValueError: boom",
+                        ],
+                    }
+                ],
+                "execution_count": 1,
+            }
+        ],
+    }
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".ipynb", delete=False, encoding="utf-8"
+    ) as tmp:
+        json.dump(nb, tmp)
+        path = tmp.name
+
+    try:
+        cells = process_notebook(path)
+        assert len(cells) == 1
+        assert cells[0].outputs is not None
+        assert "Error output" in cells[0].outputs
+        assert "ValueError: boom" in cells[0].outputs
     finally:
         if os.path.exists(path):
             os.remove(path)

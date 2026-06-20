@@ -344,8 +344,8 @@ def process_notebook(
         cells_ir = []
         
         for i, cell in enumerate(nb.get('cells', []), 1):
-            cell_type = cell['cell_type'].lower()
-            source = "".join(cell['source'])
+            cell_type = cell.get('cell_type', 'code').lower()
+            source = "".join(cell.get('source', []) or [])
             source = truncate_long_lines(source, line_threshold, truncate_to)
             
             cell_outputs = None
@@ -372,7 +372,16 @@ def process_notebook(
                                     outputs.append('\n'.join(int_lines[:max_lines]) + f"\n-- [Data preview truncated: Showing first {max_lines} lines] --")
                                 else:
                                     outputs.append(content.strip())
-                
+
+                    elif out.get('output_type') == 'error':
+                        tb_text = "\n".join(out.get('traceback', []))
+                        tb_text = truncate_long_lines(tb_text, line_threshold, truncate_to)
+                        tb_lines = tb_text.strip().split('\n')
+                        if len(tb_lines) > max_lines:
+                            outputs.append("-- [Error output] --\n" + '\n'.join(tb_lines[:max_lines]) + f"\n-- [Output truncated: Showing first {max_lines} lines] --")
+                        else:
+                            outputs.append("-- [Error output] --\n" + tb_text.strip())
+
                 if outputs:
                     cell_outputs = "\n---\n".join(outputs)
             
