@@ -408,6 +408,7 @@ def process_sql(
         processed_lines = []
         table_data_buffer: List[str] = []
         in_create_block = False
+        non_data_line_count: int = 0
         rng = random.Random(seed)
 
         def flush_buffer():
@@ -486,9 +487,10 @@ def process_sql(
             # 5. Keep lines if inside CREATE block OR under max_lines limit
             if in_create_block:
                 processed_lines.append(line)
-            elif len(processed_lines) < max_lines:
+            elif non_data_line_count < max_lines:
                 flush_buffer() # Ensure data is flushed before adding more non-data lines
                 processed_lines.append(line)
+                non_data_line_count += 1
         
         # Final flush for the last table
         flush_buffer()
