@@ -21,7 +21,6 @@ is_binary()          # Binary file detection
 ProjectScanner       # File discovery with ignore logic
 
 # Standalone utilities
-generate_tree()      # Legacy tree generation
 load_ignore_file()   # Ignore file parser
 ```
 
@@ -363,20 +362,6 @@ print(tree)
 ---
 
 ## Standalone Utility Functions
-
-### `generate_tree(startpath: Union[str, Path], ignore_folders: Union[List[str], Set[str]], ignore_files: Union[List[str], Set[str]]) -> str`
-
-Legacy wrapper function for `ProjectScanner.generate_tree()`.
-
-```python
-tree = generate_tree(
-    startpath=".",
-    ignore_folders=[".git", "__pycache__"],
-    ignore_files=[".DS_Store"]
-)
-```
-
-**Note:** This is a standalone function without class initialization. Prefer `ProjectScanner.generate_tree()` for new code as it supports ignore files.
 
 ### `load_ignore_file(directory: Union[str, Path], filename: str = '.data2promptignore') -> List[str]`
 

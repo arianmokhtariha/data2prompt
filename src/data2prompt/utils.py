@@ -139,7 +139,7 @@ def is_binary(file_path: Union[str, Path]) -> bool:
 class ProjectScanner:
     """Encapsulates file discovery and ignore logic using pathspec for robust pattern matching."""
 
-    def __init__(self, project_path: Path, ignore_folders: Set[str], ignore_files: Set[str], output_file: str, use_gitignore: bool = True):
+    def __init__(self, project_path: Path, ignore_folders: Set[str], ignore_files: Set[str], output_file: str, use_gitignore: bool = True) -> None:
         self.project_path = project_path
         self.ignore_folders = ignore_folders
         self.ignore_files = ignore_files
@@ -217,21 +217,6 @@ class ProjectScanner:
                     # Use backslashes for consistency in the output as per project standard
                     tree.append(str(rel_path).replace(os.sep, '\\'))
         return "\n".join(sorted(tree))
-
-def generate_tree(
-    startpath: Union[str, Path], ignore_folders: Union[List[str], Set[str]], ignore_files: Union[List[str], Set[str]]
-) -> str:
-    """Legacy wrapper for generate_tree, now generating a flat list."""
-    tree = []
-    startpath = Path(startpath)
-    for root, dirs, files in os.walk(startpath):
-        dirs[:] = [d for d in dirs if d not in ignore_folders]
-        for f in files:
-            if f not in ignore_files:
-                rel_path = Path(root).relative_to(startpath) / f
-                # Use forward slashes for consistency in the output
-                tree.append(str(rel_path).replace(os.sep, '\\'))
-    return "\n".join(sorted(tree))
 
 def load_ignore_file(directory: Union[str, Path], filename: str = '.data2promptignore') -> List[str]:
     """

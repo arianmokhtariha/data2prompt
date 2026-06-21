@@ -234,7 +234,6 @@ The [`main()`](../src/data2prompt/main.py#L43) function maintains comprehensive 
 
 ### Entry Points
 
-The module exposes two entry points:
+The module exposes a single entry point:
 
-- `main()`: Primary CLI entry point
-- `run_packager`: Alias for backward compatibility with stale entry point scripts (line 172)
+- `main()`: Primary CLI entry point (wired to the `data2prompt` console script in `pyproject.toml`)

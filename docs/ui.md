@@ -10,7 +10,7 @@ The [`UIHandler`](../src/data2prompt/ui.py#L34) class in [`src/data2prompt/ui.py
 
 | Responsibility | Description |
 |:---|:---|
-| **Event Handling** | Processes lifecycle events: `on_start`, `on_progress`, `on_error`, `on_warning` |
+| **Event Handling** | Processes lifecycle events: `on_start`, `on_progress` |
 | **Progress Tracking** | Manages real-time progress bars during file scanning and processing |
 | **Visual Components** | Renders panels, tables, spinners, and ASCII art headers |
 | **Interactive TUI** | Provides scrollable, keyboard-navigable summary on Windows |
@@ -18,7 +18,7 @@ The [`UIHandler`](../src/data2prompt/ui.py#L34) class in [`src/data2prompt/ui.py
 
 ### Event Handlers
 
-The [`UIHandler`](../src/data2prompt/ui.py#L34) provides four event handler methods that integrate with the main processing flow:
+The [`UIHandler`](../src/data2prompt/ui.py#L34) provides two lifecycle event handler methods that integrate with the main processing flow:
 
 ```python
 def on_start(self, description: str, total: int) -> None:
@@ -35,17 +35,11 @@ def on_progress(self, description: str, advance: int = 0) -> None:
             self._progress.advance(self._task_id, advance)
 ```
 
-```python
-def on_error(self, message: str) -> None:
-    """Event handler for errors."""
-    self.print_error(message)
-```
-
-```python
-def on_warning(self, message: str) -> None:
-    """Event handler for warnings."""
-    self.print_warning(message)
-```
+Errors and warnings are surfaced directly through the
+[`print_error()`](../src/data2prompt/ui.py) and
+[`print_warning()`](../src/data2prompt/ui.py) display methods (and the
+[`print_warning_panel()`](../src/data2prompt/ui.py) panel variant), not via
+dedicated event handlers.
 
 ## UI Components
 
@@ -103,18 +97,6 @@ def progress_bar(self, description: str, total: int) -> Generator[Any, None, Non
 - `BarColumn` - Visual progress bar with dim/complete/finished styles
 - `TaskProgressColumn` - Percentage display in yellow
 - `Spinner` - "dots12" tech-focused spinner animation
-
-### Status Spinner
-
-The [`status()`](../src/data2prompt/ui.py#L91) context manager shows a temporary status spinner:
-
-```python
-@contextmanager
-def status(self, message: str) -> Generator[Any, None, None]:
-    """Context manager for showing a status spinner with a tech-focused animation."""
-    with self.console.status(Text(message, style="bold green"), spinner="dots12", spinner_style="bold green"):
-        yield
-```
 
 ## Final Report
 

@@ -29,11 +29,11 @@ The [`ParserRegistry`](../src/data2prompt/parsers.py#L561) class manages the map
 ```python
 class ParserRegistry:
     """Handles file-to-parser mapping."""
-    def __init__(self):
+    def __init__(self) -> None:
         self._parsers: Dict[str, BaseParser] = {}
         self._default_parser = DefaultParser()
 
-    def register(self, extensions: List[str], parser: BaseParser):
+    def register(self, extensions: List[str], parser: BaseParser) -> None:
         for ext in extensions:
             self._parsers[ext.lower()] = parser
 
@@ -154,10 +154,13 @@ missing counts/percentages reflect the entire dataset even when only a sample is
 ### ParserResult
 
 ```python
+# The three shapes a parser can emit: raw text, notebook cells, or tables.
+ParserContent = Union[str, List[NotebookCellIR], List[TableIR]]
+
 @dataclass
 class ParserResult:
     """Standardized output for all parsers."""
-    content: Union[str, List[NotebookCellIR], List[TableIR]]
+    content: ParserContent
     tokens: int
     type: str
     status: str
@@ -166,12 +169,40 @@ class ParserResult:
 ```
 
 Standardized output container containing:
-- **content**: The IR or raw string content
+- **content**: The IR or raw string content (typed by the `ParserContent` alias)
 - **tokens**: Token count for the content
 - **type**: File type string (e.g., "CSV", "Notebook")
 - **status**: Processing status (e.g., "Sampled", "Cleaned", "Truncated")
 - **stats_update**: Dictionary for aggregating statistics
 - **skip_file**: Flag to exclude file from output entirely
+
+### FileData / FileSummary
+
+Two `TypedDict`s standardize the dict payloads that cross module boundaries,
+replacing the former `Dict[str, Any]` annotations and giving key-name safety:
+
+```python
+class FileData(TypedDict):
+    """A processed file handed from the orchestrator to an output generator."""
+    path: str
+    content: ParserContent
+    type: str
+    tokens: int
+    status: str
+
+class FileSummary(TypedDict):
+    """A processed file's row in the final summary table rendered by the UI."""
+    name: str
+    type: str
+    tokens: int
+    status: str
+```
+
+- `FileData` is built in [`main.py`](../src/data2prompt/main.py) and consumed by the
+  generators in [`output.py`](output.md) (`files_data: List[FileData]`).
+- `FileSummary` feeds [`ui.print_final_report()`](ui.md)
+  (`processed_files_info: List[FileSummary]`). The UI imports it under
+  `TYPE_CHECKING` only, to avoid a `utils → ui → parsers → utils` import cycle.
 
 ### flatten_ir Function
 
@@ -179,7 +210,7 @@ The [`flatten_ir()`](../src/data2prompt/parsers.py) function converts IR objects
 
 ```python
 def flatten_ir(
-    content: Union[str, List[NotebookCellIR], List[TableIR]],
+    content: ParserContent,
     *,
     schema_only: bool = False,
     stats_summary: bool = False,
@@ -456,7 +487,11 @@ The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function converts IR to 
 
 ### With utils.py
 
-Parsers use utility functions from [`utils.py`](../src/data2prompt/utils.py):
+Parsers use utility functions from [`utils.py`](../src/data2prompt/utils.py),
+imported once at module level (`from .utils import count_tokens, is_binary`). The
+import is safe because the dependency chain `parsers → utils → ui → constants` has
+no path back to `parsers`.
+
 - [`count_tokens()`](../src/data2prompt/utils.py): Token counting using tiktoken
 - [`is_binary()`](../src/data2prompt/utils.py): Binary file detection
 

@@ -8,9 +8,16 @@ import pandas as pd
 # Now that pandas is imported, we can reference its error types
 warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 from pathlib import Path
-from typing import Set
+from typing import List, Set
 from .cli import setup_cli, Config
-from .parsers import registry, ParserResult, is_env_file, env_parser
+from .parsers import (
+    registry,
+    ParserResult,
+    FileData,
+    FileSummary,
+    is_env_file,
+    env_parser,
+)
 from .utils import ProjectScanner, count_tokens, check_connectivity, copy_to_clipboard
 from .ui import ui
 from .output import get_generator
@@ -45,7 +52,7 @@ def process_target_file(file_path: Path, config: Config) -> ParserResult:
     parser = registry.get_parser(ext)
     return parser.parse(file_path, config)
 
-def main():
+def main() -> None:
     """
     The main entry point for the Data2Prompt CLI.
     Orchestrates the argument parsing, file discovery, content processing, and Markdown generation.
@@ -82,7 +89,7 @@ def main():
     }
     
     # For the summary table
-    processed_files_info = []
+    processed_files_info: List[FileSummary] = []
 
     with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
         # 1. Checking connectivity
@@ -97,8 +104,8 @@ def main():
         handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)
 
         # 2. Processing files
-        files_data = []
-        
+        files_data: List[FileData] = []
+
         for file_path in all_files:
             relative_path = file_path.relative_to(project_path)
             ext = file_path.suffix.lower()
@@ -186,6 +193,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Alias for backward compatibility with stale entry point scripts
-run_packager = main

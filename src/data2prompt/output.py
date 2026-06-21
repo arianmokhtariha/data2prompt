@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
@@ -18,25 +18,31 @@ from .constants import (
     GENERATION_FLAG
 )
 from .utils import get_dynamic_wrapper
-from .parsers import NotebookCellIR, TableIR, enforce_table_limit, render_schema_block
+from .parsers import (
+    NotebookCellIR,
+    TableIR,
+    FileData,
+    enforce_table_limit,
+    render_schema_block,
+)
 
 class OutputGenerator(ABC):
     @abstractmethod
     def generate(self,
                  project_name: str,
                  tree_text: str,
-                 files_data: List[Dict[str, Any]],
-                 stats: Dict[str, Any],
-                 config: 'Config' = None) -> str:
+                 files_data: List[FileData],
+                 stats: Dict[str, int],
+                 config: Optional['Config'] = None) -> str:
         pass
 
 class MarkdownGenerator(OutputGenerator):
     def generate(self,
                  project_name: str,
                  tree_text: str,
-                 files_data: List[Dict[str, Any]],
-                 stats: Dict[str, Any],
-                 config: 'Config' = None) -> str:
+                 files_data: List[FileData],
+                 stats: Dict[str, int],
+                 config: Optional['Config'] = None) -> str:
 
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
 
@@ -149,9 +155,9 @@ class XMLGenerator(OutputGenerator):
     def generate(self,
                  project_name: str,
                  tree_text: str,
-                 files_data: List[Dict[str, Any]],
-                 stats: Dict[str, Any],
-                 config: 'Config' = None) -> str:
+                 files_data: List[FileData],
+                 stats: Dict[str, int],
+                 config: Optional['Config'] = None) -> str:
 
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
 

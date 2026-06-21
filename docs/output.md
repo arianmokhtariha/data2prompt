@@ -27,11 +27,16 @@ class OutputGenerator(ABC):
     def generate(self,
                  project_name: str,
                  tree_text: str,
-                 files_data: List[Dict[str, Any]],
-                 stats: Dict[str, Any],
-                 config: 'Config' = None) -> str:
+                 files_data: List[FileData],
+                 stats: Dict[str, int],
+                 config: Optional['Config'] = None) -> str:
         pass
 ```
+
+`FileData` is a `TypedDict` defined in [`parsers.py`](parsers.md) describing a
+processed file (`path`, `content`, `type`, `tokens`, `status`); it replaces the
+former loosely-typed `Dict[str, Any]` and gives key-name safety across the
+main → output boundary. `stats` is a plain `Dict[str, int]` of running counts.
 
 Generators no longer receive a pre-computed token count. They emit
 `{{TOTAL_TOKENS}}` and `{{TOKEN_METHOD}}` placeholders in their metadata block;
@@ -250,10 +255,12 @@ The method string doubles as the label substituted into the metadata
 Output generators accept an optional [`Config`](../src/data2prompt/cli.py) parameter for table limit enforcement:
 
 ```python
-def generate(self, ..., config: 'Config' = None) -> str:
+def generate(self, ..., config: Optional['Config'] = None) -> str:
 ```
 
-When `config` is provided, table content is truncated via [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) using:
+When `config` is provided (it is `Optional['Config']`, defaulting to `None`), table
+content is truncated via [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97)
+using:
 - `config.table_limit`: Maximum characters allowed
 - `config.table_truncate`: Characters to retain when truncated
 

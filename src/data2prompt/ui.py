@@ -3,7 +3,7 @@ import random
 import sys
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, TYPE_CHECKING
 
 from rich.color import Color
 from rich.console import Console, Group
@@ -30,6 +30,11 @@ from data2prompt.constants import (
     ASCII_ART,
 )
 
+if TYPE_CHECKING:
+    # Imported only for type hints — a runtime import would create a
+    # utils → ui → parsers → utils cycle.
+    from data2prompt.parsers import FileSummary
+
 
 class UIHandler:
     """
@@ -51,14 +56,6 @@ class UIHandler:
             self._progress.update(self._task_id, description=description)
             if advance > 0:
                 self._progress.advance(self._task_id, advance)
-
-    def on_error(self, message: str) -> None:
-        """Event handler for errors."""
-        self.print_error(message)
-
-    def on_warning(self, message: str) -> None:
-        """Event handler for warnings."""
-        self.print_warning(message)
 
     def _generate_matrix_frame(self, width: int, height: int) -> Text:
         """Generates a single frame of random binary/hex characters."""
@@ -86,13 +83,6 @@ class UIHandler:
             
             live.update(final_text)
         
-
-    @contextmanager
-    def status(self, message: str) -> Generator[Any, None, None]:
-        """Context manager for showing a status spinner with a tech-focused animation."""
-        # Use 'dots12' as a reliable, tech-focused built-in spinner
-        with self.console.status(Text(message, style="bold green"), spinner="dots12", spinner_style="bold green"):
-            yield
 
     @contextmanager
     def progress_bar(
@@ -128,7 +118,7 @@ class UIHandler:
 
     def print_final_report(
         self,
-        processed_files_info: List[Dict[str, Any]],
+        processed_files_info: List["FileSummary"],
         output_path: str,
         file_size_kb: float,
         total_tokens: int,

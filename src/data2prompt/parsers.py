@@ -1,9 +1,10 @@
 import json
+import os
 import random
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Union, Dict, Protocol, Optional, TYPE_CHECKING
+from typing import List, Union, Dict, Protocol, Optional, TypedDict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .cli import Config
@@ -22,8 +23,10 @@ from .constants import (
     DEFAULT_TRUNCATED_LINE_LENGTH,
     DEFAULT_TABLE_CHAR_LIMIT,
     DEFAULT_TABLE_TRUNCATED_SIZE,
-    ENV_VALUE_PLACEHOLDER
+    ENV_VALUE_PLACEHOLDER,
+    GENERATION_FLAG,
 )
+from .utils import count_tokens, is_binary
 
 @dataclass
 class NotebookCellIR:
@@ -65,15 +68,35 @@ class TableIR:
     file_path: Optional[str] = None
     schema: Optional[TableSchema] = None
 
+# The three shapes a parser can emit: raw text, notebook cells, or tables.
+ParserContent = Union[str, List[NotebookCellIR], List[TableIR]]
+
 @dataclass
 class ParserResult:
     """Standardized output for all parsers."""
-    content: Union[str, List[NotebookCellIR], List[TableIR]]
+    content: ParserContent
     tokens: int
     type: str
     status: str
     stats_update: Dict[str, int] = field(default_factory=dict)
     skip_file: bool = False
+
+
+class FileData(TypedDict):
+    """A processed file handed from the orchestrator to an output generator."""
+    path: str
+    content: ParserContent
+    type: str
+    tokens: int
+    status: str
+
+
+class FileSummary(TypedDict):
+    """A processed file's row in the final summary table rendered by the UI."""
+    name: str
+    type: str
+    tokens: int
+    status: str
 
 
 def build_table_schema(df: pd.DataFrame, include_describe: bool) -> TableSchema:
@@ -176,7 +199,7 @@ def render_schema_block(
 
 
 def flatten_ir(
-    content: Union[str, List[NotebookCellIR], List[TableIR]],
+    content: ParserContent,
     *,
     schema_only: bool = False,
     stats_summary: bool = False,
@@ -289,8 +312,6 @@ def process_csv(
     file_path: Union[str, Path],
     sample_size: int = DEFAULT_CSV_SAMPLE_SIZE,
     seed: int = DEFAULT_SEED,
-    table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
-    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE,
     stats_summary: bool = True,
     schema_only: bool = False
 ) -> List[TableIR]:
@@ -420,7 +441,7 @@ def process_sql(
         non_data_line_count: int = 0
         rng = random.Random(seed)
 
-        def flush_buffer():
+        def flush_buffer() -> None:
             if not table_data_buffer:
                 return
 
@@ -514,8 +535,6 @@ def process_excel(
     max_rows: int = DEFAULT_CSV_SAMPLE_SIZE,
     max_sheets: int = DEFAULT_MAX_SHEETS,
     seed: int = DEFAULT_SEED,
-    table_limit: int = DEFAULT_TABLE_CHAR_LIMIT,
-    table_truncate: int = DEFAULT_TABLE_TRUNCATED_SIZE,
     stats_summary: bool = True,
     schema_only: bool = False
 ) -> List[TableIR]:
@@ -547,7 +566,7 @@ def process_excel(
                     has_visuals = True
                 if hasattr(sheet, 'charts') and len(sheet.charts) > 0:
                     has_visuals = True
-            except:
+            except Exception:
                 pass
 
             # 2. Data Extraction using pandas
@@ -615,13 +634,10 @@ def process_excel(
 
 class CSVParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        from .utils import count_tokens
         content = process_csv(
             file_path,
             config.csv_sample_size,
             config.seed,
-            config.table_limit,
-            config.table_truncate,
             config.stats_summary,
             config.schema_only
         )
@@ -640,7 +656,6 @@ class CSVParser:
 
 class NotebookParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        from .utils import count_tokens
         content = process_notebook(
             file_path,
             config.max_lines,
@@ -658,7 +673,6 @@ class NotebookParser:
 
 class SQLParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        from .utils import count_tokens
         content = process_sql(
             file_path,
             config.sql_sample_size,
@@ -681,22 +695,18 @@ class SQLParser:
 
 class ExcelParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        from .utils import count_tokens
-        import os
         # Get path relative to project root
         try:
             display_path = str(file_path.relative_to(Path.cwd())).replace(os.sep, '\\')
         except ValueError:
             display_path = str(file_path).replace(os.sep, '\\')
-            
+
         content = process_excel(
             file_path,
             display_path,
             config.csv_sample_size,
             config.max_sheets,
             config.seed,
-            config.table_limit,
-            config.table_truncate,
             config.stats_summary,
             config.schema_only
         )
@@ -717,18 +727,15 @@ class ExcelParser:
 class DefaultParser:
     """Fallback parser for text files."""
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        from .utils import count_tokens, is_binary
-        from .constants import GENERATION_FLAG
-        
         ext = file_path.suffix.lower()
-        
+
         # Check for generation flag in all text files
         if not is_binary(file_path):
             try:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     if GENERATION_FLAG in f.read(100):
                         return ParserResult(content="", tokens=0, type="Skipped", status="Skipped (Generated)", skip_file=True)
-            except:
+            except Exception:
                 pass
 
         if is_binary(file_path):
@@ -810,8 +817,6 @@ def process_env(
 class EnvParser:
     """Parser for environment files: lists variable names with redacted values."""
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        from .utils import count_tokens
-
         if not config.env_keys:
             return ParserResult(
                 content="*Note: .env file content skipped (--no-env-keys).*\n",
@@ -834,11 +839,11 @@ class EnvParser:
 
 class ParserRegistry:
     """Handles file-to-parser mapping."""
-    def __init__(self):
+    def __init__(self) -> None:
         self._parsers: Dict[str, BaseParser] = {}
         self._default_parser = DefaultParser()
 
-    def register(self, extensions: List[str], parser: BaseParser):
+    def register(self, extensions: List[str], parser: BaseParser) -> None:
         for ext in extensions:
             self._parsers[ext.lower()] = parser
 
