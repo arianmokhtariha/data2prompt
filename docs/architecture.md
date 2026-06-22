@@ -49,7 +49,7 @@ graph TD
 | [`cli.py`](../src/data2prompt/cli.py#L1) | Argument parsing and Config construction | `config = setup_cli()` |
 | [`parsers.py`](../src/data2prompt/parsers.py#L1) | Format-specific file parsing via Registry | `registry.get_parser(ext)` |
 | [`output.py`](../src/data2prompt/output.py#L1) | Output generation via Strategy pattern | `get_generator(config.format)` |
-| [`utils.py`](../src/data2prompt/utils.py#L1) | Project scanning, tokenization, connectivity | `ProjectScanner`, `count_tokens()`, `check_connectivity()` |
+| [`utils.py`](../src/data2prompt/utils.py#L1) | Project scanning, tokenization (bundled BPE) | `ProjectScanner`, `count_tokens()`, `_load_encoding()` |
 | [`ui.py`](../src/data2prompt/ui.py#L1) | Terminal feedback and reporting | `ui.on_start()`, `ui.progress_bar()` |
 
 ### Data Flow
@@ -228,7 +228,7 @@ The [`main()`](../src/data2prompt/main.py#L43) function maintains comprehensive 
 ### Defensive Measures
 
 1. **Warning Suppression**: Global suppression of `openpyxl` and `pandas` warnings for cleaner TUI output
-2. **Connectivity Check**: [`check_connectivity()`](../src/data2prompt/utils.py#L33) determines online/offline mode before tokenization
+2. **Offline-safe tokenization**: [`_load_encoding()`](../src/data2prompt/utils.py#L19) reads the bundled BPE file — no network call is ever made
 3. **File Size Warning**: Triggers a warning panel if output exceeds 2MB (potential context window issues)
 4. **Graceful Skipping**: Files matching skip extensions receive a placeholder result rather than failing
 

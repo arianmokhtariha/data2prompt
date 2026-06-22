@@ -39,3 +39,6 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/arianmokhtariha/data2prompt"
+
+[tool.setuptools.package-data]
+"data2prompt" = ["encodings/*.tiktoken"]

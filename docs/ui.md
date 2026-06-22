@@ -214,9 +214,9 @@ The [`UIHandler`](../src/data2prompt/ui.py#L34) integrates with [`main.py`](../s
 ```python
 # From main.py
 with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
-    handler.on_progress("[cyan]Checking online connectivity...[/cyan]")
-    is_online = check_connectivity()
-    handler.on_progress(f"[cyan]Checking online connectivity... {status_msg}[/cyan]", advance=1)
+    handler.on_progress("[cyan]Generating project tree...[/cyan]")
+    tree_text = scanner.generate_tree()
+    handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)
     # ... file processing loop
 ```
 

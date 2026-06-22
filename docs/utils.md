@@ -6,12 +6,10 @@ The utilities module provides generic helper functions used throughout the data2
 
 ```python
 # Global state for tokenization (module-level, not class-based)
-_OFFLINE_MODE = False
-_ENCODING_CACHE: Dict[str, tiktoken.Encoding] = {}
+_ENCODING: Optional[tiktoken.Encoding] = None  # populated once per process
 
 # Key functions
-is_online()          # Connectivity check
-check_connectivity() # Sets global offline mode
+_load_encoding()     # Load bundled BPE file; cached after first call
 count_tokens()       # Primary token counting with fallbacks
 get_dynamic_wrapper()# Markdown code block safety
 copy_to_clipboard()  # OS-native clipboard copy (no third-party dep)
@@ -28,44 +26,40 @@ load_ignore_file()   # Ignore file parser
 
 ## Tokenization System
 
-The tokenization system provides accurate token counting with graceful offline fallbacks.
+The tokenization system provides accurate token counting using a bundled BPE file,
+with a regex approximation as a safety-net fallback.
 
-### Global State Variables
+### Global State
 
 | Variable | Type | Purpose |
 |----------|------|---------|
-| `_OFFLINE_MODE` | `bool` | Global flag indicating whether network access is unavailable |
-| `_ENCODING_CACHE` | `Dict[str, tiktoken.Encoding]` | Cache for loaded tiktoken encodings to avoid repeated initialization |
+| `_ENCODING` | `Optional[tiktoken.Encoding]` | Cached encoding instance; `None` until first use, then held for the lifetime of the process |
 
-### Connectivity Detection
+### Loading the Encoding
 
-#### `is_online(timeout: float = 0.5) -> bool`
+#### `_load_encoding() -> tiktoken.Encoding`
 
-Quickly checks for internet connectivity by attempting to connect to OpenAI's public blob storage.
+Loads the o200k_base encoding from the bundled BPE file. Returns the cached instance
+on every call after the first — the file is parsed only once per process.
 
 ```python
-online = is_online()  # Returns True if connectivity exists
-online = is_online(timeout=1.0)  # Custom timeout
+encoding = _load_encoding()  # Fast after first call
 ```
 
 **Implementation Details:**
-- Connects to `openaipublic.blob.core.windows.net:443`
-- Uses `socket.setdefaulttimeout()` with configurable timeout (default 0.5s)
-- Returns `False` on `socket.timeout` or `OSError`
+- Uses `importlib.resources.files("data2prompt") / "encodings" / "o200k_base.tiktoken"`
+  to locate the file shipped inside the package — works for both editable installs and
+  installed wheels.
+- Calls `tiktoken.load.load_tiktoken_bpe(str(path))` against the local path, which
+  reads the file directly without any network access.
+- Constructs a `tiktoken.Encoding` with the exact parameters from `o200k_base`:
+  `pat_str` (the GPT-4o pre-tokenization regex), `mergeable_ranks` (from the BPE
+  file), and `special_tokens` (`<|endoftext|>: 199999`, `<|endofprompt|>: 200018`).
+- Caches the result in `_ENCODING` for all subsequent calls.
 
-**Purpose:** Prevents hanging when tiktoken attempts to download encodings.
-
-#### `check_connectivity(timeout: float = 0.5) -> bool`
-
-Performs a connectivity check and updates the global offline mode flag.
-
-```python
-online = check_connectivity()  # Also sets _OFFLINE_MODE globally
-```
-
-**Behavior:**
-- If online: sets `_OFFLINE_MODE = False`, returns `True`
-- If offline: sets `_OFFLINE_MODE = True`, returns `False`
+**Why this matters:** tiktoken's default `get_encoding()` fetches the BPE file from
+the network on first use. Loading from a bundled local file eliminates that dependency
+entirely.
 
 ---
 
@@ -77,37 +71,38 @@ Returns the number of tokens in a text string and the method used.
 
 ```python
 token_count, method = count_tokens("def hello(): return 'world'")
-# Returns: (6, "o200k_base") - or "regex_fallback" / "word_count"
+# Returns: (6, "o200k_base") under normal conditions
 ```
 
 **Algorithm:**
 
 ```
-┌───────────────────────────────────────────────┐
-│ 1. Check if _OFFLINE_MODE is False            │
-│    └─ If not offline, attempt tiktoken        │
-│         └─ Check encoding cache               │
-│              └─ If not cached, check online   │
-│                   └─ Download encoding        │
-│         └─ Encode and count tokens            │
-│    └─ If offline or error, fall through       │
-│                                               │
-│ 2. Regex Fallback (o200k_base pattern)        │
-│    └─ pattern = r"""[^\r\n\p{L}\p{N}]?... """ │
-│    └─ Count matches with re.findall           │
-│                                               │
-│ 3. Word Count Fallback (absolute last resort) │
-│    └─ Split on whitespace, count words        │
-└───────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│ 1. Bundled tiktoken (primary path)                  │
+│    └─ Call _load_encoding() → tiktoken.Encoding     │
+│    └─ encoding.encode(text) → token list            │
+│    └─ Return (len, "o200k_base")                    │
+│    └─ On any exception → fall through               │
+│                                                     │
+│ 2. Regex Fallback (safety net only)                 │
+│    └─ pattern = r"""[^\r\n\p{L}\p{N}]?... """       │
+│    └─ re.findall(pattern, text)                     │
+│    └─ Return (len, "regex_fallback")                │
+│    └─ On any exception → fall through               │
+│                                                     │
+│ 3. Word Count (absolute last resort)                │
+│    └─ len(text.split())                             │
+│    └─ Return (count, "word_count")                  │
+└─────────────────────────────────────────────────────┘
 ```
 
 **Return Values:**
 
 | Scenario | Token Count | Method |
 |----------|-------------|--------|
-| Tiktoken available | Accurate count | `"o200k_base"` |
-| Offline/fallback | ~95-98% accurate | `"regex_fallback"` |
-| Regex fails | Approximate | `"word_count"` |
+| Normal (bundled BPE loaded) | Accurate count | `"o200k_base"` |
+| BPE load failed | ~95-98% accurate | `"regex_fallback"` |
+| Regex also fails | Approximate | `"word_count"` |
 
 **The Regex Pattern Explained:**
 
@@ -409,13 +404,9 @@ def load_ignore_file(directory, filename):
 ### Complete Token Counting Workflow
 
 ```python
-from pathlib import Path
-from data2prompt.utils import count_tokens, check_connectivity
+from data2prompt.utils import count_tokens
 
-# Ensure offline mode is set correctly
-check_connectivity()
-
-# Count tokens in code
+# Count tokens — the bundled BPE file is loaded on first call, cached for the rest
 code = '''
 def process_data(df: pd.DataFrame) -> Dict[str, Any]:
     """Process a DataFrame and return statistics."""
@@ -428,7 +419,7 @@ def process_data(df: pd.DataFrame) -> Dict[str, Any]:
 
 token_count, method = count_tokens(code)
 print(f"Tokens: {token_count} (method: {method})")
-# Output: Tokens: 53 (method: o200k_base) or regex_fallback
+# Output: Tokens: 53 (method: o200k_base)
 ```
 
 ### Safely Wrapping Content in Markdown
@@ -494,8 +485,8 @@ All functions in `utils.py` follow defensive programming principles:
 
 | Function | Error Behavior | Return Value |
 |----------|---------------|--------------|
-| `is_online()` | Socket timeout/OSError | `False` |
-| `count_tokens()` | Any exception | Falls back to next method |
+| `_load_encoding()` | Any exception | Propagates to caller |
+| `count_tokens()` | BPE load fails → regex; regex fails → word count | Falls back to next method |
 | `is_binary()` | OSError reading file | `False` |
 | `load_ignore_file()` | Exception reading file | Empty list + warning |
 | `ProjectScanner.scan()` | OSError | Continues, skips file |

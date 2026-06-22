@@ -18,7 +18,7 @@ from .parsers import (
     is_env_file,
     env_parser,
 )
-from .utils import ProjectScanner, count_tokens, check_connectivity, copy_to_clipboard
+from .utils import ProjectScanner, count_tokens, copy_to_clipboard
 from .ui import ui
 from .output import get_generator
 
@@ -70,7 +70,7 @@ def main() -> None:
     
     # Collect all files first to set progress bar total
     all_files = scanner.scan()
-    total_steps = 1 + 1 + len(all_files) + 1
+    total_steps = 1 + len(all_files) + 1
 
     # Initialize UI and start process
     ui.on_start("[cyan]Starting process...[/cyan]", total=total_steps)
@@ -92,13 +92,7 @@ def main() -> None:
     processed_files_info: List[FileSummary] = []
 
     with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
-        # 1. Checking connectivity
-        handler.on_progress("[cyan]Checking online connectivity...[/cyan]")
-        is_online = check_connectivity()
-        status_msg = "[green]Online[/green]" if is_online else "[yellow]Offline (using fallback)[/yellow]"
-        handler.on_progress(f"[cyan]Checking online connectivity... {status_msg}[/cyan]", advance=1)
-
-        # 2. Generating project tree
+        # 1. Generating project tree
         handler.on_progress("[cyan]Generating project tree...[/cyan]")
         tree_text = scanner.generate_tree()
         handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)
