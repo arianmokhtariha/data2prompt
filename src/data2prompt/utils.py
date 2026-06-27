@@ -3,7 +3,7 @@ import os
 import sys
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Union, Set
+from typing import List, Optional, Tuple, Union, Set
 
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
@@ -139,6 +139,9 @@ class ProjectScanner:
         self.output_file = output_file
         self.use_gitignore = use_gitignore
         self.spec = self._build_spec()
+        self._gitignore_specs: List[Tuple[Path, pathspec.PathSpec]] = (
+            self._load_all_gitignores() if self.use_gitignore else []
+        )
 
     def _build_spec(self) -> pathspec.PathSpec:
         """Compiles all ignore patterns into a single PathSpec object."""
@@ -153,11 +156,32 @@ class ProjectScanner:
         # 2. Add .data2promptignore
         patterns.extend(load_ignore_file(self.project_path, '.data2promptignore'))
 
-        # 3. Add .gitignore if enabled
-        if self.use_gitignore:
-            patterns.extend(load_ignore_file(self.project_path, '.gitignore'))
-
         return pathspec.PathSpec.from_lines('gitignore', patterns)
+
+    def _load_all_gitignores(self) -> List[Tuple[Path, pathspec.PathSpec]]:
+        """Walk the project tree and collect a per-directory PathSpec for every
+        .gitignore found. Skips .git directories."""
+        specs: List[Tuple[Path, pathspec.PathSpec]] = []
+        for root, dirs, files in os.walk(self.project_path):
+            root_path = Path(root)
+            if '.gitignore' in files:
+                patterns = load_ignore_file(root_path, '.gitignore')
+                if patterns:
+                    specs.append((root_path, pathspec.PathSpec.from_lines('gitignore', patterns)))
+            dirs[:] = [d for d in dirs if d != '.git']
+        return specs
+
+    def _is_ignored_by_gitignore(self, path: Path) -> bool:
+        """Check path against every per-directory gitignore spec whose base
+        directory is an ancestor of path. Matches relative to each base dir."""
+        for base_dir, spec in self._gitignore_specs:
+            try:
+                rel = path.relative_to(base_dir)
+            except ValueError:
+                continue
+            if spec.match_file(str(rel)):
+                return True
+        return False
 
     def _is_ignored(self, path: Path) -> bool:
         """Checks if a given path should be ignored based on the compiled spec and special cases."""
@@ -169,8 +193,12 @@ class ProjectScanner:
         if str(rel_path) == '.':
             return False
 
-        # Check against pathspec
+        # Check against pathspec (CLI patterns + .data2promptignore)
         if self.spec.match_file(str(rel_path)):
+            return True
+
+        # Check per-directory gitignore specs
+        if self._is_ignored_by_gitignore(path):
             return True
 
         # Special cases: output file and the script itself

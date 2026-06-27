@@ -249,65 +249,110 @@ tree = scanner.generate_tree()
 | `ignore_folders` | `Set[str]` | Folder names to ignore (e.g., `".git"`) |
 | `ignore_files` | `Set[str]` | Filenames/patterns to ignore (e.g., `"*.pyc"`) |
 | `output_file` | `str` | Name of output file to auto-ignore |
-| `use_gitignore` | `bool` | Whether to read `.gitignore` (default `True`) |
+| `use_gitignore` | `bool` | Whether to read `.gitignore` files (default `True`) |
+
+**Instance attributes:**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `spec` | `pathspec.PathSpec` | Compiled spec for CLI patterns and `.data2promptignore` |
+| `_gitignore_specs` | `List[Tuple[Path, pathspec.PathSpec]]` | Per-directory specs, one per `.gitignore` found in the tree |
 
 **Initialization Process:**
 1. Stores all parameters as instance attributes
-2. Calls `_build_spec()` to compile ignore patterns into a `PathSpec`
+2. Calls `_build_spec()` to compile CLI patterns and `.data2promptignore` into `self.spec`
+3. Calls `_load_all_gitignores()` (if `use_gitignore=True`) to walk the project tree and
+   build `self._gitignore_specs` — one `PathSpec` per `.gitignore` found, paired with its
+   containing directory
 
 ### Internal Methods
 
 #### `_build_spec() -> pathspec.PathSpec`
 
-Compiles all ignore patterns into a single `PathSpec` object using gitignore syntax.
+Compiles CLI-level and project-level ignore patterns into a single `PathSpec`.
+`.gitignore` patterns are **not** included here; they are handled by `_load_all_gitignores()`.
 
 **Pattern Sources (in priority order):**
 1. Explicit `ignore_folders` (appended with `/` for directory matching)
 2. Explicit `ignore_files` (exact filenames)
 3. `.data2promptignore` patterns (project-specific)
-4. `.gitignore` patterns (if `use_gitignore=True`)
-
-**Implementation:**
 
 ```python
 def _build_spec(self):
     patterns = []
-    
-    # 1. Add explicit ignores (folders need trailing slash)
     for folder in self.ignore_folders:
         patterns.append(f"{folder}/")
     for file in self.ignore_files:
         patterns.append(file)
-    
-    # 2. Add .data2promptignore
     patterns.extend(load_ignore_file(self.project_path, '.data2promptignore'))
-    
-    # 3. Add .gitignore if enabled
-    if self.use_gitignore:
-        patterns.extend(load_ignore_file(self.project_path, '.gitignore'))
-    
     return pathspec.PathSpec.from_lines('gitignore', patterns)
 ```
 
+#### `_load_all_gitignores() -> List[Tuple[Path, pathspec.PathSpec]]`
+
+Walks the entire project tree once at init time and collects a `PathSpec` for every
+`.gitignore` found, paired with the directory that contains it.
+
+```python
+def _load_all_gitignores(self):
+    specs = []
+    for root, dirs, files in os.walk(self.project_path):
+        root_path = Path(root)
+        if '.gitignore' in files:
+            patterns = load_ignore_file(root_path, '.gitignore')
+            if patterns:
+                specs.append((root_path, pathspec.PathSpec.from_lines('gitignore', patterns)))
+        dirs[:] = [d for d in dirs if d != '.git']
+    return specs
+```
+
+**Behavior:**
+- Skips `.git` directories entirely
+- A `.gitignore` with no effective patterns (empty or comments only) produces no spec entry
+- Runs once at construction; result is stored in `self._gitignore_specs`
+
+#### `_is_ignored_by_gitignore(path: Path) -> bool`
+
+Checks a path against every per-directory gitignore spec. For each spec, the path is
+matched **relative to the spec's base directory**, so patterns are correctly scoped.
+
+```python
+def _is_ignored_by_gitignore(self, path: Path) -> bool:
+    for base_dir, spec in self._gitignore_specs:
+        try:
+            rel = path.relative_to(base_dir)
+        except ValueError:
+            continue  # spec's base is not an ancestor of this path
+        if spec.match_file(str(rel)):
+            return True
+    return False
+```
+
+**Scoping rule:** A `.gitignore` at `src/` with pattern `*.log` will match
+`src/app.log` and `src/deep/app.log`, but will not match `app.log` at the project
+root. This matches real git behavior.
+
+**Known limitation:** Cross-file negations are not supported. If a parent `.gitignore`
+ignores `*.log` and a child `.gitignore` contains `!important.log`, the file remains
+ignored. Negations work correctly within a single `.gitignore` file (handled by
+`pathspec`), but not across files. This limitation is shared by most similar tools.
+
 #### `_is_ignored(path: Path) -> bool`
 
-Checks if a given path should be ignored based on the compiled spec.
+Checks if a given path should be ignored based on all rules.
 
 ```python
 def _is_ignored(self, path: Path) -> bool:
-    # Get relative path
     rel_path = path.relative_to(self.project_path)
-    
-    # Check pathspec rules
-    if self.spec.match_file(str(rel_path)):
+
+    if self.spec.match_file(str(rel_path)):       # CLI + .data2promptignore
         return True
-    
-    # Special cases: output file and this script
-    if path.name == self.output_file:
+    if self._is_ignored_by_gitignore(path):        # per-directory gitignores
         return True
-    if path.name == Path(sys.argv[0]).name:
+    if path.name == self.output_file:              # output file
         return True
-    
+    if path.name == Path(sys.argv[0]).name:        # the script itself
+        return True
     return False
 ```
 
