@@ -99,6 +99,19 @@ pip install .
 pip install -e .
 ```
 
+### Optional: Parquet, Feather, and Arrow support
+
+Support for `.parquet`, `.feather`, and `.arrow` files requires [pyarrow](https://arrow.apache.org/docs/python/), which is not bundled by default. Choose the command that matches how you installed data2prompt:
+
+| Scenario | Command |
+| :--- | :--- |
+| pip — fresh install | `pip install data2prompt[parquet]` |
+| pip — already installed | `pip install pyarrow` |
+| pipx — fresh install | `pipx install data2prompt[parquet]` |
+| pipx — already installed | `pipx inject data2prompt pyarrow` |
+
+If pyarrow is not installed, these files still appear in the output with a short inline note explaining why they were skipped.
+
 ### Usage
 
 Run `data2prompt` in your project root to generate a structured prompt:

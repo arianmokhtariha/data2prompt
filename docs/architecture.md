@@ -128,6 +128,7 @@ The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the pr
 | Extension | Action |
 |-----------|--------|
 | `.csv` | "Sampling" |
+| `.parquet`, `.feather`, `.arrow` | "Sampling" |
 | `.ipynb` | "Cleaning" |
 | `.sql` | "Parsing" |
 | `.xlsx`, `.xls` | "Extracting" |
@@ -178,6 +179,7 @@ Registered parsers include:
 - [`SqlParser`](../src/data2prompt/parsers.py#L1) → `.sql`
 - [`NotebookParser`](../src/data2prompt/parsers.py#L1) → `.ipynb`
 - [`ExcelParser`](../src/data2prompt/parsers.py#L1) → `.xlsx`, `.xls`
+- [`ArrowParser`](../src/data2prompt/parsers.py#L1) → `.parquet`, `.feather`, `.arrow` (requires optional `pyarrow`)
 
 In addition, `EnvParser` handles `.env` files. It is dispatched **by filename** (not via
 the extension registry) because a bare `.env` has no suffix; it emits variable names with
@@ -220,6 +222,9 @@ The [`main()`](../src/data2prompt/main.py#L43) function maintains comprehensive 
 | `sql_count` | SQL files processed |
 | `excel_count` | Excel workbooks processed |
 | `excel_sheets_count` | Total Excel sheets extracted |
+| `parquet_count` | Parquet files sampled |
+| `feather_count` | Feather files sampled |
+| `arrow_count` | Arrow IPC files sampled |
 | `truncated_count` | Files/content truncated due to size limits |
 | `binary_count` | Binary files detected and skipped |
 | `excluded_count` | Files excluded via ignore rules |

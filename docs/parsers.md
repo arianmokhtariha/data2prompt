@@ -11,12 +11,14 @@ graph TD
     Registry -->|get_parser| NotebookParser[NotebookParser]
     Registry -->|get_parser| SQLParser[SQLParser]
     Registry -->|get_parser| ExcelParser[ExcelParser]
+    Registry -->|get_parser| ArrowParser[ArrowParser]
     Registry -->|get_parser| DefaultParser[DefaultParser]
     
     CSVParser -->|TableIR| Output[output.py]
     NotebookParser -->|NotebookCellIR| Output
     SQLParser -->|str| Output
     ExcelParser -->|TableIR| Output
+    ArrowParser -->|TableIR| Output
     DefaultParser -->|str| Output
     
     Output -->|Markdown<br/>XML| File[Output File]
@@ -49,6 +51,7 @@ class ParserRegistry:
 | [`NotebookParser`](../src/data2prompt/parsers.py#L438) | `.ipynb` | Cleans and truncates notebook cells and outputs |
 | [`SQLParser`](../src/data2prompt/parsers.py#L456) | `.sql` | Parses SQL files, sampling table data while preserving schema |
 | [`ExcelParser`](../src/data2prompt/parsers.py#L478) | `.xlsx`, `.xls` | Extracts data from sheets, detecting visual elements |
+| [`ArrowParser`](../src/data2prompt/parsers.py) | `.parquet`, `.feather`, `.arrow` | Samples rows; uses native pyarrow schema for exact dtypes; requires optional `pyarrow` |
 | [`EnvParser`](../src/data2prompt/parsers.py) | `.env` & variants (by name) | Lists variable names with redacted values; never emits a value |
 | [`DefaultParser`](../src/data2prompt/parsers.py#L507) | All others | Fallback for text files with binary detection and size truncation |
 
@@ -353,6 +356,40 @@ Uses [`process_excel()`](../src/data2prompt/parsers.py#L335) to:
 - Empty sheets → Note indicating visual dashboard or empty
 - Read errors → Empty DataFrame with error message
 
+### ArrowParser
+
+```python
+class ArrowParser:
+    """Parser for .parquet, .feather, and .arrow files. Requires pyarrow."""
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+```
+
+Handles columnar binary formats via [`process_arrow_file()`](../src/data2prompt/parsers.py):
+
+1. **Runtime dependency check**: attempts `import pyarrow` at call time. If pyarrow is not
+   installed, the file still appears in the output with a short inline note
+   (`status="Skipped (No pyarrow)"`) and no stack trace. The TUI shows a warning panel
+   listing the install commands.
+2. **Read**: uses the format-appropriate pyarrow reader:
+   - `.parquet` → `pyarrow.parquet.read_table()`
+   - `.feather` → `pyarrow.feather.read_table()`
+   - `.arrow` → `pyarrow.ipc.open_file()`, falling back to `open_stream()` for
+     IPC stream files
+3. **Exact schema**: pyarrow's native type strings (e.g. `int64`, `utf8`,
+   `timestamp[us, tz=UTC]`) are collected from `table.schema` and used to populate
+   `ColumnSchema.dtype`, overriding the pandas-inferred types that `build_table_schema()`
+   would otherwise assign.
+4. **Schema & stats on full data**: `build_table_schema()` runs on the full DataFrame
+   before sampling, so row counts and missing percentages reflect the entire file.
+5. **Sampling**: mirrors `CSVParser` — if the row count exceeds `config.csv_sample_size`,
+   a seeded random sample is taken.
+6. **schema_only mode**: returns an empty-df `TableIR` carrying only the schema.
+
+**Statistics updated**: `parquet_count`, `feather_count`, or `arrow_count` (one per file,
+keyed by extension).
+
+**Error handling**: any read error returns a `TableIR` with an error note in `footer_note`.
+
 ### DefaultParser
 
 ```python
@@ -505,6 +542,10 @@ Each parser returns a `stats_update` dictionary that is aggregated by the main o
 | NotebookParser | `{"notebook_count": 1}` |
 | SQLParser | `{"sql_count": 1}` |
 | ExcelParser | `{"excel_count": 1, "excel_sheets_count": sheet_count}` |
+| ArrowParser (`.parquet`) | `{"parquet_count": 1}` |
+| ArrowParser (`.feather`) | `{"feather_count": 1}` |
+| ArrowParser (`.arrow`) | `{"arrow_count": 1}` |
+| ArrowParser (pyarrow missing) | `{}` — no count incremented |
 | EnvParser | `{"env_count": 1}` |
 | DefaultParser | `{"binary_count": 1}` or `{"truncated_count": 1}` |
 
@@ -518,5 +559,6 @@ Beyond the established statuses (`Read`, `Sampled`, `Cleaned`, `Parsed`, `Extrac
 | `Schema Only` | A data file rendered as schema only (`--schema-only`) |
 | `Redacted` | A `.env` file rendered as variable names with redacted values |
 | `Skipped (Env)` | A `.env` file skipped entirely (`--no-env-keys`) |
+| `Skipped (No pyarrow)` | A Parquet / Feather / Arrow file skipped because pyarrow is not installed |
 
 These statistics feed into the UI progress reporting system.
