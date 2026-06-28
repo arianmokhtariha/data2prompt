@@ -388,7 +388,9 @@ Handles columnar binary formats via [`process_arrow_file()`](../src/data2prompt/
 **Statistics updated**: `parquet_count`, `feather_count`, or `arrow_count` (one per file,
 keyed by extension).
 
-**Error handling**: any read error returns a `TableIR` with an error note in `footer_note`.
+**Error handling**: any read error returns a `TableIR` with an error note in `footer_note`
+(see [Error sanitisation](#error-sanitisation) for how paths and verbose pyarrow chains
+are cleaned before display).
 
 ### DefaultParser
 
@@ -484,6 +486,17 @@ All parsing functions implement try-except blocks with graceful degradation:
   defaults rather than aborting the whole notebook
 - **SQL**: Error string with exception message
 - **Excel**: Empty sheet entry with error note
+
+#### Error sanitisation
+
+All error messages pass through `_sanitize_error(e, file_path)` before display.
+This helper replaces any occurrence of the absolute file path in the exception string
+with a path relative to `Path.cwd()` (the directory where data2prompt was invoked),
+falling back to just the filename if the paths are on different drives.
+
+For Arrow/Parquet/Feather files specifically, the error is further trimmed to only the
+root cause — the final colon-separated clause of pyarrow's chained error string — since
+pyarrow repeats the full path and error context multiple times in a single message.
 
 ## Constants Used
 

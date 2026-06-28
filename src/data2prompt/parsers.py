@@ -308,6 +308,17 @@ def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
     return result
 
 
+def _sanitize_error(e: Exception, file_path: Path) -> str:
+    """Replace the absolute file path in an error message with a cwd-relative path."""
+    err_str = str(e)
+    abs_str = str(file_path).replace("\\", "/")
+    try:
+        rel_str = str(file_path.relative_to(Path.cwd())).replace("\\", "/")
+    except ValueError:
+        rel_str = file_path.name
+    return err_str.replace(str(file_path), rel_str).replace(abs_str, rel_str)
+
+
 def process_csv(
     file_path: Union[str, Path],
     sample_size: int = DEFAULT_CSV_SAMPLE_SIZE,
@@ -349,7 +360,8 @@ def process_csv(
     except pd.errors.EmptyDataError:
         return [TableIR(name=Path(file_path).name, df=pd.DataFrame(), footer_note="-- [Note: CSV file is empty] --")]
     except Exception as e:
-        return [TableIR(name=Path(file_path).name, df=pd.DataFrame(), footer_note=f"-- [Error reading CSV: {e}] --")]
+        fp = Path(file_path)
+        return [TableIR(name=fp.name, df=pd.DataFrame(), footer_note=f"-- [Error reading CSV: {_sanitize_error(e, fp)}] --")]
 
 
 def process_notebook(
@@ -417,7 +429,7 @@ def process_notebook(
     except json.JSONDecodeError:
         return [NotebookCellIR(number=0, type="markdown", source="*Error: Malformed Jupyter Notebook (Invalid JSON).*")]
     except Exception as e:
-        return [NotebookCellIR(number=0, type="markdown", source=f"Error processing notebook: {e}")]
+        return [NotebookCellIR(number=0, type="markdown", source=f"Error processing notebook: {_sanitize_error(e, Path(file_path))}")]
 
 
 def process_sql(
@@ -527,7 +539,7 @@ def process_sql(
         
         return "".join(processed_lines)
     except Exception as e:
-        return f"⚠️ Error reading SQL: {e}"
+        return f"⚠️ Error reading SQL: {_sanitize_error(e, Path(file_path))}"
 
 def process_excel(
     file_path: Union[str, Path],
@@ -628,7 +640,7 @@ def process_excel(
         wb.close()
         return tables_ir
     except Exception as e:
-        return [TableIR(name="Error", df=pd.DataFrame(), footer_note=f"-- [Error reading Excel: {e}] --")]
+        return [TableIR(name="Error", df=pd.DataFrame(), footer_note=f"-- [Error reading Excel: {_sanitize_error(e, Path(file_path))}] --")]
 
 # --- Parser Implementations ---
 
@@ -794,10 +806,12 @@ def process_arrow_file(
         )]
 
     except Exception as e:
+        fp = Path(file_path)
+        cleaned = _sanitize_error(e, fp).rsplit(": ", 1)[-1].strip()
         return [TableIR(
-            name=Path(file_path).name,
+            name=fp.name,
             df=pd.DataFrame(),
-            footer_note=f"-- [Error reading {ext[1:].upper()} file: {e}] --",
+            footer_note=f"-- [Error reading {ext[1:].upper()} file: {cleaned}] --",
         )]
 
 
@@ -940,7 +954,7 @@ def process_env(
                 if key.isidentifier():
                     lines.append(f"{key}={placeholder}")
     except Exception as e:
-        lines.append(f"-- [Error reading .env file: {e}] --")
+        lines.append(f"-- [Error reading .env file: {_sanitize_error(e, Path(file_path))}] --")
     return "\n".join(lines)
 
 
