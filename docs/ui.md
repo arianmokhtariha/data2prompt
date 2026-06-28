@@ -13,7 +13,7 @@ The [`UIHandler`](../src/data2prompt/ui.py#L34) class in [`src/data2prompt/ui.py
 | **Event Handling** | Processes lifecycle events: `on_start`, `on_progress` |
 | **Progress Tracking** | Manages real-time progress bars during file scanning and processing |
 | **Visual Components** | Renders panels, tables, spinners, and ASCII art headers |
-| **Interactive TUI** | Provides scrollable, keyboard-navigable summary on Windows |
+| **Final Report** | Prints success panel and full scan list table to the terminal |
 | **Error Display** | Shows formatted error and warning messages with hacker aesthetic |
 
 ### Event Handlers
@@ -121,62 +121,6 @@ A Rich table displaying processed files with columns:
   - **Yellow**: Truncated, Skipped (Binary), Skipped (Exclusion), Schema Only, Redacted, Skipped (Env)
   - **Red**: Error states
 
-## Interactive TUI (Windows)
-
-The final report includes an interactive scrollable table on Windows TTY terminals:
-
-### Architecture
-
-```mermaid
-graph TD
-    A[print_final_report] --> B{Windows TTY?}
-    B -->|No| C[Static Fallback]
-    B -->|Yes| D[Initialize Live Display]
-    D --> E[Calculate Viewport]
-    E --> F[Render Panels]
-    F --> G{msvcrt Input?}
-    G -->|Arrow Up| H[scroll_offset - 1]
-    G -->|Arrow Down| I[scroll_offset + 1]
-    G -->|q/x| J[Exit Loop]
-    H --> E
-    I --> E
-    J --> K[Print to History Buffer]
-```
-
-### Key Features
-
-1. **Alternate Buffer**: Uses `Live(screen=True)` for absolute stability during terminal resize
-2. **Dynamic Viewport**: Calculates available height based on terminal size minus header and summary heights
-3. **Scroll Bar**: Custom scroll bar with proportional thumb positioning using `SCROLL_THUMB` ("█") and `SCROLL_TRACK` ("│")
-4. **Keyboard Navigation**:
-   - Arrow Up/Down: Scroll through file list
-   - 'q' or 'x': Exit interactive mode
-   - Ctrl+C: Raise KeyboardInterrupt
-
-### Scroll Bar Logic
-
-The [`get_scan_list_panel()`](../src/data2prompt/ui.py#L235) function calculates scroll bar dimensions:
-
-```python
-if total_items > v_height:
-    thumb_size = max(1, int(track_height * (v_height / total_items)))
-    max_offset = total_items - v_height
-    thumb_pos = int((track_height - thumb_size) * (offset / max_offset))
-else:
-    thumb_size = track_height
-    thumb_pos = 0
-```
-
-### History Preservation
-
-A `finally` block ensures the final state is printed to the standard buffer upon exit, preserving it in terminal history:
-
-```python
-finally:
-    self.console.print(success_panel)
-    self.console.print(Panel(table, border_style="bold green", title="[bold green]SCAN LIST[/bold green]", padding=(0, 1)))
-```
-
 ## Error and Warning Display
 
 ### Warning Panel
@@ -220,17 +164,6 @@ with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as h
     # ... file processing loop
 ```
 
-## Static Fallback
-
-For non-Windows environments or non-TTY terminals, the TUI provides a static fallback:
-
-```python
-if not sys.stdin.isatty() or sys.platform != "win32":
-    self.console.print(success_panel)
-    self.console.print(Panel(table, border_style="bold green", title="[bold green]SCAN LIST[/bold green]", padding=(0, 1)))
-    return
-```
-
 ## Global Instance
 
 A global [`ui`](../src/data2prompt/ui.py#L357) instance is exported for use throughout the application:
@@ -248,6 +181,4 @@ ui = UIHandler()
 | `MATRIX_NEON_GREEN` | `(0, 255, 0)` | Final banner color |
 | `STARTUP_ANIMATION_DURATION` | `0.9` | Animation duration (seconds) |
 | `ANIMATION_FRAME_DELAY` | `0.03` | Frame delay (seconds) |
-| `SCROLL_THUMB` | `"█"` | Scroll bar thumb character |
-| `SCROLL_TRACK` | `"│"` | Scroll bar track character |
 | `ASCII_ART` | list | Application banner lines |

@@ -1,6 +1,5 @@
 import os
 import random
-import sys
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, Generator, List, Optional, TYPE_CHECKING
@@ -25,8 +24,6 @@ from data2prompt.constants import (
     MATRIX_DARK_GREEN,
     MATRIX_NEON_GREEN,
     STARTUP_ANIMATION_DURATION,
-    SCROLL_THUMB,
-    SCROLL_TRACK,
     ASCII_ART,
 )
 
@@ -209,139 +206,9 @@ class UIHandler:
             title="[bold green]SCAN SUMMARY[/bold green]"
                             )
 
-        # 3. Interactive Logic
-        # Recreate the header for the interactive screen
-        header_text = Text("\n".join(ASCII_ART), style=Style(color=Color.from_rgb(*MATRIX_NEON_GREEN), bold=True))
-
-        # If not on Windows or not in a TTY, just print everything and move on
-        if not sys.stdin.isatty() or sys.platform != "win32":
-            self.console.print(success_panel)
-            self.console.print(Panel(table, border_style="bold green", title="[bold green]SCAN LIST[/bold green]", padding=(0, 1)))
-            return
-
-        import msvcrt
-        scroll_offset = 0
-
-        # Calculate summary height for layout stability (Header + Summary)
-        # Header is ~7 lines, Summary is variable
-        stats_rows = 1 # TOTAL_FILES
-        if stats.get("csv_count", 0) > 0: stats_rows += 1
-        if stats.get("notebook_count", 0) > 0: stats_rows += 1
-        if stats.get("sql_count", 0) > 0: stats_rows += 1
-        if stats.get("excel_count", 0) > 0: stats_rows += 1
-        if stats.get("parquet_count", 0) > 0: stats_rows += 1
-        if stats.get("feather_count", 0) > 0: stats_rows += 1
-        if stats.get("arrow_count", 0) > 0: stats_rows += 1
-        if stats.get("truncated_count", 0) > 0: stats_rows += 1
-        if stats.get("binary_count", 0) > 0: stats_rows += 1
-        if stats.get("excluded_count", 0) > 0: stats_rows += 1
-        if stats.get("env_count", 0) > 0: stats_rows += 1
-        summary_height = 6 + stats_rows
-
-        def get_scan_list_panel(offset: int, v_height: int) -> Panel:
-            """Generates the renderable panel based on scroll offset and viewport height."""
-            viewport_table = Table(
-                show_header=True,
-                header_style="bold green",
-                border_style="dim green",
-                box=None,
-                padding=(0, 2),
-                collapse_padding=True,
-                pad_edge=False
-            )
-            for col in table.columns:
-                viewport_table.add_column(col.header, style=col.style, justify=col.justify)
-            
-            for info in processed_files_info[offset : offset + v_height]:
-                status = info.get("status", "Unknown")
-                status_color = "bold green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
-                               "bold yellow" if status in ["Truncated", "Skipped (Binary)", "Skipped (Exclusion)", "Schema Only", "Redacted", "Skipped (Env)", "Skipped (No pyarrow)"] else "bold red"
-                
-                viewport_table.add_row(
-                    os.path.basename(info.get("name", "Unknown")),
-                    info.get("type", "Unknown"),
-                    f"{info.get('tokens', 0):,}",
-                    f"[{status_color}]{status}[/{status_color}]"
-                )
-            
-            # --- Scroll Bar Logic ---
-            total_items = len(processed_files_info)
-            visible_rows = min(v_height, total_items)
-            track_height = visible_rows + 1  # Header + visible rows
-            
-            if total_items > v_height:
-                thumb_size = max(1, int(track_height * (v_height / total_items)))
-                max_offset = total_items - v_height
-                # Proportional position
-                thumb_pos = int((track_height - thumb_size) * (offset / max_offset))
-            else:
-                thumb_size = track_height
-                thumb_pos = 0
-
-            scroll_bar = Text()
-            for i in range(track_height):
-                if thumb_pos <= i < thumb_pos + thumb_size:
-                    scroll_bar.append(SCROLL_THUMB, style="bold green")
-                else:
-                    scroll_bar.append(SCROLL_TRACK, style="dim green")
-                if i < track_height - 1:
-                    scroll_bar.append("\n")
-
-            # Create a grid to place the table and scroll bar side-by-side
-            grid = Table.grid(expand=True)
-            grid.add_column()  # Table column
-            grid.add_column(width=1)  # Scroll bar column
-            grid.add_row(viewport_table, scroll_bar)
-
-            instruction = Text("Use Arrow Up/Down to scroll, 'q' to exit", style="dim green")
-            return Panel(
-                Group(grid, "", instruction),
-                border_style="bold green",
-                title="[bold green]SCAN LIST[/bold green]",
-                padding=(0, 1),
-                height=v_height + 5
-            )
-
-        try:
-            # Use screen=True for absolute stability on Windows during rapid resize.
-            # This prevents the "duplicate rendering" artifact seen in standard buffer.
-            with Live(None, console=self.console, auto_refresh=False, screen=True) as live:
-                while True:
-                    # Dynamically calculate viewport based on current terminal height
-                    console_height = live.console.height
-                    
-                    # Header (7) + Summary (summary_height) + List Borders/Padding (6)
-                    # We need to be more precise with the reserved height
-                    reserved_height = 7 + summary_height + 6
-                    v_height = max(2, console_height - reserved_height)
-                    
-                    max_offset = max(0, len(processed_files_info) - v_height)
-                    scroll_offset = min(scroll_offset, max_offset)
-                    
-                    # Update the live display with header and both panels
-                    current_list_panel = get_scan_list_panel(scroll_offset, v_height)
-                    live.update(Group(header_text, success_panel, current_list_panel), refresh=True)
-
-                    if msvcrt.kbhit():
-                        key = msvcrt.getch()
-                        if key == b'\xe0':  # Arrow keys
-                            arrow = msvcrt.getch()
-                            if arrow == b'H':  # Up
-                                scroll_offset = max(0, scroll_offset - 1)
-                            elif arrow == b'P':  # Down
-                                scroll_offset = min(max_offset, scroll_offset + 1)
-                        elif key.lower() in [b'q', b'x']:  # Quit
-                            break
-                        elif key == b'\x03':  # Ctrl+C
-                            raise KeyboardInterrupt
-                    time.sleep(0.05)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            # Restore history by printing the final state to the standard buffer
-            # We only print the panels to avoid duplicating the header/steps already in the terminal history
-            self.console.print(success_panel)
-            self.console.print(Panel(table, border_style="bold green", title="[bold green]SCAN LIST[/bold green]", padding=(0, 1)))
+        # 3. Print both panels unconditionally — same behaviour on all platforms
+        self.console.print(success_panel)
+        self.console.print(Panel(table, border_style="bold green", title="[bold green]SCAN LIST[/bold green]", padding=(0, 1)))
 
     def print_warning_panel(self, message: str) -> None:
         """Displays a warning message in a hacker-style panel."""
