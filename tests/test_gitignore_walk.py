@@ -104,3 +104,69 @@ def test_gitignore_applies_recursively_within_its_subtree() -> None:
         assert "top.csv" in files
         assert "sub/data.csv" not in files
         assert "sub/deep/nested.csv" not in files
+
+
+# ---------------------------------------------------------------------------
+# generate_tree — contract tests
+# ---------------------------------------------------------------------------
+
+def test_generate_tree_includes_all_discovered_files() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "a.py").write_text("code")
+        (root / "b.csv").write_text("data")
+        (root / "sub").mkdir()
+        (root / "sub" / "c.txt").write_text("text")
+
+        tree = _scanner(root, use_gitignore=False).generate_tree()
+
+        assert "a.py" in tree
+        assert "b.csv" in tree
+        assert "c.txt" in tree
+
+
+def test_generate_tree_excludes_gitignored_files() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / ".gitignore").write_text("*.log\n")
+        (root / "code.py").write_text("code")
+        (root / "debug.log").write_text("log")
+
+        tree = _scanner(root).generate_tree()
+
+        assert "code.py" in tree
+        assert "debug.log" not in tree
+
+
+def test_generate_tree_is_sorted() -> None:
+    """generate_tree returns paths in sorted order so diffs are stable."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "z_last.py").write_text("z")
+        (root / "a_first.py").write_text("a")
+        (root / "m_middle.py").write_text("m")
+
+        tree = _scanner(root, use_gitignore=False).generate_tree()
+        lines = tree.splitlines()
+
+        assert lines == sorted(lines)
+
+
+def test_generate_tree_excludes_output_file() -> None:
+    """The configured output file must not appear in the tree."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "PROMPT.md").write_text("output")
+        (root / "source.py").write_text("code")
+
+        scanner = ProjectScanner(
+            project_path=root,
+            ignore_folders={".git"},
+            ignore_files=set(),
+            output_file="PROMPT.md",
+            use_gitignore=False,
+        )
+        tree = scanner.generate_tree()
+
+        assert "source.py" in tree
+        assert "PROMPT.md" not in tree

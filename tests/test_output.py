@@ -8,11 +8,14 @@ str.replace calls) resolves them to a real count + method with nothing left over
 """
 
 from typing import List, Tuple
+from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from data2prompt.output import MarkdownGenerator, OutputGenerator, XMLGenerator
 from data2prompt.utils import count_tokens
+from data2prompt.parsers import NotebookCellIR, TableIR, build_table_schema
 
 # main.py builds each file dict with these keys; only path/content are read by
 # the generators for plain-string content, but we mirror the full shape.
@@ -101,3 +104,134 @@ def test_generate_rejects_legacy_token_kwargs() -> None:
             total_tokens=5,
             token_method="o200k_base",
         )
+
+
+# ---------------------------------------------------------------------------
+# Notebook IR rendering
+# ---------------------------------------------------------------------------
+
+def _notebook_files() -> FilesData:
+    cells = [
+        NotebookCellIR(number=1, type="code", source="x = 42", outputs="42"),
+        NotebookCellIR(number=2, type="markdown", source="# Section", outputs=None),
+    ]
+    return [{"path": "analysis.ipynb", "content": cells, "type": "Notebook", "tokens": 10, "status": "Cleaned"}]
+
+
+def test_markdown_renders_notebook_cell_headers() -> None:
+    """Each cell produces a '### Cell N (type)' header."""
+    output = MarkdownGenerator().generate(
+        project_name="demo",
+        tree_text="analysis.ipynb",
+        files_data=_notebook_files(),
+        stats={},
+    )
+    assert "### Cell 1 (code)" in output
+    assert "### Cell 2 (markdown)" in output
+
+
+def test_markdown_renders_notebook_cell_source_and_outputs() -> None:
+    """Cell source and outputs both appear in the rendered Markdown."""
+    output = MarkdownGenerator().generate(
+        project_name="demo",
+        tree_text="analysis.ipynb",
+        files_data=_notebook_files(),
+        stats={},
+    )
+    assert "x = 42" in output
+    assert "**Outputs:**" in output
+    assert "42" in output
+
+
+def test_markdown_notebook_cell_without_outputs_omits_outputs_block() -> None:
+    """A cell with outputs=None must not emit an Outputs section."""
+    output = MarkdownGenerator().generate(
+        project_name="demo",
+        tree_text="analysis.ipynb",
+        files_data=_notebook_files(),
+        stats={},
+    )
+    # Cell 2 is markdown with no outputs — the Outputs block must not appear twice.
+    assert output.count("**Outputs:**") == 1
+
+
+def test_xml_renders_notebook_cells() -> None:
+    """XMLGenerator wraps each cell in a <cell> tag with correct attributes."""
+    output = XMLGenerator().generate(
+        project_name="demo",
+        tree_text="analysis.ipynb",
+        files_data=_notebook_files(),
+        stats={},
+    )
+    assert '<cell' in output
+    assert 'type="code"' in output
+    assert 'x = 42' in output
+    assert '<outputs>' in output
+
+
+# ---------------------------------------------------------------------------
+# Table IR rendering — schema and data
+# ---------------------------------------------------------------------------
+
+def _table_files(
+    schema_only: bool = False,
+    stats_summary: bool = True,
+) -> tuple[FilesData, SimpleNamespace]:
+    df = pd.DataFrame({"name": ["alice", "bob"], "score": [1.0, 2.0]})
+    schema = build_table_schema(df, include_describe=stats_summary)
+    table = TableIR(name="scores.csv", df=df, schema=schema)
+    files = [{"path": "scores.csv", "content": [table], "type": "CSV", "tokens": 0, "status": "Sampled"}]
+    cfg = SimpleNamespace(
+        table_limit=50_000,
+        table_truncate=20_000,
+        stats_summary=stats_summary,
+        schema_only=schema_only,
+    )
+    return files, cfg
+
+
+def test_markdown_renders_table_schema_block() -> None:
+    """With stats_summary=True the Schema block appears above the data rows."""
+    files, cfg = _table_files(stats_summary=True)
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="scores.csv",
+        files_data=files, stats={}, config=cfg,
+    )
+    assert "**Schema**" in output
+    assert "name" in output
+    assert "score" in output
+
+
+def test_markdown_schema_only_drops_data_rows() -> None:
+    """With schema_only=True the actual data values must not appear in output."""
+    files, cfg = _table_files(schema_only=True, stats_summary=False)
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="scores.csv",
+        files_data=files, stats={}, config=cfg,
+    )
+    assert "alice" not in output
+    assert "bob" not in output
+    assert "**Schema**" in output
+
+
+def test_xml_renders_table_schema_block() -> None:
+    """XMLGenerator wraps the schema block in <schema> tags."""
+    files, cfg = _table_files(stats_summary=True)
+    output = XMLGenerator().generate(
+        project_name="demo", tree_text="scores.csv",
+        files_data=files, stats={}, config=cfg,
+    )
+    assert "<schema>" in output
+    assert "name" in output
+
+
+def test_xml_schema_only_drops_data_rows() -> None:
+    """XMLGenerator schema_only: data cell values absent, schema present."""
+    files, cfg = _table_files(schema_only=True, stats_summary=False)
+    output = XMLGenerator().generate(
+        project_name="demo", tree_text="scores.csv",
+        files_data=files, stats={}, config=cfg,
+    )
+    assert "alice" not in output
+    assert "bob" not in output
+    assert "<schema>" in output

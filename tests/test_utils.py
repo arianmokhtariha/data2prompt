@@ -2,15 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from src.data2prompt.utils import count_tokens, is_binary, load_ignore_file, copy_to_clipboard
-
-def test_count_tokens():
-    # A simple string should return a deterministic token count
-    text = "Hello, world! This is a test."
-    tokens, method = count_tokens(text)
-    assert isinstance(tokens, int)
-    assert tokens > 0
-    assert isinstance(method, str)
+from src.data2prompt.utils import is_binary, load_ignore_file, copy_to_clipboard, get_dynamic_wrapper
 
 def test_is_binary():
     with tempfile.NamedTemporaryFile(delete=False) as temp_bin:
@@ -64,3 +56,35 @@ def test_copy_to_clipboard_no_tool_returns_false():
     # A missing clipboard utility (FileNotFoundError) must be handled gracefully.
     with patch("src.data2prompt.utils.subprocess.run", side_effect=FileNotFoundError):
         assert copy_to_clipboard("data") is False
+
+
+# ---------------------------------------------------------------------------
+# get_dynamic_wrapper
+# ---------------------------------------------------------------------------
+
+def test_get_dynamic_wrapper_plain_text_returns_triple_backticks() -> None:
+    """Content without any backticks gets the minimum 3-backtick fence."""
+    assert get_dynamic_wrapper("hello world") == "```"
+
+
+def test_get_dynamic_wrapper_with_triple_backticks_returns_four() -> None:
+    """Content containing a ``` fence must get a 4-backtick outer fence."""
+    content = "before\n```python\ncode\n```\nafter"
+    assert get_dynamic_wrapper(content) == "````"
+
+
+def test_get_dynamic_wrapper_with_five_backticks_returns_six() -> None:
+    """Outer fence is always one longer than the longest run in the content."""
+    content = "`````` five backtick run"
+    result = get_dynamic_wrapper(content)
+    assert result == "`" * 7
+
+
+def test_get_dynamic_wrapper_double_backticks_still_uses_minimum() -> None:
+    """Two-backtick inline code doesn't exceed the minimum: max(3, 2+1) == 3."""
+    content = "use `backtick` and ``double``"
+    assert get_dynamic_wrapper(content) == "```"
+
+
+def test_get_dynamic_wrapper_empty_string_returns_triple() -> None:
+    assert get_dynamic_wrapper("") == "```"

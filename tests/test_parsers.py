@@ -15,6 +15,11 @@ from src.data2prompt.parsers import (
     is_env_file,
     process_env,
     EnvParser,
+    truncate_long_lines,
+    enforce_table_limit,
+    flatten_ir,
+    NotebookCellIR,
+    TableIR,
 )
 
 def test_process_sql_handles_multi_row_inserts():
@@ -443,6 +448,330 @@ def test_process_notebook_error_output_captured():
         assert cells[0].outputs is not None
         assert "Error output" in cells[0].outputs
         assert "ValueError: boom" in cells[0].outputs
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+# ---------------------------------------------------------------------------
+# truncate_long_lines
+# ---------------------------------------------------------------------------
+
+def test_truncate_long_lines_short_lines_pass_through() -> None:
+    text = "short line\nanother short line\n"
+    assert truncate_long_lines(text, threshold=100, truncate_to=50) == text
+
+
+def test_truncate_long_lines_truncates_and_annotates() -> None:
+    long_line = "A" * 200
+    result = truncate_long_lines(long_line + "\n", threshold=100, truncate_to=50)
+    first_line = result.splitlines()[0]
+    assert first_line.startswith("A" * 50)
+    assert "Line truncated" in first_line
+
+
+def test_truncate_long_lines_only_long_lines_affected() -> None:
+    text = "short\n" + "X" * 600 + "\nshort again\n"
+    result = truncate_long_lines(text, threshold=100, truncate_to=50)
+    lines = result.splitlines()
+    assert lines[0] == "short"
+    assert lines[1].startswith("X" * 50)
+    assert "Line truncated" in lines[1]
+    assert lines[2] == "short again"
+
+
+def test_truncate_long_lines_preserves_trailing_newline() -> None:
+    text = "normal line\n"
+    result = truncate_long_lines(text, threshold=100, truncate_to=50)
+    assert result.endswith("\n")
+
+
+def test_truncate_long_lines_empty_string() -> None:
+    assert truncate_long_lines("", threshold=100, truncate_to=50) == ""
+
+
+# ---------------------------------------------------------------------------
+# enforce_table_limit
+# ---------------------------------------------------------------------------
+
+def test_enforce_table_limit_within_limit_unchanged() -> None:
+    text = "small table"
+    assert enforce_table_limit(text, limit=1000, truncate_to=500) == text
+
+
+def test_enforce_table_limit_at_exact_limit_unchanged() -> None:
+    text = "A" * 1000
+    assert enforce_table_limit(text, limit=1000, truncate_to=500) == text
+
+
+def test_enforce_table_limit_truncates_and_appends_warning() -> None:
+    text = "X" * 2000
+    result = enforce_table_limit(text, limit=1000, truncate_to=500)
+    assert result.startswith("X" * 500)
+    assert "Table truncated" in result
+    assert "1000 characters" in result
+
+
+# ---------------------------------------------------------------------------
+# process_csv — normal (non-schema-only) path
+# ---------------------------------------------------------------------------
+
+def test_process_csv_samples_when_over_limit() -> None:
+    rows = "\n".join([f"{i},val{i}" for i in range(100)])
+    csv_content = "id,value\n" + rows + "\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as tmp:
+        tmp.write(csv_content)
+        path = tmp.name
+    try:
+        tables = process_csv(path, sample_size=10, seed=42)
+        assert len(tables) == 1
+        table = tables[0]
+        assert len(table.df) == 10
+        assert table.header_note is not None and "Sample" in table.header_note
+        assert table.footer_note is not None and "CSV truncated" in table.footer_note
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_csv_no_sampling_when_under_limit() -> None:
+    csv_content = "id,value\n1,a\n2,b\n3,c\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as tmp:
+        tmp.write(csv_content)
+        path = tmp.name
+    try:
+        tables = process_csv(path, sample_size=100)
+        assert len(tables) == 1
+        table = tables[0]
+        assert len(table.df) == 3
+        assert table.header_note is None
+        assert table.footer_note is None
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_csv_empty_file_returns_footer_note() -> None:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as tmp:
+        tmp.write("")
+        path = tmp.name
+    try:
+        tables = process_csv(path)
+        assert len(tables) == 1
+        assert tables[0].df.empty
+        assert tables[0].footer_note is not None
+        assert "empty" in tables[0].footer_note.lower()
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+# ---------------------------------------------------------------------------
+# process_notebook — output types
+# ---------------------------------------------------------------------------
+
+def test_process_notebook_stream_output_captured() -> None:
+    nb = {
+        "nbformat": 4, "nbformat_minor": 5, "metadata": {},
+        "cells": [{
+            "cell_type": "code",
+            "source": ["print('hello')"],
+            "outputs": [{"output_type": "stream", "name": "stdout", "text": ["hello\n"]}],
+            "execution_count": 1,
+        }],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False, encoding="utf-8") as tmp:
+        json.dump(nb, tmp)
+        path = tmp.name
+    try:
+        cells = process_notebook(path)
+        assert cells[0].outputs is not None
+        assert "hello" in cells[0].outputs
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_notebook_execute_result_captured() -> None:
+    nb = {
+        "nbformat": 4, "nbformat_minor": 5, "metadata": {},
+        "cells": [{
+            "cell_type": "code",
+            "source": ["1 + 1"],
+            "outputs": [{
+                "output_type": "execute_result",
+                "metadata": {},
+                "data": {"text/plain": ["2"]},
+                "execution_count": 1,
+            }],
+            "execution_count": 1,
+        }],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False, encoding="utf-8") as tmp:
+        json.dump(nb, tmp)
+        path = tmp.name
+    try:
+        cells = process_notebook(path)
+        assert cells[0].outputs is not None
+        assert "2" in cells[0].outputs
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_notebook_base64_display_data_skipped() -> None:
+    """display_data whose text/plain contains 'base64' must be silently dropped."""
+    nb = {
+        "nbformat": 4, "nbformat_minor": 5, "metadata": {},
+        "cells": [{
+            "cell_type": "code",
+            "source": ["show_image()"],
+            "outputs": [{
+                "output_type": "display_data",
+                "metadata": {},
+                "data": {"text/plain": ["<base64 encoded image data>"], "image/png": "abc123"},
+            }],
+            "execution_count": 1,
+        }],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False, encoding="utf-8") as tmp:
+        json.dump(nb, tmp)
+        path = tmp.name
+    try:
+        cells = process_notebook(path)
+        assert cells[0].outputs is None
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_notebook_stream_output_truncated_at_max_lines() -> None:
+    """Stream output beyond max_lines is cut with a truncation marker."""
+    output_lines = [f"line {i}\n" for i in range(20)]
+    nb = {
+        "nbformat": 4, "nbformat_minor": 5, "metadata": {},
+        "cells": [{
+            "cell_type": "code",
+            "source": ["run_loop()"],
+            "outputs": [{"output_type": "stream", "name": "stdout", "text": output_lines}],
+            "execution_count": 1,
+        }],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False, encoding="utf-8") as tmp:
+        json.dump(nb, tmp)
+        path = tmp.name
+    try:
+        cells = process_notebook(path, max_lines=5)
+        assert cells[0].outputs is not None
+        assert "Output truncated" in cells[0].outputs
+        kept_lines = [l for l in cells[0].outputs.split("\n") if l.startswith("line")]
+        assert len(kept_lines) == 5
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_notebook_malformed_json_returns_error_cell() -> None:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False, encoding="utf-8") as tmp:
+        tmp.write("{ this is not valid json }")
+        path = tmp.name
+    try:
+        cells = process_notebook(path)
+        assert len(cells) == 1
+        assert cells[0].number == 0
+        assert "Malformed" in cells[0].source or "Invalid" in cells[0].source
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+# ---------------------------------------------------------------------------
+# flatten_ir
+# ---------------------------------------------------------------------------
+
+def test_flatten_ir_string_content() -> None:
+    assert flatten_ir("hello world") == "hello world"
+
+
+def test_flatten_ir_empty_list() -> None:
+    assert flatten_ir([]) == ""
+
+
+def test_flatten_ir_notebook_cells_joins_source_and_outputs() -> None:
+    cells = [
+        NotebookCellIR(number=1, type="code", source="x = 1", outputs="1"),
+        NotebookCellIR(number=2, type="markdown", source="# Header", outputs=None),
+    ]
+    result = flatten_ir(cells)
+    assert "x = 1" in result
+    assert "1" in result
+    assert "# Header" in result
+
+
+def test_flatten_ir_table_normal_includes_data_rows() -> None:
+    df = pd.DataFrame({"col": ["alpha", "beta"]})
+    result = flatten_ir([TableIR(name="t.csv", df=df)])
+    assert "alpha" in result
+    assert "beta" in result
+
+
+def test_flatten_ir_table_schema_only_drops_data_rows() -> None:
+    df = pd.DataFrame({"col": ["SENTINEL_A", "SENTINEL_B"]})
+    schema = build_table_schema(df, include_describe=False)
+    result = flatten_ir([TableIR(name="t.csv", df=df, schema=schema)], schema_only=True)
+    assert "**Schema**" in result
+    assert "SENTINEL_A" not in result
+    assert "SENTINEL_B" not in result
+
+
+def test_flatten_ir_table_stats_summary_includes_schema() -> None:
+    df = pd.DataFrame({"score": [1.0, 2.0, 3.0]})
+    schema = build_table_schema(df, include_describe=True)
+    result = flatten_ir([TableIR(name="t.csv", df=df, schema=schema)], stats_summary=True)
+    assert "**Schema**" in result
+    assert "score" in result
+
+
+# ---------------------------------------------------------------------------
+# process_env — edge cases
+# ---------------------------------------------------------------------------
+
+def test_process_env_skips_non_identifier_keys() -> None:
+    env_content = "123INVALID=secret\nVALID_KEY=other_secret\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
+        tmp.write(env_content)
+        path = tmp.name
+    try:
+        out = process_env(path)
+        assert "VALID_KEY=<redacted>" in out
+        assert "123INVALID" not in out
+        assert "secret" not in out
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_env_empty_file_returns_header_only() -> None:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
+        tmp.write("")
+        path = tmp.name
+    try:
+        out = process_env(path)
+        assert out == "# Environment variables (names only, values redacted)"
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_env_line_without_equals_is_skipped() -> None:
+    env_content = "NOTAVAR\nVALID=value\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
+        tmp.write(env_content)
+        path = tmp.name
+    try:
+        out = process_env(path)
+        assert "NOTAVAR" not in out
+        assert "VALID=<redacted>" in out
     finally:
         if os.path.exists(path):
             os.remove(path)
