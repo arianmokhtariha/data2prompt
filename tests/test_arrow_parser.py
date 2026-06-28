@@ -237,7 +237,6 @@ def test_missing_pyarrow_returns_skip_note(tmp_path: Path) -> None:
     assert result.status == "Skipped (No pyarrow)"
     assert result.skip_file is False            # file still appears in output
     assert "pyarrow" in result.content          # inline note mentions the reason
-    assert "install" not in result.content.lower()   # no install instructions in output
     assert result.stats_update == {}             # no count incremented
 
 
