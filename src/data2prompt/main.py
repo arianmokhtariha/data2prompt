@@ -26,6 +26,7 @@ def get_ui_action(ext: str, skip_exts: Set[str]) -> str:
     """Determines the UI action string based on file extension."""
     if ext in skip_exts: return "Skipping"
     elif ext == '.csv': return "Sampling"
+    elif ext in ['.parquet', '.feather', '.arrow']: return "Sampling"
     elif ext == '.ipynb': return "Cleaning"
     elif ext == '.sql': return "Parsing"
     elif ext in ['.xlsx', '.xls']: return "Extracting"
@@ -82,6 +83,9 @@ def main() -> None:
         "sql_count": 0,
         "excel_count": 0,
         "excel_sheets_count": 0,
+        "parquet_count": 0,
+        "feather_count": 0,
+        "arrow_count": 0,
         "truncated_count": 0,
         "binary_count": 0,
         "excluded_count": 0,
@@ -178,6 +182,14 @@ def main() -> None:
 
     # Display Final Report (Interactive Summary + Success Panel)
     ui.print_final_report(processed_files_info, output_destination, file_size_kb, total_tokens, stats, method)
+
+    if any(info.get("status") == "Skipped (No pyarrow)" for info in processed_files_info):
+        ui.print_warning_panel(
+            "[bold yellow]WARNING:[/bold yellow] One or more Parquet / Feather / Arrow files "
+            "were skipped because [bold]pyarrow[/bold] is not installed.\n"
+            "[bold cyan]For pip users:[/bold cyan] pip install pyarrow\n"
+            "[bold cyan]For pipx users:[/bold cyan] pipx inject data2prompt pyarrow"
+        )
 
     if file_size_kb > 2000:
         ui.print_warning_panel(

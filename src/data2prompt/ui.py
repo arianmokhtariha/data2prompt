@@ -147,8 +147,8 @@ class UIHandler:
         for info in processed_files_info:
             status = info.get("status", "Unknown")
             status_color = "bold green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
-                           "bold yellow" if status in ["Truncated", "Skipped (Binary)", "Skipped (Exclusion)", "Schema Only", "Redacted", "Skipped (Env)"] else "bold red"
-            
+                           "bold yellow" if status in ["Truncated", "Skipped (Binary)", "Skipped (Exclusion)", "Schema Only", "Redacted", "Skipped (Env)", "Skipped (No pyarrow)"] else "bold red"
+
             table.add_row(
                 os.path.basename(info.get("name", "Unknown")),
                 info.get("type", "Unknown"),
@@ -174,6 +174,15 @@ class UIHandler:
                 "[green]>[/green]",
                 f"XLSX_HANDLED: [bold green]{stats.get('excel_count', 0)}[/bold green] ({stats.get('excel_sheets_count', 0)} sheets)",
             )
+
+        if stats.get("parquet_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"PARQUET_SAMPLED: [bold green]{stats.get('parquet_count', 0)}[/bold green]")
+
+        if stats.get("feather_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"FEATHER_SAMPLED: [bold green]{stats.get('feather_count', 0)}[/bold green]")
+
+        if stats.get("arrow_count", 0) > 0:
+            stats_grid.add_row("[green]>[/green]", f"ARROW_SAMPLED:   [bold green]{stats.get('arrow_count', 0)}[/bold green]")
 
         if stats.get("truncated_count", 0) > 0:
             stats_grid.add_row("[green]>[/green]", f"TRUNCATED:    [bold yellow]{stats.get('truncated_count', 0)}[/bold yellow]")
@@ -220,6 +229,9 @@ class UIHandler:
         if stats.get("notebook_count", 0) > 0: stats_rows += 1
         if stats.get("sql_count", 0) > 0: stats_rows += 1
         if stats.get("excel_count", 0) > 0: stats_rows += 1
+        if stats.get("parquet_count", 0) > 0: stats_rows += 1
+        if stats.get("feather_count", 0) > 0: stats_rows += 1
+        if stats.get("arrow_count", 0) > 0: stats_rows += 1
         if stats.get("truncated_count", 0) > 0: stats_rows += 1
         if stats.get("binary_count", 0) > 0: stats_rows += 1
         if stats.get("excluded_count", 0) > 0: stats_rows += 1
@@ -243,7 +255,7 @@ class UIHandler:
             for info in processed_files_info[offset : offset + v_height]:
                 status = info.get("status", "Unknown")
                 status_color = "bold green" if status in ["Read", "Sampled", "Cleaned", "Parsed", "Extracted"] else \
-                               "bold yellow" if status in ["Truncated", "Skipped (Binary)", "Skipped (Exclusion)", "Schema Only", "Redacted", "Skipped (Env)"] else "bold red"
+                               "bold yellow" if status in ["Truncated", "Skipped (Binary)", "Skipped (Exclusion)", "Schema Only", "Redacted", "Skipped (Env)", "Skipped (No pyarrow)"] else "bold red"
                 
                 viewport_table.add_row(
                     os.path.basename(info.get("name", "Unknown")),

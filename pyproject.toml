@@ -36,6 +36,9 @@ data2prompt = "data2prompt.main:main"
 dev = [
     "pytest>=8.0.0",
 ]
+parquet = [
+    "pyarrow>=14.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/arianmokhtariha/data2prompt"

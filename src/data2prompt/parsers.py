@@ -724,6 +724,136 @@ class ExcelParser:
             stats_update={"excel_count": 1, "excel_sheets_count": sheet_count}
         )
 
+def process_arrow_file(
+    file_path: Union[str, Path],
+    ext: str,
+    sample_size: int = DEFAULT_CSV_SAMPLE_SIZE,
+    seed: int = DEFAULT_SEED,
+    stats_summary: bool = True,
+    schema_only: bool = False,
+) -> List[TableIR]:
+    """Read a .parquet, .feather, or .arrow file and return a sampled TableIR list.
+
+    Uses the file's native pyarrow schema for exact dtype names rather than
+    pandas-inferred types. Callers must confirm pyarrow is importable first.
+    """
+    try:
+        import pyarrow as pa
+        import pyarrow.feather as pf
+        import pyarrow.parquet as pq
+
+        fp = Path(file_path)
+        if ext == ".parquet":
+            table = pq.read_table(fp)
+        elif ext == ".feather":
+            table = pf.read_table(fp)
+        else:  # .arrow — IPC file format; fall back to stream format
+            try:
+                table = pa.ipc.open_file(fp).read_all()
+            except Exception:
+                table = pa.ipc.open_stream(fp).read_all()
+
+        # Exact pyarrow dtype strings, e.g. "int64", "utf8", "timestamp[us, tz=UTC]"
+        dtype_map: Dict[str, str] = {field.name: str(field.type) for field in table.schema}
+
+        df = table.to_pandas()
+
+        schema = None
+        if stats_summary or schema_only:
+            schema = build_table_schema(df, include_describe=stats_summary)
+            # Replace pandas-inferred dtypes with the native pyarrow types
+            for col in schema.columns:
+                if col.name in dtype_map:
+                    col.dtype = dtype_map[col.name]
+
+        if schema_only:
+            return [TableIR(
+                name=fp.name,
+                df=pd.DataFrame(),
+                header_note="-- [Schema only - data rows omitted] --",
+                schema=schema,
+            )]
+
+        header_note = None
+        footer_note = None
+
+        if len(df) > sample_size:
+            df = df.sample(sample_size, random_state=seed)
+            header_note = f"-- [Sample - Random {sample_size} rows] --"
+            footer_note = (
+                f"-- [{ext[1:].upper()} truncated: "
+                f"Showing random {sample_size} rows to save context] --"
+            )
+
+        return [TableIR(
+            name=fp.name,
+            df=df,
+            header_note=header_note,
+            footer_note=footer_note,
+            schema=schema,
+        )]
+
+    except Exception as e:
+        return [TableIR(
+            name=Path(file_path).name,
+            df=pd.DataFrame(),
+            footer_note=f"-- [Error reading {ext[1:].upper()} file: {e}] --",
+        )]
+
+
+_ARROW_STAT_KEYS: Dict[str, str] = {
+    ".parquet": "parquet_count",
+    ".feather": "feather_count",
+    ".arrow": "arrow_count",
+}
+
+
+class ArrowParser:
+    """Parser for .parquet, .feather, and .arrow files. Requires the pyarrow package."""
+
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        ext = file_path.suffix.lower()
+        type_name = ext[1:].upper()
+        stat_key = _ARROW_STAT_KEYS[ext]
+
+        try:
+            import pyarrow  # noqa: F401
+        except ImportError:
+            note = (
+                f"*Note: {file_path.name} skipped — "
+                "pyarrow is not installed.*\n"
+            )
+            tokens, _ = count_tokens(note)
+            return ParserResult(
+                content=note,
+                tokens=tokens,
+                type=type_name,
+                status="Skipped (No pyarrow)",
+                stats_update={},
+            )
+
+        content = process_arrow_file(
+            file_path,
+            ext,
+            config.csv_sample_size,
+            config.seed,
+            config.stats_summary,
+            config.schema_only,
+        )
+        tokens, _ = count_tokens(flatten_ir(
+            content,
+            schema_only=config.schema_only,
+            stats_summary=config.stats_summary,
+        ))
+        return ParserResult(
+            content=content,
+            tokens=tokens,
+            type=type_name,
+            status="Schema Only" if config.schema_only else "Sampled",
+            stats_update={stat_key: 1},
+        )
+
+
 class DefaultParser:
     """Fallback parser for text files."""
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
@@ -856,6 +986,7 @@ registry.register(['.csv'], CSVParser())
 registry.register(['.ipynb'], NotebookParser())
 registry.register(['.sql'], SQLParser())
 registry.register(['.xlsx', '.xls'], ExcelParser())
+registry.register(['.parquet', '.feather', '.arrow'], ArrowParser())
 
 # Env files are dispatched by name (not extension) in main.process_target_file,
 # because a bare '.env' has no suffix. This shared instance handles all variants.

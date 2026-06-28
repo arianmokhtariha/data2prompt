@@ -15,7 +15,7 @@ CORE_IGNORE_FILES = set()
 # but their actual content will be skipped.
 CORE_SKIP_EXTS = {
     # Data & Databases
-    '.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
+    '.pbix', '.db', '.sqlite', '.sqlite3', '.pkl', '.pickle', '.h5',
     # Compressed & Binary
     '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
     # Media
