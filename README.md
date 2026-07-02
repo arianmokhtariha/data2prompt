@@ -41,16 +41,24 @@ Generic code-to-prompt tools choke on data files—they either skip them entirel
 *   **Dynamic Markdown Wrapping**: Uses intelligent backtick depth to ensure robust nesting of code blocks in the final output.
 *   **Gitignore aware**: Respects the .gitignore rules by default and you can turn this feature off with cli argument(--no-gitignore) if needed.
 
-## 🏗️ Architecture & Engineering Standards
+## 🏗️ Architecture
 
-This project is a portfolio-grade implementation of the **Modular Functional Orchestration (MFO)** pattern, reflecting senior-level engineering maturity:
+The codebase is organized into small, single-responsibility modules — parsing, output
+generation, scanning, and UI are kept separate so each can be tested and extended on
+its own:
 
-*   **Registry & Strategy Patterns**: Uses a `ParserRegistry` for extensible file handling and an `OutputGenerator` strategy for multiple formats (Markdown, XML).
-*   **Centralized Configuration**: All core logic, magic numbers, and default ignore lists reside in [`src/data2prompt/constants.py`](src/data2prompt/constants.py).
-*   **Strict Type Hinting**: Fully typed function signatures (PEP 484) across all modules.
-*   **UI Encapsulation**: All terminal feedback is handled by a dedicated `UIHandler`, ensuring a clean separation between logic and presentation.
+*   **Registry & Strategy Patterns**: A `ParserRegistry` handles extensible file
+    parsing and an `OutputGenerator` strategy supports multiple output formats
+    (Markdown, XML).
+*   **Centralized Configuration**: Core logic, magic numbers, and default ignore
+    lists live in one place: [`src/data2prompt/constants.py`](src/data2prompt/constants.py).
+*   **Strict Type Hinting**: Fully typed function signatures (PEP 484) across all
+    modules.
+*   **UI Encapsulation**: Terminal feedback is handled by a dedicated `UIHandler`,
+    keeping presentation separate from logic.
 
-For a deep dive into the system design, see the [Architecture Documentation](docs/architecture.md).
+For a deep dive into the module layout and data flow, see the
+[Architecture Documentation](docs/architecture.md).
 
 ## 🚀 Quick Start
 
@@ -178,4 +186,4 @@ If Data2Prompt saves you token costs or speeds up your workflow, consider:
 </a>
 
 ---
-*Built with precision for the modern AI-assisted development workflow.*
+*Built for the modern AI-assisted development workflow.*

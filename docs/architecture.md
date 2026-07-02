@@ -1,6 +1,11 @@
-# Architecture: Modular Functional Orchestration (MFO)
+# Architecture
 
-The `data2prompt` project is built upon the **Modular Functional Orchestration (MFO)** pattern. This architectural approach ensures a clear separation of concerns, high maintainability, and senior-level engineering maturity.
+`data2prompt` follows an internal layering convention we call **Modular Functional
+Orchestration (MFO)**: a thin orchestration layer (`main.py`) coordinates calls into
+focused, single-responsibility modules (parsing, output generation, scanning, UI),
+with shared configuration centralized in one place. It's not a named industry
+pattern — just a consistent way of describing how this codebase is organized so the
+layering stays intentional as it grows.
 
 ## Core Principles
 
