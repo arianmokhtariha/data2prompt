@@ -2,7 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from src.data2prompt.utils import is_binary, load_ignore_file, copy_to_clipboard, get_dynamic_wrapper
+from data2prompt.utils import is_binary, load_ignore_file, copy_to_clipboard, get_dynamic_wrapper
 
 def test_is_binary():
     with tempfile.NamedTemporaryFile(delete=False) as temp_bin:
@@ -39,9 +39,10 @@ def test_load_ignore_file():
         assert len(ignores) == 2
 
 
-def test_copy_to_clipboard_success():
+def test_copy_to_clipboard_success_posix_uses_utf8():
     # Mock subprocess so we never touch the real system clipboard.
-    with patch("src.data2prompt.utils.subprocess.run") as mock_run:
+    with patch("data2prompt.utils.sys.platform", "linux"), \
+         patch("data2prompt.utils.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         ok = copy_to_clipboard("hello world")
 
@@ -52,9 +53,25 @@ def test_copy_to_clipboard_success():
         assert kwargs["input"] == b"hello world"
 
 
+def test_copy_to_clipboard_windows_uses_utf16_bom():
+    """On Windows the payload must be UTF-16 with BOM: clip.exe autodetects the
+    BOM, whereas UTF-8 would be decoded with the legacy console code page and
+    garble any non-ASCII character (e.g. accented column names in a CSV)."""
+    with patch("data2prompt.utils.sys.platform", "win32"), \
+         patch("data2prompt.utils.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        ok = copy_to_clipboard("naïve café")
+
+        assert ok is True
+        _, kwargs = mock_run.call_args
+        payload = kwargs["input"]
+        assert payload.startswith(b"\xff\xfe")  # UTF-16 LE BOM
+        assert payload == "naïve café".encode("utf-16")
+
+
 def test_copy_to_clipboard_no_tool_returns_false():
     # A missing clipboard utility (FileNotFoundError) must be handled gracefully.
-    with patch("src.data2prompt.utils.subprocess.run", side_effect=FileNotFoundError):
+    with patch("data2prompt.utils.subprocess.run", side_effect=FileNotFoundError):
         assert copy_to_clipboard("data") is False
 
 

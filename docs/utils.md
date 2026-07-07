@@ -65,9 +65,11 @@ entirely.
 
 ### Token Counting
 
-#### `count_tokens(text: str, encoding_name: str = "o200k_base") -> tuple[int, str]`
+#### `count_tokens(text: str) -> Tuple[int, str]`
 
-Returns the number of tokens in a text string and the method used.
+Returns the number of tokens in a text string and the method used. (A former
+`encoding_name` parameter was removed — it was never read; the encoding is
+always the bundled o200k_base.)
 
 ```python
 token_count, method = count_tokens("def hello(): return 'world'")
@@ -179,16 +181,16 @@ else:
 **Implementation Details:**
 - Selects the tool by platform: `clip` (Windows), `pbcopy` (macOS), and the first
   available of `wl-copy` / `xclip` / `xsel` (Linux).
-- Feeds the text via `subprocess.run(..., input=..., check=True)`, encoded as UTF-8 with
-  `errors="replace"`.
+- Feeds the text via `subprocess.run(..., input=..., check=True)`.
+- **Encoding is platform-specific:** UTF-16 (with BOM) on Windows — `clip.exe`
+  autodetects the BOM, so non-ASCII characters round-trip correctly, where UTF-8
+  would be decoded with the legacy console code page and garbled — and UTF-8
+  everywhere else. Both use `errors="replace"`.
 - Returns `True` on success; `False` on any failure (`OSError` for a missing tool,
   `subprocess.SubprocessError` for a non-zero exit).
 
 **Consumed by:** [`main.py`](../src/data2prompt/main.py#L1) for the `-c`/`--clipboard`
 flag. When it returns `False`, `main.py` falls back to writing the output file and warns.
-
-**Note:** On Windows, `clip` interprets input using the active console code page, so rare
-non-ASCII characters may not round-trip exactly.
 
 ---
 
@@ -257,13 +259,17 @@ tree = scanner.generate_tree()
 |-----------|------|-------------|
 | `spec` | `pathspec.PathSpec` | Compiled spec for CLI patterns and `.data2promptignore` |
 | `_gitignore_specs` | `List[Tuple[Path, pathspec.PathSpec]]` | Per-directory specs, one per `.gitignore` found in the tree |
+| `_output_path` | `Path` | `project_path / output_file` — the exact location of the output file, used for precise self-exclusion |
 
 **Initialization Process:**
-1. Stores all parameters as instance attributes
+1. Stores all parameters as instance attributes; precomputes `_output_path`
 2. Calls `_build_spec()` to compile CLI patterns and `.data2promptignore` into `self.spec`
-3. Calls `_load_all_gitignores()` (if `use_gitignore=True`) to walk the project tree and
-   build `self._gitignore_specs` — one `PathSpec` per `.gitignore` found, paired with its
-   containing directory
+3. Initializes `_gitignore_specs` to an empty list, then (if `use_gitignore=True`)
+   calls `_load_all_gitignores()` to walk the project tree and populate it — one
+   `PathSpec` per `.gitignore` found, paired with its containing directory. The
+   empty-list-first order matters: the collection walk prunes with `_is_ignored()`,
+   which reads `_gitignore_specs` while it is being built (the walk is top-down,
+   so parent specs are always registered before their subtrees are visited).
 
 ### Internal Methods
 
@@ -290,40 +296,50 @@ def _build_spec(self):
 
 #### `_load_all_gitignores() -> List[Tuple[Path, pathspec.PathSpec]]`
 
-Walks the entire project tree once at init time and collects a `PathSpec` for every
+Walks the project tree once at init time and collects a `PathSpec` for every
 `.gitignore` found, paired with the directory that contains it.
 
 ```python
 def _load_all_gitignores(self):
-    specs = []
+    specs = self._gitignore_specs
     for root, dirs, files in os.walk(self.project_path):
         root_path = Path(root)
         if '.gitignore' in files:
             patterns = load_ignore_file(root_path, '.gitignore')
             if patterns:
                 specs.append((root_path, pathspec.PathSpec.from_lines('gitignore', patterns)))
-        dirs[:] = [d for d in dirs if d != '.git']
+        dirs[:] = [
+            d for d in dirs
+            if d != '.git' and not self._is_ignored(root_path / d, is_dir=True)
+        ]
     return specs
 ```
 
 **Behavior:**
-- Skips `.git` directories entirely
+- Prunes `.git` **and every ignored directory** during the walk, so `.gitignore`
+  files inside `venv/`, `node_modules/`, etc. are neither collected nor walked
+  (previously only `.git` was skipped, making init O(full tree) on large projects)
 - A `.gitignore` with no effective patterns (empty or comments only) produces no spec entry
 - Runs once at construction; result is stored in `self._gitignore_specs`
 
-#### `_is_ignored_by_gitignore(path: Path) -> bool`
+#### `_is_ignored_by_gitignore(path: Path, is_dir: bool = False) -> bool`
 
 Checks a path against every per-directory gitignore spec. For each spec, the path is
 matched **relative to the spec's base directory**, so patterns are correctly scoped.
+When `is_dir=True` the path is additionally matched with a trailing separator, so
+directory-only patterns (`build/`) match the directory itself and allow pruning.
 
 ```python
-def _is_ignored_by_gitignore(self, path: Path) -> bool:
+def _is_ignored_by_gitignore(self, path: Path, is_dir: bool = False) -> bool:
     for base_dir, spec in self._gitignore_specs:
         try:
             rel = path.relative_to(base_dir)
         except ValueError:
             continue  # spec's base is not an ancestor of this path
-        if spec.match_file(str(rel)):
+        rel_str = str(rel)
+        if spec.match_file(rel_str):
+            return True
+        if is_dir and spec.match_file(rel_str + os.sep):
             return True
     return False
 ```
@@ -337,24 +353,39 @@ ignores `*.log` and a child `.gitignore` contains `!important.log`, the file rem
 ignored. Negations work correctly within a single `.gitignore` file (handled by
 `pathspec`), but not across files. This limitation is shared by most similar tools.
 
-#### `_is_ignored(path: Path) -> bool`
+#### `_is_ignored(path: Path, is_dir: bool = False) -> bool`
 
 Checks if a given path should be ignored based on all rules.
 
 ```python
-def _is_ignored(self, path: Path) -> bool:
+def _is_ignored(self, path: Path, is_dir: bool = False) -> bool:
     rel_path = path.relative_to(self.project_path)
+    rel_str = str(rel_path)
 
-    if self.spec.match_file(str(rel_path)):       # CLI + .data2promptignore
+    if self.spec.match_file(rel_str):                   # CLI + .data2promptignore
         return True
-    if self._is_ignored_by_gitignore(path):        # per-directory gitignores
+    if is_dir and self.spec.match_file(rel_str + os.sep):
         return True
-    if path.name == self.output_file:              # output file
+    if self._is_ignored_by_gitignore(path, is_dir=is_dir):  # per-dir gitignores
         return True
-    if path.name == Path(sys.argv[0]).name:        # the script itself
+    if path == self._output_path:                       # our own output file
         return True
     return False
 ```
+
+**Why `is_dir` exists:** `_build_spec()` compiles folder ignores as directory-only
+patterns (`venv/`), and pathspec's dir-only patterns never match a bare name
+without its trailing slash. Before this flag, `_is_ignored("venv")` returned
+`False`, so pruning silently failed and the walk descended into every ignored
+tree (files were still filtered afterwards — correctness held, performance didn't).
+
+**Output-file exclusion is by path, not name:** the scanner excludes exactly
+`project_path / output_file`, so `-o out/PROMPT` is excluded at its real location
+and a *user's own* file that merely shares the basename survives. Older generated
+outputs under other names are still caught downstream by the `GENERATION_FLAG`
+check in `DefaultParser`. (A former rule that excluded any file matching
+`Path(sys.argv[0]).name` was removed: when invoked as `python .../main.py` it
+silently dropped every `main.py` in the scanned project.)
 
 **Edge Cases Handled:**
 - `ValueError` when path is not relative to project (returns `False`)
@@ -374,24 +405,30 @@ for file_path in files:
 
 **Algorithm:**
 1. `os.walk()` traverses directory tree
-2. **In-place pruning**: `dirs[:] = [...]` removes ignored dirs from walk
-3. Files are checked individually with `_is_ignored()`
-4. Returns list of `Path` objects
+2. **In-place pruning**: `dirs[:] = sorted(...)` removes ignored dirs from walk
+   (checked with `is_dir=True` so directory-only patterns match)
+3. Files are visited in sorted order and checked individually with `_is_ignored()`
+4. Returns list of `Path` objects — deterministic across platforms/filesystems
 
 **Why In-Place Pruning Matters:**
 Using `dirs[:] = ...` modifies the list in-place, which changes `os.walk()`'s behavior to skip those directories entirely. This is more efficient than checking and skipping during iteration.
 
-#### `generate_tree() -> str`
+#### `generate_tree(files: Optional[List[Path]] = None) -> str`
 
-Generates a flat list of files in the project structure.
+Generates a flat list of files in the project structure. Accepts the result of a
+previous `scan()` so the tree and the processed content are derived from the
+**same walk** (this is what `main.py` does — the tree can never diverge from the
+files actually rendered, and the tree is no longer a second full-tree walk).
+Falls back to calling `scan()` itself when no list is given.
 
 ```python
-tree = scanner.generate_tree()
+files = scanner.scan()
+tree = scanner.generate_tree(files)
 print(tree)
 # Output:
-# src/data2prompt/main.py
-# src/data2prompt/utils.py
 # README.md
+# src\data2prompt\main.py
+# src\data2prompt\utils.py
 ```
 
 **Characteristics:**
@@ -424,21 +461,22 @@ __pycache__/       # Directory pattern (trailing slash)
 
 ```python
 def load_ignore_file(directory, filename):
-    ignore_path = os.path.join(directory, filename)
-    
-    if os.path.exists(ignore_path):
-        with open(ignore_path, 'r', encoding='utf-8') as f:
+    ignore_path = Path(directory) / filename
+    ignore_list: List[str] = []
+
+    if ignore_path.exists():
+        with ignore_path.open('r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
                 ignore_list.append(line)
-    
+
     return ignore_list
 ```
 
 **Error Handling:**
-- Uses try-except for file reading
+- Wraps the read in try-except (`OSError`)
 - Prints warning via `ui.print_warning()` if file cannot be read
 - Returns empty list on any error (fail-safe)
 
@@ -540,8 +578,7 @@ All functions in `utils.py` follow defensive programming principles:
 
 ## Constants Used
 
-The module references constants from [`constants.py`](../src/data2prompt/constants.py#L1) when instantiated through the main flow:
-
-- `DEFAULT_IGNORE_FOLDERS`: Default folder names to ignore
-- `DEFAULT_IGNORE_FILES`: Default file patterns to ignore
-- `BINARY_FILE_SIZE_LIMIT`: Max bytes for binary detection (if applicable)
+The module itself imports no configuration constants. The ignore sets it receives
+(`CORE_IGNORES`, `CORE_IGNORE_FILES` from [`constants.py`](../src/data2prompt/constants.py#L1))
+are merged into the `Config` by `cli.py` and passed in through the
+`ProjectScanner` constructor by `main.py`.

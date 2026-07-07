@@ -9,8 +9,8 @@ import pandas as pd
 warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 from pathlib import Path
 from typing import List, Set
-from .cli import setup_cli, Config
-from .parsers import (
+from data2prompt.cli import setup_cli, Config
+from data2prompt.parsers import (
     registry,
     ParserResult,
     FileData,
@@ -18,13 +18,14 @@ from .parsers import (
     is_env_file,
     env_parser,
 )
-from .utils import ProjectScanner, count_tokens, copy_to_clipboard
-from .ui import ui
-from .output import get_generator
+from data2prompt.utils import ProjectScanner, count_tokens, copy_to_clipboard
+from data2prompt.ui import ui
+from data2prompt.output import get_generator
 
-def get_ui_action(ext: str, skip_exts: Set[str]) -> str:
-    """Determines the UI action string based on file extension."""
-    if ext in skip_exts: return "Skipping"
+def get_ui_action(file_name: str, ext: str, skip_exts: Set[str]) -> str:
+    """Determines the UI action string based on file name and extension."""
+    if is_env_file(file_name): return "Redacting"
+    elif ext in skip_exts: return "Skipping"
     elif ext == '.csv': return "Sampling"
     elif ext in ['.parquet', '.feather', '.arrow']: return "Sampling"
     elif ext == '.ipynb': return "Cleaning"
@@ -53,10 +54,10 @@ def process_target_file(file_path: Path, config: Config) -> ParserResult:
     parser = registry.get_parser(ext)
     return parser.parse(file_path, config)
 
-def main() -> None:
+def _run() -> None:
     """
-    The main entry point for the Data2Prompt CLI.
-    Orchestrates the argument parsing, file discovery, content processing, and Markdown generation.
+    Orchestrates the argument parsing, file discovery, content processing,
+    and output generation. Wrapped by :func:`main` for top-level error handling.
     """
     config = setup_cli() # Retrieve user settings from the terminal
     
@@ -96,9 +97,9 @@ def main() -> None:
     processed_files_info: List[FileSummary] = []
 
     with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
-        # 1. Generating project tree
+        # 1. Generating project tree (reuses the scan — no second walk)
         handler.on_progress("[cyan]Generating project tree...[/cyan]")
-        tree_text = scanner.generate_tree()
+        tree_text = scanner.generate_tree(all_files)
         handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)
 
         # 2. Processing files
@@ -108,9 +109,9 @@ def main() -> None:
             relative_path = file_path.relative_to(project_path)
             ext = file_path.suffix.lower()
             stats["file_count"] += 1
-            
+
             # Determine action for progress bar - show only filename
-            action = get_ui_action(ext, config.skip_exts)
+            action = get_ui_action(file_path.name, ext, config.skip_exts)
             handler.on_progress(f"[cyan]{action}[/cyan] [bold]{file_path.name}[/bold] [cyan]...[/cyan]")
             
             result = process_target_file(file_path, config)
@@ -127,9 +128,10 @@ def main() -> None:
                 "status": result.status
             })
             
-            # Update stats
+            # Update stats — .get() so a parser introducing a new stat key
+            # can never crash the whole run with a KeyError.
             for key, value in result.stats_update.items():
-                stats[key] += value
+                stats[key] = stats.get(key, 0) + value
             
             processed_files_info.append({
                 "name": str(relative_path),
@@ -168,10 +170,10 @@ def main() -> None:
         else:
             # Either a normal file run, or a clipboard run with no utility available.
             clipboard_failed = config.clipboard
-            with open(config.output, 'w', encoding='utf-8') as f:
-                f.write(final_output)
+            output_path = Path(config.output)
+            output_path.write_text(final_output, encoding='utf-8')
             output_destination = config.output
-            file_size_kb = Path(config.output).stat().st_size / 1024
+            file_size_kb = output_path.stat().st_size / 1024
         handler.on_progress("[cyan]Compiling project context...[/cyan]", advance=1)
 
     if clipboard_failed:
@@ -196,6 +198,22 @@ def main() -> None:
             "[bold yellow]WARNING:[/bold yellow] File is over 2MB. This might be too large for some context windows.\n"
             "[bold cyan]Suggestion:[/bold cyan] Reduce --csv-sample-size, --sql-sample-size or --max-lines."
         )
+
+def main() -> None:
+    """The main entry point for the Data2Prompt CLI (console script target).
+
+    Wraps :func:`_run` so predictable failures (unwritable output, interrupt)
+    exit with a clean message and a proper exit code instead of a traceback.
+    """
+    try:
+        _run()
+    except KeyboardInterrupt:
+        ui.print_error("Interrupted by user.")
+        raise SystemExit(130)
+    except OSError as e:
+        ui.print_error(f"File system error: {e}")
+        raise SystemExit(1)
+
 
 if __name__ == "__main__":
     main()

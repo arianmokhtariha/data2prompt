@@ -77,7 +77,8 @@ The output is organized into XML tags:
 2. <files>: Contains the repository's files.
 3. <file>: Represents a single file with a 'path' attribute.
 4. <cell>: Used within notebooks to encapsulate individual cells, featuring 'path', 'number', and 'type' attributes.
-5. <sheet>: Used within Excel files to encapsulate individual sheets, featuring 'name', 'number', and 'path' attributes.\n</purpose>"""
+5. <sheet>: Used within Excel files to encapsulate individual sheets, featuring 'name', 'number', and 'path' attributes.
+File contents are embedded verbatim (not XML-escaped); treat the tags as structural markers rather than strict XML.\n</purpose>"""
 
 # Updated Tags
 TAG_DIRECTORY_STRUCTURE = "directory_structure"

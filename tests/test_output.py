@@ -13,7 +13,12 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from data2prompt.output import MarkdownGenerator, OutputGenerator, XMLGenerator
+from data2prompt.output import (
+    MarkdownGenerator,
+    OutputGenerator,
+    XMLGenerator,
+    get_generator,
+)
 from data2prompt.utils import count_tokens
 from data2prompt.parsers import NotebookCellIR, TableIR, build_table_schema
 
@@ -235,3 +240,66 @@ def test_xml_schema_only_drops_data_rows() -> None:
     assert "alice" not in output
     assert "bob" not in output
     assert "<schema>" in output
+
+
+# ---------------------------------------------------------------------------
+# XML attribute safety — user data must never break tag structure
+# ---------------------------------------------------------------------------
+
+def test_xml_sheet_name_with_quotes_and_angle_brackets_is_quoted() -> None:
+    """A sheet named `Q1 "final" <rev>` must be attribute-escaped, otherwise the
+    raw quote terminates the attribute and the tag structure collapses."""
+    df = pd.DataFrame({"x": [1]})
+    table = TableIR(
+        name='Q1 "final" <rev>',
+        df=df,
+        sheet_number=1,
+        file_path="book.xlsx",
+    )
+    files = [{"path": "book.xlsx", "content": [table], "type": "Excel", "tokens": 0, "status": "Extracted"}]
+    cfg = SimpleNamespace(
+        table_limit=50_000, table_truncate=20_000,
+        stats_summary=False, schema_only=False,
+    )
+
+    output = XMLGenerator().generate(
+        project_name="demo", tree_text="book.xlsx",
+        files_data=files, stats={}, config=cfg,
+    )
+
+    # The raw, unescaped attribute must not appear...
+    assert '<sheet name="Q1 "final" <rev>"' not in output
+    # ...and the quoteattr form must: values containing double quotes are
+    # single-quoted, and angle brackets are entity-escaped.
+    assert "name='Q1 \"final\" &lt;rev&gt;'" in output
+
+
+def test_xml_file_path_with_ampersand_is_quoted() -> None:
+    """Paths containing & (e.g. 'R&D/data.csv') must be escaped in attributes."""
+    files = [{
+        "path": "R&D/report.txt",
+        "content": "quarterly numbers",
+        "type": "text",
+        "tokens": 0,
+        "status": "Read",
+    }]
+    output = XMLGenerator().generate(
+        project_name="demo", tree_text="R&D/report.txt",
+        files_data=files, stats={},
+    )
+    assert 'path="R&amp;D' in output
+
+
+# ---------------------------------------------------------------------------
+# get_generator — strict format dispatch
+# ---------------------------------------------------------------------------
+
+def test_get_generator_returns_correct_strategies() -> None:
+    assert isinstance(get_generator("markdown"), MarkdownGenerator)
+    assert isinstance(get_generator("XML"), XMLGenerator)  # case-insensitive
+
+
+def test_get_generator_rejects_unknown_format() -> None:
+    """An unknown format must fail loudly, not silently fall back to XML."""
+    with pytest.raises(ValueError, match="Unsupported output format"):
+        get_generator("pdf")

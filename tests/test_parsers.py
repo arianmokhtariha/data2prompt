@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from src.data2prompt.parsers import (
+from data2prompt.parsers import (
     process_sql,
     process_csv,
     process_notebook,
@@ -772,6 +772,64 @@ def test_process_env_line_without_equals_is_skipped() -> None:
         out = process_env(path)
         assert "NOTAVAR" not in out
         assert "VALID=<redacted>" in out
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+# ---------------------------------------------------------------------------
+# process_sql — omitted non-data lines must be announced
+# ---------------------------------------------------------------------------
+
+def test_process_sql_announces_omitted_non_data_lines() -> None:
+    """Non-data lines beyond --sql-max-lines must leave an omission marker,
+    not vanish silently — an LLM can't reason about content it doesn't know
+    was removed."""
+    comments = "\n".join(f"-- comment number {i}" for i in range(10))
+    sql_content = comments + "\nCREATE TABLE t (id int);\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
+        tmp.write(sql_content)
+        path = tmp.name
+    try:
+        result = process_sql(path, max_lines=3)
+        assert "non-data line(s) omitted" in result
+        assert "--sql-max-lines" in result
+        # The schema itself must still be intact.
+        assert "CREATE TABLE t" in result
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_sql_no_omission_marker_when_under_limit() -> None:
+    sql_content = "-- one comment\nCREATE TABLE t (id int);\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False) as tmp:
+        tmp.write(sql_content)
+        path = tmp.name
+    try:
+        result = process_sql(path, max_lines=50)
+        assert "non-data line(s) omitted" not in result
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+# ---------------------------------------------------------------------------
+# process_csv — sampled rows keep original file order
+# ---------------------------------------------------------------------------
+
+def test_process_csv_sample_preserves_original_row_order() -> None:
+    """The random sample must be re-sorted by original position so the excerpt
+    reads like the file (time series stay chronological, ids stay ascending)."""
+    rows = "\n".join(f"{i},val{i}" for i in range(200))
+    csv_content = "id,value\n" + rows + "\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as tmp:
+        tmp.write(csv_content)
+        path = tmp.name
+    try:
+        tables = process_csv(path, sample_size=20, seed=42)
+        ids = tables[0].df["id"].tolist()
+        assert ids == sorted(ids), "sampled rows are not in original file order"
     finally:
         if os.path.exists(path):
             os.remove(path)

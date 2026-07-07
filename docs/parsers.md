@@ -111,7 +111,6 @@ class TableIR:
     df: pd.DataFrame
     header_note: Optional[str] = None
     footer_note: Optional[str] = None
-    visual_warning: bool = False
     sheet_number: Optional[int] = None
     file_path: Optional[str] = None
     schema: Optional[TableSchema] = None
@@ -120,8 +119,9 @@ class TableIR:
 Represents tabular data (CSV, Excel), capturing:
 - **Table name** (filename or sheet name)
 - **DataFrame** for structured data representation
-- **Header/footer notes** for sampling indicators
-- **Visual warning flag** for detecting charts/images in Excel
+- **Header/footer notes** for sampling indicators (visual-element detection in
+  Excel is reported through `header_note`; a former `visual_warning` field was
+  removed — nothing ever read it)
 - **Sheet metadata** for multi-sheet Excel files
 - **Schema** — optional [`TableSchema`](#columnschema--tableschema) metadata computed on
   the **full** DataFrame (before sampling)
@@ -271,7 +271,9 @@ Uses [`process_csv()`](../src/data2prompt/parsers.py#L149) to:
 2. Compute a [`TableSchema`](#columnschema--tableschema) on the **full** df when
    `config.stats_summary` or `config.schema_only` is set (before sampling)
 3. If `config.schema_only`: return an empty-df `TableIR` carrying only the schema (no rows)
-4. Otherwise sample `config.csv_sample_size` rows using `config.seed` for reproducibility
+4. Otherwise sample `config.csv_sample_size` rows using `config.seed` for
+   reproducibility, then `sort_index()` so the sampled rows appear in **original
+   file order** (time series stay chronological, ids stay ascending)
 5. Add header/footer notes indicating sampling; attach the schema
 6. Return a single-element `TableIR` list (status `"Schema Only"` when `schema_only`)
 
@@ -320,7 +322,10 @@ Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
 4. Sample `config.sql_sample_size` rows per table using seeded random selection
 5. Apply secondary truncation via [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) if sampled block exceeds `config.table_limit`
 6. Preserve schema keywords (`ALTER`, `CONSTRAINT`, `VIEW`, `DROP`, `INDEX`, `TABLE`)
-7. Cap total non-data lines at `config.sql_max_lines`
+7. Cap total non-data lines at `config.sql_max_lines`; when non-blank lines are
+   dropped by the cap, a trailing
+   `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --`
+   marker is appended so omitted content never vanishes silently
 
 **Key Algorithm:**
 - First line (INSERT header) is always preserved
@@ -339,22 +344,57 @@ class ExcelParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
 ```
 
-Uses [`process_excel()`](../src/data2prompt/parsers.py#L335) to:
-1. Open workbook with `openpyxl` in read-only mode
-2. Detect visual elements (images, charts) per sheet
-3. Process up to `config.max_sheets` sheets
+Uses [`process_excel()`](../src/data2prompt/parsers.py) to:
+1. Detect visual elements up front via [`_xlsx_has_visuals()`](#visual-element-detection)
+   (`.xlsx` only)
+2. Open the workbook **once** with `pd.ExcelFile` inside a context manager — all
+   sheets are parsed from the single handle (the old per-sheet `pd.read_excel`
+   re-opened and re-parsed the file for every sheet), and the handle is released
+   even on error paths (no lingering file locks on Windows)
+3. Process up to `config.max_sheets` sheets; when the workbook has more, a
+   `-- [Workbook truncated: ...] --` note is appended to the last processed sheet
 4. For each sheet:
-   - Read into DataFrame with pandas
+   - Parse into a DataFrame via `excel_file.parse(sheet_name)`
    - Compute a `TableSchema` on the **full** sheet when `stats_summary`/`schema_only` set
    - Under `schema_only`: append a schema-only `TableIR` (empty df) and skip rows
-   - Otherwise sample `config.csv_sample_size` rows if exceeding limit
-   - Add visual warning note if charts/images detected
+   - Otherwise sample `config.csv_sample_size` rows if exceeding limit, then
+     `sort_index()` so the sample keeps original sheet order
    - Add truncation note if sampling applied
 5. Return list of `TableIR` objects (one per sheet)
 
+#### Visual-element detection
+
+```python
+def _xlsx_has_visuals(file_path) -> bool: ...
+```
+
+An `.xlsx` file is a zip archive; embedded images live under `xl/media/` and
+charts under `xl/charts/`. `_xlsx_has_visuals()` inspects the archive listing —
+no workbook load required. When visuals are present, a single
+`-- [Note: Workbook contains visual elements (images/charts); they are not
+extracted] --` header note is emitted on the **first sheet** (drawings are stored
+at workbook level in the archive, so attribution is workbook-level).
+
+> Why not openpyxl? The previous implementation checked `sheet._images` /
+> `sheet.charts` on worksheets loaded with `read_only=True` — but read-only
+> worksheets never parse drawing parts (and the attribute on regular worksheets
+> is `_charts`, not `charts`), so that detection could never fire. The zip probe
+> is both correct and cheaper.
+
+#### Legacy `.xls` files
+
+`pd.ExcelFile` selects the engine lazily; legacy `.xls` needs the optional
+`xlrd` package. When it is not installed, pandas raises `ImportError` and the
+parser returns a single `TableIR` with an actionable note
+(`-- [Skipped: reading legacy .xls files requires the optional 'xlrd' package
+(pip install xlrd)] --`) instead of a stack-trace error. (Previously `.xls` was
+routed through `openpyxl`, which cannot read the BIFF format at all — every
+`.xls` file produced a generic read error.)
+
 **Error Handling:**
 - Empty sheets → Note indicating visual dashboard or empty
-- Read errors → Empty DataFrame with error message
+- Sheet read errors → Empty DataFrame with sanitized error message
+- Workbook open errors → single `TableIR` with sanitized error note
 
 ### ArrowParser
 
@@ -382,7 +422,7 @@ Handles columnar binary formats via [`process_arrow_file()`](../src/data2prompt/
 4. **Schema & stats on full data**: `build_table_schema()` runs on the full DataFrame
    before sampling, so row counts and missing percentages reflect the entire file.
 5. **Sampling**: mirrors `CSVParser` — if the row count exceeds `config.csv_sample_size`,
-   a seeded random sample is taken.
+   a seeded random sample is taken, then re-sorted to original file order.
 6. **schema_only mode**: returns an empty-df `TableIR` carrying only the schema.
 
 **Statistics updated**: `parquet_count`, `feather_count`, or `arrow_count` (one per file,
@@ -400,9 +440,11 @@ class DefaultParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
 ```
 
-Handles all unhandled file types with defensive measures:
-1. **Generation flag check**: Skip files containing `GENERATION_FLAG` marker
-2. **Binary detection**: Use [`is_binary()`](../src/data2prompt/utils.py) to detect binary content
+Handles all unhandled file types with defensive measures (in evaluation order):
+1. **Binary detection**: Use [`is_binary()`](../src/data2prompt/utils.py) to detect
+   binary content (checked first, and exactly once per file)
+2. **Generation flag check**: Skip files containing the `GENERATION_FLAG` marker
+   in their first 100 characters
 3. **File size check**: If file exceeds `config.max_file_size` KB, read only first 10KB
 4. **Line truncation**: Apply [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118) for remaining content
 
@@ -538,9 +580,11 @@ The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function converts IR to 
 ### With utils.py
 
 Parsers use utility functions from [`utils.py`](../src/data2prompt/utils.py),
-imported once at module level (`from .utils import count_tokens, is_binary`). The
-import is safe because the dependency chain `parsers → utils → ui → constants` has
-no path back to `parsers`.
+imported once at module level
+(`from data2prompt.utils import count_tokens, is_binary` — the whole package now
+uses absolute imports, per the project's coding standards). The import is safe
+because the dependency chain `parsers → utils → ui → constants` has no path back
+to `parsers`.
 
 - [`count_tokens()`](../src/data2prompt/utils.py): Token counting using tiktoken
 - [`is_binary()`](../src/data2prompt/utils.py): Binary file detection

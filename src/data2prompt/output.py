@@ -1,14 +1,14 @@
 import os
 import pandas as pd
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Type, TYPE_CHECKING
 from pathlib import Path
-from xml.sax.saxutils import escape, quoteattr
+from xml.sax.saxutils import quoteattr
 
 if TYPE_CHECKING:
-    from .cli import Config
+    from data2prompt.cli import Config
 
-from .constants import (
+from data2prompt.constants import (
     TAG_DIRECTORY_STRUCTURE,
     TAG_FILES,
     TAG_FILE,
@@ -17,8 +17,8 @@ from .constants import (
     SYSTEM_INSTRUCTIONS_XML,
     GENERATION_FLAG
 )
-from .utils import get_dynamic_wrapper
-from .parsers import (
+from data2prompt.utils import get_dynamic_wrapper
+from data2prompt.parsers import (
     NotebookCellIR,
     TableIR,
     FileData,
@@ -142,7 +142,12 @@ class MarkdownGenerator(OutputGenerator):
                 # Standard files or fallback string content
                 str_content = str(content)
                 wrapper = get_dynamic_wrapper(str_content)
-                lang = ext[1:] if ext and ext != '.md' else 'markdown' if ext == '.md' else 'text'
+                if ext == '.md':
+                    lang = 'markdown'
+                elif ext:
+                    lang = ext[1:]
+                else:
+                    lang = 'text'
                 lines.append(f"{wrapper}{lang}")
                 lines.append(str_content)
                 lines.append(wrapper)
@@ -181,7 +186,7 @@ class XMLGenerator(OutputGenerator):
             "</metadata>",
             "",
             f"<{TAG_DIRECTORY_STRUCTURE}>",
-            escape(tree_text),
+            tree_text,
             f"</{TAG_DIRECTORY_STRUCTURE}>",
             "",
             f"<{TAG_FILES}>",
@@ -195,36 +200,45 @@ class XMLGenerator(OutputGenerator):
             display_path = rel_path.replace(os.sep, '\\')
             content = file_info['content']
             
-            lines.append(f'<{TAG_FILE} path="{display_path}">')
-            
+            # Attribute values come from user data (paths, sheet names) — quoteattr
+            # keeps a name like `Q1 "final" <rev>` from breaking the tag structure.
+            lines.append(f'<{TAG_FILE} path={quoteattr(display_path)}>')
+
             if isinstance(content, list) and content and isinstance(content[0], NotebookCellIR):
                 # Render Notebook IR to XML
                 for cell in content:
-                    lines.append(f'    <cell path="{display_path}" index="{cell.number}" type="{cell.type}">')
+                    lines.append(
+                        f'    <cell path={quoteattr(display_path)} '
+                        f'index="{cell.number}" type={quoteattr(cell.type)}>'
+                    )
                     lines.append(f'        <{TAG_CONTENT}>')
-                    lines.append(escape(cell.source))
+                    lines.append(cell.source)
                     lines.append(f'        </{TAG_CONTENT}>')
                     if cell.outputs:
                         lines.append('        <outputs>')
-                        lines.append(escape(cell.outputs))
+                        lines.append(cell.outputs)
                         lines.append('        </outputs>')
                     lines.append('    </cell>')
-            
+
             elif isinstance(content, list) and content and isinstance(content[0], TableIR):
                 # Render Table IR to XML
                 for table in content:
                     # Handle Excel Sheet Metadata
                     if table.sheet_number is not None:
-                        lines.append(f'<sheet name="{table.name}" sheet_number="{table.sheet_number}" path="{table.file_path}">')
+                        lines.append(
+                            f'<sheet name={quoteattr(table.name)} '
+                            f'sheet_number="{table.sheet_number}" '
+                            f'path={quoteattr(table.file_path or "")}>'
+                        )
 
                     # Schema / stats metadata block (computed on the full df)
                     if render_block and table.schema is not None:
                         lines.append('<schema>')
-                        lines.append(escape(render_schema_block(
+                        lines.append(render_schema_block(
                             table.schema,
                             show_missing=stats_summary,
                             show_describe=stats_summary,
-                        )))
+                        ))
                         lines.append('</schema>')
 
                     table_parts = []
@@ -241,7 +255,7 @@ class XMLGenerator(OutputGenerator):
                     if config:
                         table_text = enforce_table_limit(table_text, config.table_limit, config.table_truncate)
 
-                    lines.append(escape(table_text))
+                    lines.append(table_text)
 
                     # Close Sheet block if applicable
                     if table.sheet_number is not None:
@@ -259,7 +273,20 @@ class XMLGenerator(OutputGenerator):
         
         return "\n".join(lines)
 
+# Explicit strategy mapping — get_generator refuses unknown formats instead of
+# silently defaulting, so a wiring mistake fails loudly at the source.
+_GENERATORS: Dict[str, Type[OutputGenerator]] = {
+    'markdown': MarkdownGenerator,
+    'xml': XMLGenerator,
+}
+
+
 def get_generator(format_type: str) -> OutputGenerator:
-    if format_type.lower() == 'markdown':
-        return MarkdownGenerator()
-    return XMLGenerator()
+    """Return the output strategy for ``format_type`` ('markdown' or 'xml')."""
+    generator_cls = _GENERATORS.get(format_type.lower())
+    if generator_cls is None:
+        supported = ", ".join(sorted(_GENERATORS))
+        raise ValueError(
+            f"Unsupported output format: {format_type!r} (supported: {supported})"
+        )
+    return generator_cls()

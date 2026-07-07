@@ -49,6 +49,12 @@ class Config:
 
 ## CLI Arguments Reference
 
+### General
+
+| Argument | Type | Description |
+|:---------|:----:|:------------|
+| `--version` | `flag` | Print `data2prompt <version>` and exit. The version is read from package metadata via `importlib.metadata` (exposed as `data2prompt.__version__`). |
+
 ### Output Configuration
 
 | Argument | Short | Type | Default | Description |
@@ -169,7 +175,8 @@ final_output_name = f"{args.output}{extension}"
 The CLI imports defaults from [`src/data2prompt/constants.py`](../src/data2prompt/constants.py#L1):
 
 ```python
-from .constants import (
+from data2prompt import __version__            # for --version
+from data2prompt.constants import (
     CORE_IGNORES,           # Default folder ignores
     CORE_IGNORE_FILES,      # Default file ignores
     CORE_SKIP_EXTS,         # Default extension ignores
@@ -224,7 +231,7 @@ The [`setup_cli()`](../src/data2prompt/cli.py#L48) function is called from [`mai
 
 ```python
 # In main.py
-from .cli import setup_cli, Config
+from data2prompt.cli import setup_cli, Config
 
 def main():
     config = setup_cli()  # Retrieve user settings from the terminal
@@ -301,12 +308,26 @@ data2prompt \
 
 ### Argument Validation
 
+Numeric arguments use two custom `argparse` types defined in
+[`cli.py`](../src/data2prompt/cli.py):
+
+- `_non_negative_int` (≥ 0): all counts and sizes — `--csv-sample-size`,
+  `--sql-sample-size`, `--sql-max-lines`, `--max-lines`, `--max-sheets`,
+  `--truncated-line-length`, `--table-truncate`, `--max-file-size`
+- `_positive_int` (≥ 1): thresholds that would be nonsensical at zero —
+  `--line-length-threshold`, `--table-limit`
+
+Invalid values are rejected at parse time with exit code 2, so they can never
+surface later as cryptic pandas/random errors inside the parsers. `--seed`
+remains a plain `int` (any value is a valid seed).
+
 | Edge Case | Behavior |
 |:----------|:---------|
 | Output name with extension | Extension is appended anyway, resulting in `file.md.xml` |
 | Empty `--ignore-folders` | Uses only `CORE_IGNORES` |
 | Invalid format choice | `argparse` rejects with error: `invalid choice: 'pdf' (choose from 'xml', 'markdown')` |
-| Negative sample sizes | Accepted (may result in empty sampling) |
+| Negative sample sizes | Rejected at parse time (`argparse` error, exit code 2) |
+| Zero sample size | Accepted — emits headers/schema with no data rows |
 | Non-existent folders in `--ignore-folders` | Silently ignored during scanning |
 
 ### Known Behaviors

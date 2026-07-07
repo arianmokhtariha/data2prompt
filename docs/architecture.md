@@ -93,7 +93,7 @@ sequenceDiagram
 
 ### Processing Pipeline
 
-The [`main()`](../src/data2prompt/main.py#L43) function implements a three-phase processing pipeline:
+The [`_run()`](../src/data2prompt/main.py) function implements a three-phase processing pipeline:
 
 #### Phase 1: Initialization & Discovery
 
@@ -111,7 +111,7 @@ all_files = scanner.scan()
 ```
 
 1. **Config Construction**: [`setup_cli()`](../src/data2prompt/cli.py#L48) merges CLI arguments with defaults from [`constants.py`](../src/data2prompt/constants.py#L1)
-2. **Project Scanner**: [`ProjectScanner`](../src/data2prompt/utils.py#L105) discovers files while respecting ignore patterns (`.gitignore`, `.data2promptignore`, CLI exclusions)
+2. **Project Scanner**: [`ProjectScanner`](../src/data2prompt/utils.py#L105) discovers files while respecting ignore patterns (`.gitignore`, `.data2promptignore`, CLI exclusions). The directory tree text is produced by `scanner.generate_tree(all_files)` from the **same scan result**, so tree and content never diverge and the tree is not a second walk
 
 #### Phase 2: File Processing
 
@@ -128,10 +128,12 @@ The [`process_target_file()`](../src/data2prompt/main.py#L27) function:
 3. **Selects parser**: Uses `registry.get_parser(ext)` to obtain the appropriate [`BaseParser`](../src/data2prompt/parsers.py#L92)
 4. **Delegates parsing**: Calls `parser.parse(file_path, config)` and returns [`ParserResult`](../src/data2prompt/parsers.py#L47)
 
-The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the progress bar action based on file type:
+The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the progress bar action based on file name and extension:
 
-| Extension | Action |
+| File | Action |
 |-----------|--------|
+| env files (matched by name via `is_env_file`) | "Redacting" |
+| extension in `skip_exts` | "Skipping" |
 | `.csv` | "Sampling" |
 | `.parquet`, `.feather`, `.arrow` | "Sampling" |
 | `.ipynb` | "Cleaning" |
@@ -217,7 +219,7 @@ Parsers return structured data using IR dataclasses:
 
 ### Statistics Tracking
 
-The [`main()`](../src/data2prompt/main.py#L43) function maintains comprehensive statistics:
+The [`_run()`](../src/data2prompt/main.py) function maintains comprehensive statistics:
 
 | Stat Key | Purpose |
 |----------|---------|
@@ -242,8 +244,19 @@ The [`main()`](../src/data2prompt/main.py#L43) function maintains comprehensive 
 3. **File Size Warning**: Triggers a warning panel if output exceeds 2MB (potential context window issues)
 4. **Graceful Skipping**: Files matching skip extensions receive a placeholder result rather than failing
 
+### Statistics Aggregation Safety
+
+Parser `stats_update` dictionaries are folded into the running `stats` with
+`stats[key] = stats.get(key, 0) + value` — a parser introducing a new stat key
+can never crash the whole run with a `KeyError`.
+
 ### Entry Points
 
-The module exposes a single entry point:
+The module exposes a single console entry point with a thin error boundary:
 
-- `main()`: Primary CLI entry point (wired to the `data2prompt` console script in `pyproject.toml`)
+- `main()`: Primary CLI entry point (wired to the `data2prompt` console script in
+  `pyproject.toml`). It wraps the actual pipeline so predictable failures exit
+  with a clean message and a proper exit code instead of a traceback:
+  `KeyboardInterrupt` → exit 130, `OSError` (e.g. unwritable output file) → exit 1.
+- `_run()`: The full pipeline described above; contains no error-presentation
+  logic of its own.

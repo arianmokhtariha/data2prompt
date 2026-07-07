@@ -28,7 +28,7 @@ import pyarrow as pa
 import pyarrow.feather as pf
 import pyarrow.parquet as pq
 
-from src.data2prompt.parsers import ArrowParser, process_arrow_file
+from data2prompt.parsers import ArrowParser, process_arrow_file
 
 
 # ---------------------------------------------------------------------------
@@ -223,15 +223,9 @@ def test_missing_pyarrow_returns_skip_note(tmp_path: Path) -> None:
     pq.write_table(_sample_table(), path)
     config = _make_config()
 
-    # Simulate pyarrow being absent by making the import fail inside the parser.
-    original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-
-    def _block_pyarrow(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if name == "pyarrow":
-            raise ImportError("No module named 'pyarrow'")
-        return original_import(name, *args, **kwargs)
-
-    with patch("builtins.__import__", side_effect=_block_pyarrow):
+    # Setting a module's sys.modules entry to None makes `import` raise
+    # ImportError — the documented way to simulate a missing dependency.
+    with patch.dict(sys.modules, {"pyarrow": None}):
         result = ArrowParser().parse(path, config)
 
     assert result.status == "Skipped (No pyarrow)"
@@ -246,13 +240,7 @@ def test_missing_pyarrow_tokens_are_nonzero(tmp_path: Path) -> None:
     pf.write_feather(_sample_table(), path)
     config = _make_config()
 
-    def _block_pyarrow(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if name == "pyarrow":
-            raise ImportError("No module named 'pyarrow'")
-        import builtins
-        return builtins.__import__(name, *args, **kwargs)
-
-    with patch("builtins.__import__", side_effect=_block_pyarrow):
+    with patch.dict(sys.modules, {"pyarrow": None}):
         result = ArrowParser().parse(path, config)
 
     assert result.tokens > 0

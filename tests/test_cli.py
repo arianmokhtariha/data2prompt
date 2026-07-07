@@ -1,6 +1,10 @@
 import sys
 from unittest.mock import patch
-from src.data2prompt.cli import setup_cli
+
+import pytest
+
+from data2prompt import __version__
+from data2prompt.cli import setup_cli
 
 def test_setup_cli_merges_defaults():
     # Simulate running the CLI with specific arguments
@@ -61,3 +65,36 @@ def test_setup_cli_boolean_flags_toggle():
         assert cfg.stats_summary is False
         assert cfg.env_keys is False
         assert cfg.use_gitignore is False
+
+
+def test_setup_cli_rejects_negative_sample_size():
+    """Negative sizes must be rejected at parse time (exit code 2), not
+    surface later as cryptic pandas errors inside every CSV parser call."""
+    with patch.object(sys, 'argv', ["data2prompt", "-s", "-5"]):
+        with pytest.raises(SystemExit) as exc_info:
+            setup_cli()
+        assert exc_info.value.code == 2
+
+
+def test_setup_cli_rejects_zero_line_length_threshold():
+    """A zero threshold would truncate every line of every file."""
+    with patch.object(sys, 'argv', ["data2prompt", "--line-length-threshold", "0"]):
+        with pytest.raises(SystemExit) as exc_info:
+            setup_cli()
+        assert exc_info.value.code == 2
+
+
+def test_setup_cli_accepts_zero_sample_size():
+    """Zero is a legitimate sample size (headers-only tables)."""
+    with patch.object(sys, 'argv', ["data2prompt", "-s", "0"]):
+        cfg = setup_cli()
+        assert cfg.csv_sample_size == 0
+
+
+def test_version_flag_prints_version_and_exits_cleanly(capsys):
+    with patch.object(sys, 'argv', ["data2prompt", "--version"]):
+        with pytest.raises(SystemExit) as exc_info:
+            setup_cli()
+        assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert __version__ in captured.out

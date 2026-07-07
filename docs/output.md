@@ -45,14 +45,25 @@ substitutes the real values. See [Token Estimation](#token-estimation) below.
 
 ### Factory Function
 
-The [`get_generator()`](../src/data2prompt/output.py#L232) function provides simple factory access to concrete implementations:
+The [`get_generator()`](../src/data2prompt/output.py) function dispatches through an
+explicit strategy mapping and **raises `ValueError` for unknown formats** instead of
+silently defaulting to XML — a wiring mistake fails loudly at the source:
 
 ```python
+_GENERATORS: Dict[str, Type[OutputGenerator]] = {
+    'markdown': MarkdownGenerator,
+    'xml': XMLGenerator,
+}
+
 def get_generator(format_type: str) -> OutputGenerator:
-    if format_type.lower() == 'markdown':
-        return MarkdownGenerator()
-    return XMLGenerator()
+    generator_cls = _GENERATORS.get(format_type.lower())
+    if generator_cls is None:
+        raise ValueError(f"Unsupported output format: {format_type!r} ...")
+    return generator_cls()
 ```
+
+(The CLI's `--format` choices normally prevent an unknown value from reaching this
+point; the error guards programmatic callers.)
 
 ## Supported Formats
 
@@ -111,7 +122,7 @@ render_data   = not schema_only                         # render the data rows?
 - When `render_block` and `table.schema` is present, the generators call the shared
   [`render_schema_block()`](parsers.md) with `show_missing=stats_summary,
   show_describe=stats_summary`. In Markdown the block is emitted above the table; in XML
-  it is wrapped in an escaped `<schema>…</schema>` element.
+  it is wrapped in a `<schema>…</schema>` element (content verbatim, like all content).
 - The data table (`to_markdown`) is only emitted when `render_data` is true.
 
 Resulting behavior (all metadata is computed on the **full** DataFrame):
@@ -125,29 +136,46 @@ Resulting behavior (all metadata is computed on the **full** DataFrame):
 
 ### 2. XML (`XMLGenerator`)
 
-The [`XMLGenerator`](../src/data2prompt/output.py#L138) produces structured XML documents for LLM context windows that benefit from explicit tagging.
+The [`XMLGenerator`](../src/data2prompt/output.py#L138) produces XML-*style* documents for LLM context windows that benefit from explicit tagging.
+
+#### Escaping model — attributes quoted, content verbatim
+
+The output is **structural XML for LLM anchoring, not strict parseable XML**
+(the same model Repomix uses):
+
+- **Every attribute value that carries user data** (`path`, sheet `name`, cell
+  `type`, project name) goes through `xml.sax.saxutils.quoteattr()`. A sheet
+  named `Q1 "final" <rev>` or a path containing `&` can therefore never
+  terminate an attribute early or break the tag structure.
+- **Element content is embedded verbatim** — file text, notebook cell sources,
+  table renderings, and the directory tree are *not* entity-escaped. Escaping
+  code would rewrite `if a < b:` as `if a &lt; b:`, hurting LLM readability and
+  inflating tokens. The XML system instructions tell the model explicitly that
+  contents are verbatim and the tags are structural markers. (Previously cell
+  and table content was escaped while plain-file content was not — the worst of
+  both worlds; content handling is now uniform.)
 
 #### Output Structure
 
 | Tag | Description |
 |-----|-------------|
-| `<codebase name="{project_name}">` | Root element |
+| `<codebase name={quoteattr}>` | Root element |
 | `<metadata>` | Generation timestamp and token count |
-| `<directory_structure>` | Tree output |
+| `<directory_structure>` | Tree output (verbatim) |
 | `<files>` | Container for file entries |
-| `<file path="{path}">` | Individual file with path attribute |
-| `<cell path="" index="" type="">` | Notebook cell encapsulation |
-| `<sheet name="" sheet_number="" path="">` | Excel sheet encapsulation |
+| `<file path={quoteattr}>` | Individual file with quoted path attribute |
+| `<cell path={quoteattr} index="" type={quoteattr}>` | Notebook cell encapsulation |
+| `<sheet name={quoteattr} sheet_number="" path={quoteattr}>` | Excel sheet encapsulation |
 
 #### Notebook XML Rendering
 
 ```xml
-<cell path="{display_path}" index="{cell.number}" type="{cell.type}">
+<cell path={quoteattr(display_path)} index="{cell.number}" type={quoteattr(cell.type)}>
     <content>
-{cell.source}
+{cell.source}                                  <!-- verbatim, not escaped -->
     </content>
     <outputs>
-{cell.outputs}
+{cell.outputs}                                 <!-- verbatim, not escaped -->
     </outputs>
 </cell>
 ```
@@ -155,8 +183,8 @@ The [`XMLGenerator`](../src/data2prompt/output.py#L138) produces structured XML 
 #### Table XML Rendering
 
 ```xml
-<sheet name="{table.name}" sheet_number="{table.sheet_number}" path="{table.file_path}">
-{table.df.to_markdown(index=False)}
+<sheet name={quoteattr(table.name)} sheet_number="{table.sheet_number}" path={quoteattr(table.file_path)}>
+{table.df.to_markdown(index=False)}            <!-- verbatim, not escaped -->
 </sheet>
 ```
 
@@ -184,7 +212,6 @@ class TableIR:
     df: pd.DataFrame                  # Tabular data
     header_note: Optional[str] = None # Warning/info message
     footer_note: Optional[str] = None # Truncation notice
-    visual_warning: bool = False      # Display flag
     sheet_number: Optional[int] = None # Excel sheet index
     file_path: Optional[str] = None   # Source file path
     schema: Optional[TableSchema] = None # Full-df schema/stats metadata

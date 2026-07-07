@@ -1,16 +1,16 @@
 import importlib.resources
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Union, Set
 
+import pathspec
+import regex as re
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
-import regex as re
-import pathspec
 
-from .ui import ui
+from data2prompt.ui import ui
 
 # Module-level cache for the loaded tiktoken encoding (populated once per process)
 _ENCODING: Optional[tiktoken.Encoding] = None
@@ -47,7 +47,7 @@ def _load_encoding() -> tiktoken.Encoding:
     return _ENCODING
 
 
-def count_tokens(text: str, encoding_name: str = "o200k_base") -> tuple[int, str]:
+def count_tokens(text: str) -> Tuple[int, str]:
     """Return token count and method used. Primary path is the bundled BPE file.
 
     Falls back to a regex approximation if loading fails, then to a plain word
@@ -93,17 +93,17 @@ def copy_to_clipboard(text: str) -> bool:
     on Linux (first available wins). Returns True on success, or False if no
     clipboard utility is available or the copy fails — callers can then fall back to
     writing a file.
-
-    Note: on Windows, ``clip`` interprets input using the active console code page,
-    so rare non-ASCII characters may not round-trip exactly.
     """
-    data = text.encode("utf-8", errors="replace")
-
     if sys.platform == "win32":
+        # clip.exe detects UTF-16 LE via its BOM; plain UTF-8 would be decoded
+        # with the legacy console code page and garble non-ASCII characters.
+        data = text.encode("utf-16", errors="replace")
         commands: List[List[str]] = [["clip"]]
     elif sys.platform == "darwin":
+        data = text.encode("utf-8", errors="replace")
         commands = [["pbcopy"]]
     else:
+        data = text.encode("utf-8", errors="replace")
         commands = [
             ["wl-copy"],
             ["xclip", "-selection", "clipboard"],
@@ -137,11 +137,17 @@ class ProjectScanner:
         self.ignore_folders = ignore_folders
         self.ignore_files = ignore_files
         self.output_file = output_file
+        # Full path so '-o out/PROMPT' excludes exactly that file, not every
+        # file that happens to share its basename somewhere in the tree.
+        self._output_path = project_path / output_file
         self.use_gitignore = use_gitignore
         self.spec = self._build_spec()
-        self._gitignore_specs: List[Tuple[Path, pathspec.PathSpec]] = (
-            self._load_all_gitignores() if self.use_gitignore else []
-        )
+        # Initialized empty first: _load_all_gitignores prunes with _is_ignored,
+        # which consults this list while it is being built (top-down walk, so
+        # parent specs are always registered before their subtrees are visited).
+        self._gitignore_specs: List[Tuple[Path, pathspec.PathSpec]] = []
+        if self.use_gitignore:
+            self._gitignore_specs = self._load_all_gitignores()
 
     def _build_spec(self) -> pathspec.PathSpec:
         """Compiles all ignore patterns into a single PathSpec object."""
@@ -160,18 +166,22 @@ class ProjectScanner:
 
     def _load_all_gitignores(self) -> List[Tuple[Path, pathspec.PathSpec]]:
         """Walk the project tree and collect a per-directory PathSpec for every
-        .gitignore found. Skips .git directories."""
-        specs: List[Tuple[Path, pathspec.PathSpec]] = []
+        .gitignore found. Prunes ignored directories (and .git) so gitignores
+        inside excluded trees are neither collected nor walked."""
+        specs = self._gitignore_specs
         for root, dirs, files in os.walk(self.project_path):
             root_path = Path(root)
             if '.gitignore' in files:
                 patterns = load_ignore_file(root_path, '.gitignore')
                 if patterns:
                     specs.append((root_path, pathspec.PathSpec.from_lines('gitignore', patterns)))
-            dirs[:] = [d for d in dirs if d != '.git']
+            dirs[:] = [
+                d for d in dirs
+                if d != '.git' and not self._is_ignored(root_path / d, is_dir=True)
+            ]
         return specs
 
-    def _is_ignored_by_gitignore(self, path: Path) -> bool:
+    def _is_ignored_by_gitignore(self, path: Path, is_dir: bool = False) -> bool:
         """Check path against every per-directory gitignore spec whose base
         directory is an ancestor of path. Matches relative to each base dir."""
         for base_dir, spec in self._gitignore_specs:
@@ -179,64 +189,80 @@ class ProjectScanner:
                 rel = path.relative_to(base_dir)
             except ValueError:
                 continue
-            if spec.match_file(str(rel)):
+            rel_str = str(rel)
+            if spec.match_file(rel_str):
+                return True
+            if is_dir and spec.match_file(rel_str + os.sep):
                 return True
         return False
 
-    def _is_ignored(self, path: Path) -> bool:
-        """Checks if a given path should be ignored based on the compiled spec and special cases."""
+    def _is_ignored(self, path: Path, is_dir: bool = False) -> bool:
+        """Checks if a given path should be ignored based on the compiled spec and special cases.
+
+        ``is_dir`` must be True when ``path`` is a directory: directory-only
+        patterns like ``venv/`` never match a bare name, so directories are
+        additionally matched with a trailing separator.
+        """
         try:
             rel_path = path.relative_to(self.project_path)
         except ValueError:
             return False
 
-        if str(rel_path) == '.':
+        rel_str = str(rel_path)
+        if rel_str == '.':
             return False
 
         # Check against pathspec (CLI patterns + .data2promptignore)
-        if self.spec.match_file(str(rel_path)):
+        if self.spec.match_file(rel_str):
+            return True
+        if is_dir and self.spec.match_file(rel_str + os.sep):
             return True
 
         # Check per-directory gitignore specs
-        if self._is_ignored_by_gitignore(path):
+        if self._is_ignored_by_gitignore(path, is_dir=is_dir):
             return True
 
-        # Special cases: output file and the script itself
-        if path.name == self.output_file or path.name == Path(sys.argv[0]).name:
+        # Never re-ingest our own output file. Older outputs under other names
+        # are caught downstream by the GENERATION_FLAG check in DefaultParser.
+        if path == self._output_path:
             return True
 
         return False
 
     def scan(self) -> List[Path]:
-        """Discovers all files in the project path, respecting ignore rules."""
-        all_files = []
+        """Discovers all files in the project path, respecting ignore rules.
+
+        Directories and files are visited in sorted order so the output is
+        deterministic across platforms and file systems.
+        """
+        all_files: List[Path] = []
         for root, dirs, files in os.walk(self.project_path):
             root_path = Path(root)
 
-            # Prune directories in-place to avoid unnecessary walking
-            dirs[:] = [d for d in dirs if not self._is_ignored(root_path / d)]
+            # Prune directories in-place (sorted) to avoid unnecessary walking
+            dirs[:] = sorted(
+                d for d in dirs if not self._is_ignored(root_path / d, is_dir=True)
+            )
 
-            for file in files:
+            for file in sorted(files):
                 file_path = root_path / file
                 if not self._is_ignored(file_path):
                     all_files.append(file_path)
         return all_files
 
-    def generate_tree(self) -> str:
-        """Generates a flat list of files in the project structure."""
-        tree = []
-        for root, dirs, files in os.walk(self.project_path):
-            root_path = Path(root)
+    def generate_tree(self, files: Optional[List[Path]] = None) -> str:
+        """Generates a flat, sorted list of files in the project structure.
 
-            # Prune directories
-            dirs[:] = [d for d in dirs if not self._is_ignored(root_path / d)]
-
-            for f in files:
-                file_path = root_path / f
-                if not self._is_ignored(file_path):
-                    rel_path = file_path.relative_to(self.project_path)
-                    # Use backslashes for consistency in the output as per project standard
-                    tree.append(str(rel_path).replace(os.sep, '\\'))
+        Accepts the result of a previous :meth:`scan` to avoid walking the
+        tree twice; falls back to scanning when no list is given.
+        """
+        if files is None:
+            files = self.scan()
+        tree = [
+            # Use backslashes for consistency in the output as per project standard
+            str(f.relative_to(self.project_path)).replace(os.sep, '\\')
+            for f in files
+        ]
         return "\n".join(sorted(tree))
 
 def load_ignore_file(directory: Union[str, Path], filename: str = '.data2promptignore') -> List[str]:
@@ -244,19 +270,19 @@ def load_ignore_file(directory: Union[str, Path], filename: str = '.data2prompti
     Looks for an ignore file in the given directory.
     Returns a list of patterns to ignore, excluding comments and empty lines.
     """
-    ignore_path = os.path.join(directory, filename)
-    ignore_list = []
+    ignore_path = Path(directory) / filename
+    ignore_list: List[str] = []
 
-    if os.path.exists(ignore_path):
+    if ignore_path.exists():
         try:
-            with open(ignore_path, 'r', encoding='utf-8') as f:
+            with ignore_path.open('r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     # Skip empty lines and comments
                     if not line or line.startswith('#'):
                         continue
                     ignore_list.append(line)
-        except Exception as e:
+        except OSError as e:
             ui.print_warning(f"Could not read {filename}: {e}")
 
     return ignore_list

@@ -12,8 +12,8 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.data2prompt.parsers import DefaultParser
-from src.data2prompt.constants import GENERATION_FLAG
+from data2prompt.parsers import DefaultParser
+from data2prompt.constants import GENERATION_FLAG
 
 
 def _cfg(**overrides: object) -> SimpleNamespace:

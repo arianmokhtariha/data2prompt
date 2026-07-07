@@ -1,18 +1,17 @@
 import json
 import os
 import random
-import warnings
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Union, Dict, Protocol, Optional, TypedDict, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .cli import Config
+    from data2prompt.cli import Config
 
-import openpyxl
 import pandas as pd
 
-from .constants import (
+from data2prompt.constants import (
     DEFAULT_CSV_SAMPLE_SIZE,
     DEFAULT_SQL_SAMPLE_SIZE,
     DEFAULT_SQL_MAX_LINES,
@@ -26,7 +25,7 @@ from .constants import (
     ENV_VALUE_PLACEHOLDER,
     GENERATION_FLAG,
 )
-from .utils import count_tokens, is_binary
+from data2prompt.utils import count_tokens, is_binary
 
 @dataclass
 class NotebookCellIR:
@@ -63,7 +62,6 @@ class TableIR:
     df: pd.DataFrame
     header_note: Optional[str] = None
     footer_note: Optional[str] = None
-    visual_warning: bool = False
     sheet_number: Optional[int] = None
     file_path: Optional[str] = None
     schema: Optional[TableSchema] = None
@@ -346,7 +344,8 @@ def process_csv(
         footer_note = None
 
         if len(df) > sample_size:
-            df = df.sample(sample_size, random_state=seed)
+            # sort_index restores file order so the sample reads naturally.
+            df = df.sample(sample_size, random_state=seed).sort_index()
             header_note = f"-- [Sample - Random {sample_size} rows] --"
             footer_note = f"-- [CSV truncated: Showing random {sample_size} rows to save context] --"
 
@@ -451,6 +450,7 @@ def process_sql(
         table_data_buffer: List[str] = []
         in_create_block = False
         non_data_line_count: int = 0
+        omitted_non_data_count: int = 0
         rng = random.Random(seed)
 
         def flush_buffer() -> None:
@@ -533,13 +533,40 @@ def process_sql(
                 flush_buffer() # Ensure data is flushed before adding more non-data lines
                 processed_lines.append(line)
                 non_data_line_count += 1
-        
+            elif line_stripped:
+                # Over the cap: count dropped (non-blank) lines so the reader
+                # is told content was omitted instead of it vanishing silently.
+                omitted_non_data_count += 1
+
         # Final flush for the last table
         flush_buffer()
-        
+
+        if omitted_non_data_count:
+            processed_lines.append(
+                f"\n-- [{omitted_non_data_count} non-data line(s) omitted: "
+                f"exceeded the {max_lines}-line limit (--sql-max-lines)] --\n"
+            )
+
         return "".join(processed_lines)
     except Exception as e:
         return f"⚠️ Error reading SQL: {_sanitize_error(e, Path(file_path))}"
+
+def _xlsx_has_visuals(file_path: Union[str, Path]) -> bool:
+    """Cheaply detect embedded images/charts in an .xlsx workbook.
+
+    An .xlsx file is a zip archive; images live under ``xl/media/`` and charts
+    under ``xl/charts/``. Inspecting the archive listing avoids loading the
+    workbook and works where openpyxl's read-only mode never parses drawings.
+    """
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            return any(
+                name.startswith(("xl/media/", "xl/charts/"))
+                for name in archive.namelist()
+            )
+    except (zipfile.BadZipFile, OSError):
+        return False
+
 
 def process_excel(
     file_path: Union[str, Path],
@@ -550,45 +577,55 @@ def process_excel(
     stats_summary: bool = True,
     schema_only: bool = False
 ) -> List[TableIR]:
-    try:
-        # 1. Sheet Discovery & Visual Element Check using openpyxl
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
-        sheet_names = wb.sheetnames
-        
-        tables_ir = []
-        processed_sheets = 0
-        
-        for i, sheet_name in enumerate(sheet_names, 1):
-            if processed_sheets >= max_sheets:
-                # Add a dummy table to represent truncation if needed,
-                # or handle it in the generator. Let's add a note to the last table or a special entry.
-                if tables_ir:
-                    tables_ir[-1].footer_note = (tables_ir[-1].footer_note or "") + f"\n-- [Workbook truncated: Only first {max_sheets} sheets processed] --"
-                break
-            
-            processed_sheets += 1
-            sheet = wb[sheet_name]
-            
-            # Check for visual elements
-            has_visuals = False
-            try:
-                if hasattr(sheet, '_images') and len(sheet._images) > 0:
-                    has_visuals = True
-                if hasattr(sheet, 'charts') and len(sheet.charts) > 0:
-                    has_visuals = True
-            except Exception:
-                pass
+    fp = Path(file_path)
+    ext = fp.suffix.lower()
+    has_visuals = ext == ".xlsx" and _xlsx_has_visuals(file_path)
 
-            # 2. Data Extraction using pandas
+    # A single pd.ExcelFile parses the workbook once for all sheets (the old
+    # per-sheet pd.read_excel re-opened the file for every sheet) and its
+    # context manager guarantees the handle is released even on error paths.
+    try:
+        excel_file = pd.ExcelFile(file_path)
+    except ImportError:
+        # pandas imports the format's engine lazily; legacy .xls needs xlrd.
+        return [TableIR(
+            name=fp.name,
+            df=pd.DataFrame(),
+            footer_note=(
+                f"-- [Skipped: reading legacy {ext} files requires the "
+                "optional 'xlrd' package (pip install xlrd)] --"
+            ),
+        )]
+    except Exception as e:
+        return [TableIR(
+            name=fp.name,
+            df=pd.DataFrame(),
+            footer_note=f"-- [Error reading Excel: {_sanitize_error(e, fp)}] --",
+        )]
+
+    tables_ir: List[TableIR] = []
+    with excel_file:
+        for i, sheet_name in enumerate(excel_file.sheet_names, 1):
+            if i > max_sheets:
+                if tables_ir:
+                    tables_ir[-1].footer_note = (
+                        (tables_ir[-1].footer_note or "")
+                        + f"\n-- [Workbook truncated: Only first {max_sheets} sheets processed] --"
+                    )
+                break
+
             try:
-                df = pd.read_excel(file_path, sheet_name=sheet_name)
+                df = excel_file.parse(sheet_name)
                 header_note = None
                 footer_note = None
 
-                if has_visuals:
-                    header_note = "-- [Note: Visual elements (images/charts) detected in this sheet] --"
+                # Drawings are stored at workbook level in the archive, so the
+                # note is emitted once, on the first sheet.
+                if has_visuals and i == 1:
+                    header_note = (
+                        "-- [Note: Workbook contains visual elements "
+                        "(images/charts); they are not extracted] --"
+                    )
 
                 # Column metadata is always computed on the FULL sheet, before sampling.
                 schema = None
@@ -598,10 +635,9 @@ def process_excel(
                 if schema_only:
                     header_note = (header_note or "") + "-- [Schema only - data rows omitted] --"
                     tables_ir.append(TableIR(
-                        name=sheet_name,
+                        name=str(sheet_name),
                         df=pd.DataFrame(),
                         header_note=header_note,
-                        visual_warning=has_visuals,
                         sheet_number=i,
                         file_path=display_path,
                         schema=schema
@@ -611,18 +647,17 @@ def process_excel(
                 if df.empty:
                     footer_note = f"-- [Note: Sheet '{sheet_name}' appears to be a visual dashboard or empty. No tabular data extracted] --"
                 else:
-                    # 3. Sampling (The Safety Guard)
+                    # Sampling (The Safety Guard); sort_index restores sheet order.
                     if len(df) > max_rows:
-                        df = df.sample(n=max_rows, random_state=seed)
+                        df = df.sample(n=max_rows, random_state=seed).sort_index()
                         footer_note = (footer_note or "") + f"-- [Sheet truncated: Showing random {max_rows} rows to save context] --"
                         header_note = (header_note or "") + f"-- [Sample - Random {max_rows} rows] --"
 
                 tables_ir.append(TableIR(
-                    name=sheet_name,
+                    name=str(sheet_name),
                     df=df,
                     header_note=header_note,
                     footer_note=footer_note,
-                    visual_warning=has_visuals,
                     sheet_number=i,
                     file_path=display_path,
                     schema=schema
@@ -630,17 +665,14 @@ def process_excel(
 
             except Exception as e:
                 tables_ir.append(TableIR(
-                    name=sheet_name,
+                    name=str(sheet_name),
                     df=pd.DataFrame(),
-                    footer_note=f"-- [Error reading sheet data: {e}] --",
+                    footer_note=f"-- [Error reading sheet data: {_sanitize_error(e, fp)}] --",
                     sheet_number=i,
                     file_path=display_path
                 ))
-            
-        wb.close()
-        return tables_ir
-    except Exception as e:
-        return [TableIR(name="Error", df=pd.DataFrame(), footer_note=f"-- [Error reading Excel: {_sanitize_error(e, Path(file_path))}] --")]
+
+    return tables_ir
 
 # --- Parser Implementations ---
 
@@ -790,7 +822,8 @@ def process_arrow_file(
         footer_note = None
 
         if len(df) > sample_size:
-            df = df.sample(sample_size, random_state=seed)
+            # sort_index restores file order so the sample reads naturally.
+            df = df.sample(sample_size, random_state=seed).sort_index()
             header_note = f"-- [Sample - Random {sample_size} rows] --"
             footer_note = (
                 f"-- [{ext[1:].upper()} truncated: "
@@ -873,15 +906,6 @@ class DefaultParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
         ext = file_path.suffix.lower()
 
-        # Check for generation flag in all text files
-        if not is_binary(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    if GENERATION_FLAG in f.read(100):
-                        return ParserResult(content="", tokens=0, type="Skipped", status="Skipped (Generated)", skip_file=True)
-            except Exception:
-                pass
-
         if is_binary(file_path):
             return ParserResult(
                 content=f"*Note: Binary content detected in {ext if ext else 'unknown'} file. Content skipped.*",
@@ -890,7 +914,15 @@ class DefaultParser:
                 status="Skipped (Binary)",
                 stats_update={"binary_count": 1}
             )
-        
+
+        # Skip previously generated outputs (the flag sits in the first line).
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                if GENERATION_FLAG in f.read(100):
+                    return ParserResult(content="", tokens=0, type="Skipped", status="Skipped (Generated)", skip_file=True)
+        except OSError:
+            pass
+
         file_size_kb = file_path.stat().st_size / 1024
         try:
             if file_size_kb > config.max_file_size:

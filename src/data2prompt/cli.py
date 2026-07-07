@@ -2,8 +2,8 @@ import argparse
 from dataclasses import dataclass, field
 from typing import Set
 
-
-from .constants import (
+from data2prompt import __version__
+from data2prompt.constants import (
     CORE_IGNORES,
     CORE_IGNORE_FILES,
     CORE_SKIP_EXTS,
@@ -27,6 +27,26 @@ from .constants import (
     DEFAULT_ENV_KEYS,
     SUPPORTED_FORMATS
 )
+
+def _non_negative_int(value: str) -> int:
+    """argparse type: an int >= 0. Rejects negatives at parse time so they
+    cannot surface later as cryptic pandas/random errors inside the parsers."""
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}")
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {parsed}")
+    return parsed
+
+
+def _positive_int(value: str) -> int:
+    """argparse type: an int >= 1."""
+    parsed = _non_negative_int(value)
+    if parsed == 0:
+        raise argparse.ArgumentTypeError("must be >= 1, got 0")
+    return parsed
+
 
 @dataclass
 class Config:
@@ -64,45 +84,48 @@ def setup_cli() -> Config:
     parser = argparse.ArgumentParser(
         description="📊 Data2Prompt: High-tech prompt packaging for Data Scientists."
     )
-    
+
+    parser.add_argument('--version', action='version',
+                        version=f'data2prompt {__version__}')
+
     # Output settings
     parser.add_argument('-o', '--output', default=DEFAULT_OUTPUT_FILE,
                         help=f'Base name of the generated file (default: {DEFAULT_OUTPUT_FILE})')
-    
+
     parser.add_argument('-f', '--format', choices=list(SUPPORTED_FORMATS.keys()), default=DEFAULT_FORMAT,
                         help=f'Output format: xml or markdown (default: {DEFAULT_FORMAT})')
-    
+
     # CSV sampling settings
-    parser.add_argument('-s', '--csv-sample-size', type=int, default=DEFAULT_CSV_SAMPLE_SIZE,
+    parser.add_argument('-s', '--csv-sample-size', type=_non_negative_int, default=DEFAULT_CSV_SAMPLE_SIZE,
                         help=f'Number of random rows to sample from CSVs (default: {DEFAULT_CSV_SAMPLE_SIZE})')
     parser.add_argument('--seed', type=int, default=DEFAULT_SEED,
                         help=f'Random seed for consistent CSV sampling (default: {DEFAULT_SEED})')
-    
+
     # SQL sampling settings
-    parser.add_argument('--sql-sample-size', type=int, default=DEFAULT_SQL_SAMPLE_SIZE,
+    parser.add_argument('--sql-sample-size', type=_non_negative_int, default=DEFAULT_SQL_SAMPLE_SIZE,
                         help=f'Number of INSERT statements to keep in SQL files (default: {DEFAULT_SQL_SAMPLE_SIZE})')
-    
-    parser.add_argument('--sql-max-lines', type=int, default=DEFAULT_SQL_MAX_LINES,
+
+    parser.add_argument('--sql-max-lines', type=_non_negative_int, default=DEFAULT_SQL_MAX_LINES,
                         help=f'Max non-data lines to keep in SQL files (default: {DEFAULT_SQL_MAX_LINES})')
-    
+
     # Notebook settings
-    parser.add_argument('--max-lines', type=int, default=DEFAULT_MAX_LINES,
+    parser.add_argument('--max-lines', type=_non_negative_int, default=DEFAULT_MAX_LINES,
                         help=f'Max lines of text output to keep per notebook cell (default: {DEFAULT_MAX_LINES})')
-    
+
     # Excel settings
-    parser.add_argument('--max-sheets', type=int, default=DEFAULT_MAX_SHEETS,
+    parser.add_argument('--max-sheets', type=_non_negative_int, default=DEFAULT_MAX_SHEETS,
                         help=f'Max number of sheets to process in Excel files (default: {DEFAULT_MAX_SHEETS})')
-    
+
     # Line Truncation settings
-    parser.add_argument('--line-length-threshold', type=int, default=DEFAULT_LINE_LENGTH_THRESHOLD,
+    parser.add_argument('--line-length-threshold', type=_positive_int, default=DEFAULT_LINE_LENGTH_THRESHOLD,
                         help=f'Max characters per line before truncation (default: {DEFAULT_LINE_LENGTH_THRESHOLD})')
-    parser.add_argument('--truncated-line-length', type=int, default=DEFAULT_TRUNCATED_LINE_LENGTH,
+    parser.add_argument('--truncated-line-length', type=_non_negative_int, default=DEFAULT_TRUNCATED_LINE_LENGTH,
                         help=f'Length to truncate long lines to (default: {DEFAULT_TRUNCATED_LINE_LENGTH})')
 
     # Table Truncation settings
-    parser.add_argument('--table-limit', type=int, default=DEFAULT_TABLE_CHAR_LIMIT,
+    parser.add_argument('--table-limit', type=_positive_int, default=DEFAULT_TABLE_CHAR_LIMIT,
                         help=f'Max characters for a single table/sheet after sampling (default: {DEFAULT_TABLE_CHAR_LIMIT})')
-    parser.add_argument('--table-truncate', type=int, default=DEFAULT_TABLE_TRUNCATED_SIZE,
+    parser.add_argument('--table-truncate', type=_non_negative_int, default=DEFAULT_TABLE_TRUNCATED_SIZE,
                         help=f'Length to truncate large tables to (default: {DEFAULT_TABLE_TRUNCATED_SIZE})')
 
     # Exclusions
@@ -112,7 +135,7 @@ def setup_cli() -> Config:
     parser.add_argument('--ignore-files', nargs='+', default=[],
                         help='Additional files to skip entirely')
     
-    parser.add_argument('--max-file-size', type=int, default=DEFAULT_MAX_FILE_SIZE_KB,
+    parser.add_argument('--max-file-size', type=_non_negative_int, default=DEFAULT_MAX_FILE_SIZE_KB,
                         help=f'Max file size in KB to read entirely (default: {DEFAULT_MAX_FILE_SIZE_KB}KB)')
     
     # file formats to ignore
