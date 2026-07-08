@@ -250,9 +250,9 @@ def test_generate_tree_accepts_scan_results() -> None:
         files = scanner.scan()
         tree = scanner.generate_tree(files)
 
-        expected = sorted(
-            str(f.relative_to(root)).replace("/", "\\") for f in files
-        )
+        # Forward slashes on every platform — the tree strings are the
+        # canonical path keys the output File Index must match exactly.
+        expected = sorted(f.relative_to(root).as_posix() for f in files)
         assert tree.splitlines() == expected
 
 

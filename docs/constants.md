@@ -174,39 +174,102 @@ GENERATION_FLAG = "DATA2PROMPT_GENERATED_CONTENT"
 
 ### 5. LLM Structured Output Constants
 
-#### System Instructions
+#### System Instructions (the LLM reading contract)
 
 ```python
-SYSTEM_INSTRUCTIONS_MARKDOWN = """## purpose: \nThis document is a structured representation of a codebase and data schema..."""
-SYSTEM_INSTRUCTIONS_XML = """<purpose>\nThis document is a structured representation of a codebase and data schema..."""
+SYSTEM_INSTRUCTIONS_MARKDOWN = """## Purpose\n\nThis document is a machine-generated snapshot..."""
+SYSTEM_INSTRUCTIONS_XML = """<purpose>\nThis document is a machine-generated snapshot..."""
 ```
 
 **Type:** `str`
 
-**Purpose:** Instructional headers embedded in generated output files to guide LLM consumption. These explain the document structure and section organization.
+**Purpose:** The preamble embedded at the top of every generated document. Any
+edit must follow the "Editing the preambles" checklist in
+[`output-contract.md`](output-contract.md) — both constants change together and
+stay logically identical. Both formats carry the same information (only the
+syntax differs) across four parts:
+
+1. **Purpose** — machine-generated snapshot, produced by data2prompt for LLM
+   consumption.
+2. **Document layout** — the section order (Metadata → File Index → Files →
+   End of codebase) and the guarantee that paths are project-relative,
+   forward-slashed, and exact keys across index/headers/attributes.
+3. **Reading conventions** — dynamic backtick fencing, notebook cell and Excel
+   sheet labeling, schema blocks (full-dataset stats vs. sampled rows), the
+   `-- [...] --` tool-notice grammar, and env-value redaction.
+4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted
+   content is not included and must not be invented; samples illustrate
+   structure only; the File Index `Status` is authoritative, with the full
+   controlled vocabulary spelled out.
+
+The XML variant additionally states that element content is embedded verbatim
+(not XML-escaped) and tags are structural markers, not strict XML.
 
 **Consumed by:**
-- [`output.py`](../src/data2prompt/output.py#L53) — Injected into Markdown output
-- [`output.py`](../src/data2prompt/output.py#L156) — Injected into XML output
+- [`output.py`](../src/data2prompt/output.py) — injected into both outputs
 
 #### XML Tag Constants
 
 ```python
-TAG_DIRECTORY_STRUCTURE = "directory_structure"
 TAG_FILES = "files"
 TAG_FILE = "file"
-TAG_CONTENT = "content"  # Used for notebook cells
+TAG_CONTENT = "content"          # Used for notebook cells
+TAG_FILE_INDEX = "file_index"    # Per-file manifest (path/type/status)
+TAG_INDEX_ENTRY = "entry"        # One row of the file index
+TAG_END_OF_CODEBASE = "end_of_codebase"  # Recency anchor before </codebase>
 ```
 
 **Type:** `str`
 
-**Purpose:** Consistent XML tag names for structured output generation. Ensures uniform tagging across all XML-formatted output.
+**Purpose:** Consistent XML tag names for structured output generation.
+`TAG_DIRECTORY_STRUCTURE` was removed — the `<directory_structure>` section is
+superseded by the `<file_index>` manifest (see [output.md](output.md#file-index)).
 
 **Consumed by:**
-- [`output.py`](../src/data2prompt/output.py#L163) — `<directory_structure>` wrapper
-- [`output.py`](../src/data2prompt/output.py#L167) — `<files>` container
-- [`output.py`](../src/data2prompt/output.py#L178) — `<file>` element with path attribute
-- [`output.py`](../src/data2prompt/output.py#L184) — `<content>` for notebook cells
+- [`output.py`](../src/data2prompt/output.py) — `<files>`/`<file>` structure,
+  `<content>` for notebook cells, `<file_index>`/`<entry>` rows, and the
+  `<end_of_codebase>` anchor
+
+#### `INCLUSION_STATUS_MAP` — File Index Vocabulary
+
+```python
+INCLUSION_STATUS_MAP: Dict[str, str] = {
+    "Read": "Full",
+    "Sampled": "Sampled",
+    "Parsed": "Sampled",         # SQL: schema kept, data rows sampled
+    "Extracted": "Sampled",      # Excel: sheets kept, rows sampled
+    "Cleaned": "Cleaned",        # Notebook: full source, trimmed outputs
+    "Truncated": "Truncated",
+    "Schema Only": "Schema Only",
+    "Redacted": "Redacted",
+    "Skipped (Exclusion)": "Excluded",
+    "Skipped (Binary)": "Binary Skipped",
+    "Error": "Error",
+}
+```
+
+**Type:** `Dict[str, str]`
+
+**Purpose:** Maps raw parser statuses onto the controlled vocabulary documented
+in the system instructions. `resolve_inclusion_status()` in
+[`output.py`](output.md) applies a `"Skipped ("` prefix fallback and then
+verbatim passthrough, so an unmapped future status can never crash generation.
+
+#### `STATS_SUMMARY_LABELS` — Content Summary Labels
+
+```python
+STATS_SUMMARY_LABELS: Dict[str, str] = {
+    "file_count": "Total files",
+    "csv_count": "CSV",
+    # ... notebooks, SQL, Excel, Arrow formats, truncated/binary/excluded/env
+}
+```
+
+**Type:** `Dict[str, str]` (insertion order defines render order)
+
+**Purpose:** Ordered stat-key → human label mapping for the document-level
+content summary (`> Contents:` line in Markdown, `<stats/>` element in XML).
+Zero counts are dropped at render time; `Total files` always renders.
 
 ---
 

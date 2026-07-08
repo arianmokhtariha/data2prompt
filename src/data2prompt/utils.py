@@ -255,14 +255,14 @@ class ProjectScanner:
 
         Accepts the result of a previous :meth:`scan` to avoid walking the
         tree twice; falls back to scanning when no list is given.
+
+        Paths use forward slashes on every platform: they are the canonical
+        keys the output File Index and file headers must match exactly, and
+        forward slashes are what LLMs read most reliably.
         """
         if files is None:
             files = self.scan()
-        tree = [
-            # Use backslashes for consistency in the output as per project standard
-            str(f.relative_to(self.project_path)).replace(os.sep, '\\')
-            for f in files
-        ]
+        tree = [f.relative_to(self.project_path).as_posix() for f in files]
         return "\n".join(sorted(tree))
 
 def load_ignore_file(directory: Union[str, Path], filename: str = '.data2promptignore') -> List[str]:

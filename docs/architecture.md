@@ -14,6 +14,7 @@ layering stays intentional as it grows.
 3.  **Orchestration Layer**: The main execution path in [`src/data2prompt/main.py`](../src/data2prompt/main.py) coordinates high-level logic, dispatching tasks to specialized modules.
 4.  **UI Encapsulation**: All terminal output is handled exclusively by the `UIHandler` in [`src/data2prompt/ui.py`](../src/data2prompt/ui.py).
 5.  **Defensive Programming**: Robust error handling and resource management are implemented throughout the codebase.
+6.  **LLM Output Contract**: The generated document's structure, notice grammar, status vocabulary, and format parity are governed by the cross-cutting contract in [`output-contract.md`](output-contract.md) — mandatory reading before any output-affecting change.
 
 ## Module Flow
 
@@ -111,7 +112,7 @@ all_files = scanner.scan()
 ```
 
 1. **Config Construction**: [`setup_cli()`](../src/data2prompt/cli.py#L48) merges CLI arguments with defaults from [`constants.py`](../src/data2prompt/constants.py#L1)
-2. **Project Scanner**: [`ProjectScanner`](../src/data2prompt/utils.py#L105) discovers files while respecting ignore patterns (`.gitignore`, `.data2promptignore`, CLI exclusions). The directory tree text is produced by `scanner.generate_tree(all_files)` from the **same scan result**, so tree and content never diverge and the tree is not a second walk
+2. **Project Scanner**: [`ProjectScanner`](../src/data2prompt/utils.py#L105) discovers files while respecting ignore patterns (`.gitignore`, `.data2promptignore`, CLI exclusions). The directory tree text is produced by `scanner.generate_tree(all_files)` from the **same scan result** (forward-slash paths), so tree and content never diverge and the tree is not a second walk. The generators merge this tree into the document's **File Index**: files present in the tree but skipped from `files_data` (via `skip_file=True`, e.g. old generated outputs) surface there as `Omitted` instead of silently having no content section
 
 #### Phase 2: File Processing
 
@@ -124,7 +125,10 @@ for file_path in all_files:
 The [`process_target_file()`](../src/data2prompt/main.py#L27) function:
 
 1. **Routes env files by name**: if `is_env_file(name)`, delegates to the shared `env_parser` (redacts values) — this runs *before* the extension checks because a bare `.env` has no suffix
-2. **Checks exclusions**: Returns early for files matching `skip_exts`
+2. **Checks exclusions**: Returns early for files matching `skip_exts`, with a
+   `-- [Content skipped: (.ext) files are excluded by exclusion rules] --`
+   placeholder following the uniform tool-notice grammar
+   (see [parsers.md](parsers.md#tool-notice-grammar))
 3. **Selects parser**: Uses `registry.get_parser(ext)` to obtain the appropriate [`BaseParser`](../src/data2prompt/parsers.py#L92)
 4. **Delegates parsing**: Calls `parser.parse(file_path, config)` and returns [`ParserResult`](../src/data2prompt/parsers.py#L47)
 
@@ -219,7 +223,11 @@ Parsers return structured data using IR dataclasses:
 
 ### Statistics Tracking
 
-The [`_run()`](../src/data2prompt/main.py) function maintains comprehensive statistics:
+The [`_run()`](../src/data2prompt/main.py) function maintains comprehensive
+statistics. Beyond the UI report, the `stats` dict is now also consumed by the
+output generators: [`summarize_stats()`](../src/data2prompt/output.py) renders
+it as the document-level content summary (`> Contents:` line / `<stats/>`
+element) so the LLM sees the codebase's composition up front.
 
 | Stat Key | Purpose |
 |----------|---------|

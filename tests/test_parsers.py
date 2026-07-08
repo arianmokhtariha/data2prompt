@@ -534,6 +534,54 @@ def test_process_csv_samples_when_over_limit() -> None:
             os.remove(path)
 
 
+def test_process_csv_sample_notes_include_total_rows() -> None:
+    """Sample notes must ground the LLM with the full-dataset row count —
+    'random 10 of 100 rows' — so a sample is never mistaken for the data."""
+    rows = "\n".join([f"{i},val{i}" for i in range(100)])
+    csv_content = "id,value\n" + rows + "\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as tmp:
+        tmp.write(csv_content)
+        path = tmp.name
+    try:
+        tables = process_csv(path, sample_size=10, seed=42)
+        table = tables[0]
+        assert table.header_note == "-- [Sample: random 10 of 100 rows] --"
+        assert table.footer_note is not None and "10 of 100 rows" in table.footer_note
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_tool_notices_use_bracket_grammar() -> None:
+    """Every tool-inserted notice must use the `-- [...] --` grammar the
+    system instructions document; a `*Note:` star-note would silently break
+    that contract for the LLM."""
+    # Env skip note (--no-env-keys)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as tmp:
+        tmp.write("API_KEY=secret\n")
+        env_path = tmp.name
+    try:
+        skip_cfg = SimpleNamespace(env_keys=False)
+        skipped = EnvParser().parse(Path(env_path), skip_cfg)
+        assert skipped.content.startswith("-- [")
+        assert "*Note" not in skipped.content
+    finally:
+        if os.path.exists(env_path):
+            os.remove(env_path)
+
+    # Malformed-notebook note
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ipynb", delete=False) as tmp:
+        tmp.write("{not valid json")
+        nb_path = tmp.name
+    try:
+        cells = process_notebook(nb_path)
+        assert cells[0].source.startswith("-- [")
+        assert "*Error" not in cells[0].source
+    finally:
+        if os.path.exists(nb_path):
+            os.remove(nb_path)
+
+
 def test_process_csv_no_sampling_when_under_limit() -> None:
     csv_content = "id,value\n1,a\n2,b\n3,c\n"
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as tmp:

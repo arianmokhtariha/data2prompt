@@ -44,7 +44,10 @@ def process_target_file(file_path: Path, config: Config) -> ParserResult:
 
     if ext in config.skip_exts:
         return ParserResult(
-            content=f"*Note: Content skipped for ({ext}) file based on exclusion rules.*\n",
+            content=(
+                f"-- [Content skipped: ({ext}) files are excluded "
+                "by exclusion rules] --\n"
+            ),
             tokens=0,
             type=f"Excluded ({ext})",
             status="Skipped (Exclusion)",

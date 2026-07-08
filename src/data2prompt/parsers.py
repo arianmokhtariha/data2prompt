@@ -1,5 +1,4 @@
 import json
-import os
 import random
 import zipfile
 from dataclasses import dataclass, field
@@ -336,18 +335,22 @@ def process_csv(
             return [TableIR(
                 name=Path(file_path).name,
                 df=pd.DataFrame(),
-                header_note="-- [Schema only - data rows omitted] --",
+                header_note="-- [Schema only: data rows omitted] --",
                 schema=schema
             )]
 
         header_note = None
         footer_note = None
+        total_rows = len(df)
 
-        if len(df) > sample_size:
+        if total_rows > sample_size:
             # sort_index restores file order so the sample reads naturally.
             df = df.sample(sample_size, random_state=seed).sort_index()
-            header_note = f"-- [Sample - Random {sample_size} rows] --"
-            footer_note = f"-- [CSV truncated: Showing random {sample_size} rows to save context] --"
+            header_note = f"-- [Sample: random {sample_size} of {total_rows:,} rows] --"
+            footer_note = (
+                f"-- [CSV truncated: Showing random {sample_size} of "
+                f"{total_rows:,} rows to save context] --"
+            )
 
         return [TableIR(
             name=Path(file_path).name,
@@ -426,9 +429,20 @@ def process_notebook(
             
         return cells_ir
     except json.JSONDecodeError:
-        return [NotebookCellIR(number=0, type="markdown", source="*Error: Malformed Jupyter Notebook (Invalid JSON).*")]
+        return [NotebookCellIR(
+            number=0,
+            type="markdown",
+            source="-- [Error: Malformed Jupyter Notebook (Invalid JSON)] --",
+        )]
     except Exception as e:
-        return [NotebookCellIR(number=0, type="markdown", source=f"Error processing notebook: {_sanitize_error(e, Path(file_path))}")]
+        return [NotebookCellIR(
+            number=0,
+            type="markdown",
+            source=(
+                "-- [Error processing notebook: "
+                f"{_sanitize_error(e, Path(file_path))}] --"
+            ),
+        )]
 
 
 def process_sql(
@@ -481,7 +495,12 @@ def process_sql(
                 processed_lines.append(sampled_text)
                 if not sampled_text.endswith("\n"):
                     processed_lines.append("\n")
-                processed_lines.append(f"-- [Table data truncated: Showing random {sample_size} rows to save context] --\n")
+                # "buffered rows" — the buffer includes the INSERT header line,
+                # so the count must not overclaim an exact data-row total.
+                processed_lines.append(
+                    f"-- [Table data truncated: Showing random {sample_size} of "
+                    f"{len(table_data_buffer)} buffered rows to save context] --\n"
+                )
             else:
                 data_text = "".join(table_data_buffer)
                 data_text = enforce_table_limit(data_text, table_limit, table_truncate)
@@ -549,7 +568,7 @@ def process_sql(
 
         return "".join(processed_lines)
     except Exception as e:
-        return f"⚠️ Error reading SQL: {_sanitize_error(e, Path(file_path))}"
+        return f"-- [Error reading SQL: {_sanitize_error(e, Path(file_path))}] --"
 
 def _xlsx_has_visuals(file_path: Union[str, Path]) -> bool:
     """Cheaply detect embedded images/charts in an .xlsx workbook.
@@ -633,7 +652,7 @@ def process_excel(
                     schema = build_table_schema(df, include_describe=stats_summary)
 
                 if schema_only:
-                    header_note = (header_note or "") + "-- [Schema only - data rows omitted] --"
+                    header_note = (header_note or "") + "-- [Schema only: data rows omitted] --"
                     tables_ir.append(TableIR(
                         name=str(sheet_name),
                         df=pd.DataFrame(),
@@ -648,10 +667,16 @@ def process_excel(
                     footer_note = f"-- [Note: Sheet '{sheet_name}' appears to be a visual dashboard or empty. No tabular data extracted] --"
                 else:
                     # Sampling (The Safety Guard); sort_index restores sheet order.
-                    if len(df) > max_rows:
+                    total_rows = len(df)
+                    if total_rows > max_rows:
                         df = df.sample(n=max_rows, random_state=seed).sort_index()
-                        footer_note = (footer_note or "") + f"-- [Sheet truncated: Showing random {max_rows} rows to save context] --"
-                        header_note = (header_note or "") + f"-- [Sample - Random {max_rows} rows] --"
+                        footer_note = (footer_note or "") + (
+                            f"-- [Sheet truncated: Showing random {max_rows} of "
+                            f"{total_rows:,} rows to save context] --"
+                        )
+                        header_note = (header_note or "") + (
+                            f"-- [Sample: random {max_rows} of {total_rows:,} rows] --"
+                        )
 
                 tables_ir.append(TableIR(
                     name=str(sheet_name),
@@ -739,11 +764,12 @@ class SQLParser:
 
 class ExcelParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        # Get path relative to project root
+        # Project-relative path with forward slashes — must match the File
+        # Index / file-header path keys emitted by the output generators.
         try:
-            display_path = str(file_path.relative_to(Path.cwd())).replace(os.sep, '\\')
+            display_path = file_path.relative_to(Path.cwd()).as_posix()
         except ValueError:
-            display_path = str(file_path).replace(os.sep, '\\')
+            display_path = file_path.as_posix()
 
         content = process_excel(
             file_path,
@@ -814,20 +840,21 @@ def process_arrow_file(
             return [TableIR(
                 name=fp.name,
                 df=pd.DataFrame(),
-                header_note="-- [Schema only - data rows omitted] --",
+                header_note="-- [Schema only: data rows omitted] --",
                 schema=schema,
             )]
 
         header_note = None
         footer_note = None
+        total_rows = len(df)
 
-        if len(df) > sample_size:
+        if total_rows > sample_size:
             # sort_index restores file order so the sample reads naturally.
             df = df.sample(sample_size, random_state=seed).sort_index()
-            header_note = f"-- [Sample - Random {sample_size} rows] --"
+            header_note = f"-- [Sample: random {sample_size} of {total_rows:,} rows] --"
             footer_note = (
-                f"-- [{ext[1:].upper()} truncated: "
-                f"Showing random {sample_size} rows to save context] --"
+                f"-- [{ext[1:].upper()} truncated: Showing random {sample_size} "
+                f"of {total_rows:,} rows to save context] --"
             )
 
         return [TableIR(
@@ -867,8 +894,8 @@ class ArrowParser:
             import pyarrow  # noqa: F401
         except ImportError:
             note = (
-                f"*Note: {file_path.name} skipped — "
-                "pyarrow is not installed.*\n"
+                f"-- [Skipped: {file_path.name} requires pyarrow, "
+                "which is not installed] --\n"
             )
             tokens, _ = count_tokens(note)
             return ParserResult(
@@ -908,7 +935,10 @@ class DefaultParser:
 
         if is_binary(file_path):
             return ParserResult(
-                content=f"*Note: Binary content detected in {ext if ext else 'unknown'} file. Content skipped.*",
+                content=(
+                    f"-- [Binary content detected ({ext if ext else 'unknown'}): "
+                    "content not included] --"
+                ),
                 tokens=0,
                 type=f"Binary ({ext})",
                 status="Skipped (Binary)",
@@ -949,7 +979,12 @@ class DefaultParser:
                         status="Read"
                     )
         except Exception:
-            return ParserResult(content="*Could not read file.*", tokens=0, type="Error", status="Error")
+            return ParserResult(
+                content="-- [Error: could not read file] --",
+                tokens=0,
+                type="Error",
+                status="Error",
+            )
 
 
 def is_env_file(name: str) -> bool:
@@ -995,7 +1030,10 @@ class EnvParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
         if not config.env_keys:
             return ParserResult(
-                content="*Note: .env file content skipped (--no-env-keys).*\n",
+                content=(
+                    "-- [Env file skipped (--no-env-keys): "
+                    "content not included] --\n"
+                ),
                 tokens=0,
                 type="Env",
                 status="Skipped (Env)",

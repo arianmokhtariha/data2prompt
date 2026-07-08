@@ -1,12 +1,13 @@
 """
-Token-placeholder tests for the output generators.
+Structural and token-placeholder tests for the output generators.
 
-These tests confirm the metadata token contract: generate() emits the literal
-{{TOTAL_TOKENS}} / {{TOKEN_METHOD}} placeholders (it no longer receives a
-pre-computed count), and the main.py substitution step (count_tokens + two
-str.replace calls) resolves them to a real count + method with nothing left over.
+Covers the metadata token contract ({{TOTAL_TOKENS}} / {{TOKEN_METHOD}}
+placeholders resolved by the main.py substitution step), the File Index
+(status vocabulary, Omitted entries, forward-slash path keys), the
+document-level stats summary, and the end-of-codebase anchor.
 """
 
+from pathlib import Path
 from typing import List, Tuple
 from types import SimpleNamespace
 
@@ -33,18 +34,20 @@ def _sample_files() -> FilesData:
         {
             "path": "src/app.py",
             "content": "print('hello world')\n",
-            "type": "Code",
+            "type": "py",
             "tokens": 0,
-            "status": "OK",
+            "status": "Read",
         }
     ]
 
 
 def _render(generator: OutputGenerator) -> str:
     """Render a minimal project with the given generator (config defaults to None)."""
+    # tree_text is a flat list of real relative paths (the ProjectScanner
+    # contract) — any non-matching line would surface as an Omitted index row.
     return generator.generate(
         project_name="demo",
-        tree_text="demo/\n  src/\n    app.py",
+        tree_text="src/app.py",
         files_data=_sample_files(),
         stats={},
     )
@@ -143,9 +146,12 @@ def test_markdown_renders_notebook_cell_source_and_outputs() -> None:
         files_data=_notebook_files(),
         stats={},
     )
-    assert "x = 42" in output
-    assert "**Outputs:**" in output
-    assert "42" in output
+    # Scope to the Files section: the preamble also mentions the literal
+    # `**Outputs:**` marker when documenting the reading conventions.
+    files_section = output.split("# Files", 1)[1]
+    assert "x = 42" in files_section
+    assert "**Outputs:**" in files_section
+    assert "42" in files_section
 
 
 def test_markdown_notebook_cell_without_outputs_omits_outputs_block() -> None:
@@ -156,8 +162,11 @@ def test_markdown_notebook_cell_without_outputs_omits_outputs_block() -> None:
         files_data=_notebook_files(),
         stats={},
     )
-    # Cell 2 is markdown with no outputs — the Outputs block must not appear twice.
-    assert output.count("**Outputs:**") == 1
+    # Cell 2 is markdown with no outputs — only Cell 1 may emit an Outputs
+    # block. Count within the Files section only: the preamble legitimately
+    # contains the literal `**Outputs:**` marker in its reading conventions.
+    files_section = output.split("# Files", 1)[1]
+    assert files_section.count("**Outputs:**") == 1
 
 
 def test_xml_renders_notebook_cells() -> None:
@@ -168,10 +177,13 @@ def test_xml_renders_notebook_cells() -> None:
         files_data=_notebook_files(),
         stats={},
     )
-    assert '<cell' in output
-    assert 'type="code"' in output
-    assert 'x = 42' in output
-    assert '<outputs>' in output
+    # Scope past the preamble: it mentions the literal <cell and <outputs>
+    # markers when documenting the reading conventions.
+    body = output.split("</purpose>", 1)[1]
+    assert '<cell' in body
+    assert 'type="code"' in body
+    assert 'x = 42' in body
+    assert '<outputs>' in body
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +238,10 @@ def test_xml_renders_table_schema_block() -> None:
         project_name="demo", tree_text="scores.csv",
         files_data=files, stats={}, config=cfg,
     )
-    assert "<schema>" in output
-    assert "name" in output
+    # Scope past the preamble: it mentions the literal <schema> marker.
+    body = output.split("</purpose>", 1)[1]
+    assert "<schema>" in body
+    assert "name" in body
 
 
 def test_xml_schema_only_drops_data_rows() -> None:
@@ -239,7 +253,8 @@ def test_xml_schema_only_drops_data_rows() -> None:
     )
     assert "alice" not in output
     assert "bob" not in output
-    assert "<schema>" in output
+    # Scope past the preamble: it mentions the literal <schema> marker.
+    assert "<schema>" in output.split("</purpose>", 1)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +303,160 @@ def test_xml_file_path_with_ampersand_is_quoted() -> None:
         files_data=files, stats={},
     )
     assert 'path="R&amp;D' in output
+
+
+# ---------------------------------------------------------------------------
+# File Index — status vocabulary, Omitted entries, path keys
+# ---------------------------------------------------------------------------
+
+def _status_files() -> FilesData:
+    """One file per raw status that must map onto the index vocabulary."""
+    raw = [
+        ("src/app.py", "py", "Read"),
+        ("data/sales.csv", "CSV", "Sampled"),
+        ("blob.bin", "Binary (.bin)", "Skipped (Binary)"),
+        ("logo.png", "Excluded (.png)", "Skipped (Exclusion)"),
+        (".env", "Env", "Redacted"),
+    ]
+    return [
+        {"path": p, "content": "x", "type": t, "tokens": 0, "status": s}
+        for p, t, s in raw
+    ]
+
+
+def test_markdown_file_index_maps_statuses() -> None:
+    """Raw parser statuses render as the controlled index vocabulary."""
+    files = _status_files()
+    tree = "\n".join(f["path"] for f in files)
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text=tree, files_data=files, stats={},
+    )
+    assert "# File Index" in output
+    assert "# Directory Structure" not in output
+    assert "| src/app.py | py | Full |" in output
+    assert "| data/sales.csv | CSV | Sampled |" in output
+    assert "| blob.bin | Binary (.bin) | Binary Skipped |" in output
+    assert "| logo.png | Excluded (.png) | Excluded |" in output
+    assert "| .env | Env | Redacted |" in output
+
+
+def test_index_lists_tree_only_files_as_omitted() -> None:
+    """A tree path with no rendered section must appear as Omitted — and only
+    in the index, never as a content section."""
+    files = _sample_files()
+    tree = "old/PROMPT.md\nsrc/app.py"
+
+    md = MarkdownGenerator().generate(
+        project_name="demo", tree_text=tree, files_data=files, stats={},
+    )
+    assert "| old/PROMPT.md | - | Omitted |" in md
+    assert "## File: old/PROMPT.md" not in md
+
+    xml = XMLGenerator().generate(
+        project_name="demo", tree_text=tree, files_data=files, stats={},
+    )
+    assert '<entry path="old/PROMPT.md" type="-" status="Omitted"/>' in xml
+    assert '<file path="old/PROMPT.md"' not in xml
+
+
+def test_paths_render_with_forward_slashes() -> None:
+    """An OS-native relative path (backslashes on Windows) must render with
+    forward slashes in the index, the file header, and the XML path attribute
+    — one exact key. main.py passes str(Path), so the input is OS-native."""
+    files = [{
+        "path": str(Path("src") / "pkg" / "app.py"),
+        "content": "x = 1",
+        "type": "py",
+        "tokens": 0,
+        "status": "Read",
+    }]
+    tree = "src/pkg/app.py"
+
+    md = MarkdownGenerator().generate(
+        project_name="demo", tree_text=tree, files_data=files, stats={},
+    )
+    assert "## File: src/pkg/app.py" in md
+    assert "| src/pkg/app.py | py | Full |" in md
+    assert "src\\pkg" not in md
+
+    xml = XMLGenerator().generate(
+        project_name="demo", tree_text=tree, files_data=files, stats={},
+    )
+    assert '<file path="src/pkg/app.py"' in xml
+    assert '<entry path="src/pkg/app.py"' in xml
+    # No stray Omitted row: the normalized path must match the tree line.
+    assert 'status="Omitted"' not in xml
+
+
+def test_xml_file_tag_carries_type_and_status() -> None:
+    """<file> elements expose quoted type/status attributes with the resolved
+    vocabulary, even when the path needs entity escaping."""
+    files = [{
+        "path": "R&D/report.txt",
+        "content": "quarterly numbers",
+        "type": "txt",
+        "tokens": 0,
+        "status": "Read",
+    }]
+    output = XMLGenerator().generate(
+        project_name="demo", tree_text="R&D/report.txt",
+        files_data=files, stats={},
+    )
+    assert '<file path="R&amp;D/report.txt" type="txt" status="Full">' in output
+
+
+# ---------------------------------------------------------------------------
+# Metadata stats summary and end-of-codebase anchor
+# ---------------------------------------------------------------------------
+
+def test_metadata_stats_renders_only_nonzero_counts() -> None:
+    """Zero counts are dropped; Total files always renders."""
+    stats = {"file_count": 3, "csv_count": 2, "sql_count": 0, "binary_count": 1}
+
+    md = MarkdownGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats=stats,
+    )
+    assert "> Contents: Total files: 3 | CSV: 2 | Binary skipped: 1" in md
+    assert "SQL:" not in md  # zero count must not render anywhere
+
+    xml = XMLGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats=stats,
+    )
+    assert '<stats total_files="3" csv="2" binary_skipped="1"/>' in xml
+
+
+def test_metadata_total_files_falls_back_to_rendered_count() -> None:
+    """With an empty stats dict (programmatic callers) Total files still
+    renders, derived from the number of rendered files."""
+    md = _render(MarkdownGenerator())
+    assert "> Contents: Total files: 1" in md
+
+
+def test_end_anchor_is_final_section() -> None:
+    """Both formats must end on the explicit end-of-codebase anchor."""
+    md = _render(MarkdownGenerator())
+    assert "# End of codebase: demo" in md
+    assert md.rstrip().endswith(
+        "content marked sampled, truncated, or omitted is not fully included "
+        "in this document."
+    )
+
+    xml = _render(XMLGenerator())
+    tail = [line for line in xml.splitlines() if line.strip()][-2:]
+    assert tail == ["</end_of_codebase>", "</codebase>"]
+    assert "<end_of_codebase>" in xml
+
+
+def test_prose_line_and_malformed_heading_gone() -> None:
+    """The stray prose line and the old malformed heading must not resurface."""
+    for generator in (MarkdownGenerator(), XMLGenerator()):
+        output = _render(generator)
+        assert "This section contains the contents" not in output
+    md = _render(MarkdownGenerator())
+    assert "## Purpose" in md
+    assert "## purpose:" not in md
 
 
 # ---------------------------------------------------------------------------

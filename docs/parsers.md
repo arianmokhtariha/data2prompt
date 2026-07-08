@@ -274,7 +274,10 @@ Uses [`process_csv()`](../src/data2prompt/parsers.py#L149) to:
 4. Otherwise sample `config.csv_sample_size` rows using `config.seed` for
    reproducibility, then `sort_index()` so the sampled rows appear in **original
    file order** (time series stay chronological, ids stay ascending)
-5. Add header/footer notes indicating sampling; attach the schema
+5. Add header/footer notes indicating sampling; attach the schema. The notes
+   ground the sample in the full-dataset size —
+   `-- [Sample: random 15 of 1,234,567 rows] --` — captured via `len(df)`
+   **before** sampling, so an LLM can never mistake the sample for the data
 6. Return a single-element `TableIR` list (status `"Schema Only"` when `schema_only`)
 
 **Error Handling:**
@@ -329,7 +332,10 @@ Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
 
 **Key Algorithm:**
 - First line (INSERT header) is always preserved
-- Remaining rows are randomly sampled
+- Remaining rows are randomly sampled; the truncation note reports
+  `random N of M buffered rows` — "buffered" because the buffer includes the
+  INSERT header line, so the count deliberately does not overclaim an exact
+  data-row total
 - Secondary truncation ensures large sampled blocks don't exceed character limits
 
 **Schema-only mode:** when `config.schema_only` is set, `process_sql()` drops all buffered
@@ -359,8 +365,13 @@ Uses [`process_excel()`](../src/data2prompt/parsers.py) to:
    - Under `schema_only`: append a schema-only `TableIR` (empty df) and skip rows
    - Otherwise sample `config.csv_sample_size` rows if exceeding limit, then
      `sort_index()` so the sample keeps original sheet order
-   - Add truncation note if sampling applied
+   - Add sampling notes carrying the full sheet's row count (captured before
+     sampling), e.g. `-- [Sample: random 15 of 8,200 rows] --`
 5. Return list of `TableIR` objects (one per sheet)
+
+`ExcelParser.parse()` computes each sheet's `file_path` (`display_path`) as the
+**cwd-relative path with forward slashes** (`Path.as_posix()`), matching the
+canonical path keys used by the output File Index and file headers.
 
 #### Visual-element detection
 
@@ -422,7 +433,9 @@ Handles columnar binary formats via [`process_arrow_file()`](../src/data2prompt/
 4. **Schema & stats on full data**: `build_table_schema()` runs on the full DataFrame
    before sampling, so row counts and missing percentages reflect the entire file.
 5. **Sampling**: mirrors `CSVParser` — if the row count exceeds `config.csv_sample_size`,
-   a seeded random sample is taken, then re-sorted to original file order.
+   a seeded random sample is taken, then re-sorted to original file order. The
+   sampling notes carry the full row count (`-- [Sample: random 15 of 50,000
+   rows] --`), captured before sampling.
 6. **schema_only mode**: returns an empty-df `TableIR` carrying only the schema.
 
 **Statistics updated**: `parquet_count`, `feather_count`, or `arrow_count` (one per file,
@@ -540,6 +553,42 @@ For Arrow/Parquet/Feather files specifically, the error is further trimmed to on
 root cause — the final colon-separated clause of pyarrow's chained error string — since
 pyarrow repeats the full path and error context multiple times in a single message.
 
+## Tool-Notice Grammar
+
+Every notice the tool inserts into the output — sampling, truncation, omission,
+redaction, and error notes — uses one uniform grammar:
+
+```
+-- [Category: detail] --
+```
+
+This single convention is documented in the system-instruction preambles
+([`constants.py`](constants.md)) so an LLM can reliably distinguish
+tool-inserted notices from original file content. The former `*Note: ...*`
+star-notes and emoji-prefixed errors have been eliminated. When adding a new
+notice, follow the "Adding a new `-- [...] --` tool notice" checklist in
+[`output-contract.md`](output-contract.md) and add a row to this table.
+Current notices:
+
+| Notice (representative form) | Emitted by |
+|---|---|
+| `-- [Sample: random 15 of 1,234,567 rows] --` | CSV / Excel / Arrow sampling (header) |
+| `-- [CSV truncated: Showing random 15 of 1,234,567 rows to save context] --` | `process_csv` (footer; `Sheet`/`PARQUET`/`FEATHER`/`ARROW` variants likewise) |
+| `-- [Schema only: data rows omitted] --` | CSV / Excel / Arrow under `--schema-only` |
+| `-- [N data row(s) omitted: schema-only] --` | `process_sql` under `--schema-only` |
+| `-- [Table data truncated: Showing random 15 of 200 buffered rows to save context] --` | `process_sql` sampling |
+| `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --` | `process_sql` line cap |
+| `-- [Output truncated: Showing first 40 lines] --` | notebook outputs |
+| `-- [Line truncated: showing first 1000 characters] --` | `truncate_long_lines` |
+| `-- [Table truncated: Total size exceeded N characters. ...] --` | `enforce_table_limit` |
+| `-- [File truncated: Showing first 10KB ...] --` | `DefaultParser` size cap |
+| `-- [Binary content detected (.bin): content not included] --` | `DefaultParser` |
+| `-- [Content skipped: (.png) files are excluded by exclusion rules] --` | `process_target_file` (main.py) |
+| `-- [Env file skipped (--no-env-keys): content not included] --` | `EnvParser` |
+| `-- [Skipped: file.parquet requires pyarrow, which is not installed] --` | `ArrowParser` |
+| `-- [Error: Malformed Jupyter Notebook (Invalid JSON)] --` | `process_notebook` |
+| `-- [Error reading CSV/SQL/Excel/...: message] --` | error paths (sanitized) |
+
 ## Constants Used
 
 The parsers module imports configuration constants from [`constants.py`](../src/data2prompt/constants.py):
@@ -619,3 +668,9 @@ Beyond the established statuses (`Read`, `Sampled`, `Cleaned`, `Parsed`, `Extrac
 | `Skipped (No pyarrow)` | A Parquet / Feather / Arrow file skipped because pyarrow is not installed |
 
 These statistics feed into the UI progress reporting system.
+
+The raw statuses above are an internal vocabulary. For the generated document,
+[`output.py`](output.md) maps them onto the controlled **File Index** vocabulary
+(`Full`, `Sampled`, `Cleaned`, ...) via `INCLUSION_STATUS_MAP` in
+[`constants.py`](constants.md) — see [output.md](output.md#file-index) for the
+mapping and its fallback rules.

@@ -427,12 +427,16 @@ tree = scanner.generate_tree(files)
 print(tree)
 # Output:
 # README.md
-# src\data2prompt\main.py
-# src\data2prompt\utils.py
+# src/data2prompt/main.py
+# src/data2prompt/utils.py
 ```
 
 **Characteristics:**
-- Returns backslash-separated paths for Windows consistency
+- Returns forward-slash paths on every platform (`Path.as_posix()`). These
+  strings are the canonical path keys: the output generators' File Index and
+  file headers must match them exactly, and forward slashes are what LLMs
+  parse most reliably (backslashes collide with escape sequences and tokenize
+  worse)
 - Sorted alphabetically for deterministic output
 - Ignores directories in output (only files)
 

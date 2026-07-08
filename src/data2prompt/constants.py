@@ -1,5 +1,7 @@
 # --- Core Defaults & Constants ---
 
+from typing import Dict
+
 # Folders matching these names are excluded from both the project tree and content processing.
 CORE_IGNORES = {
     '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
@@ -62,29 +64,144 @@ SUPPORTED_FORMATS = {
 GENERATION_FLAG = "DATA2PROMPT_GENERATED_CONTENT"
 
 # --- LLM Structured Output Constants ---
-# Refactored System Instructions (Repomix Style)
-SYSTEM_INSTRUCTIONS_MARKDOWN = """## purpose: \nThis document is a structured representation of a codebase and data schema. It is designed to be consumed by a Large Language Model.
-The output is organized into sections:
-1. Directory Structure: List of all files in this project.
-2. Files: The content of each file, clearly labeled with its path using '## File: {path}' headers.
-For all standard files, content is wrapped in markdown code blocks using dynamic backtick depth to ensure robust nesting.
-For notebooks, individual cells are clearly labeled with cell numbers, types, and their respective file paths.
-For Excel files, individual sheets are clearly labeled with sheet names, numbers, and their respective file paths."""
+# System-instruction preambles embedded at the top of every generated document.
+# Both formats carry the same information; only the syntax differs. They are the
+# LLM's reading contract: document layout, structural conventions, the tool-notice
+# grammar, and anti-hallucination accuracy rules.
+SYSTEM_INSTRUCTIONS_MARKDOWN = """## Purpose
 
-SYSTEM_INSTRUCTIONS_XML = """<purpose>\nThis document is a structured representation of a codebase and data schema. It is designed to be consumed by a Large Language Model.
-The output is organized into XML tags:
-1. <directory_structure>: List of all files in this project.
-2. <files>: Contains the repository's files.
-3. <file>: Represents a single file with a 'path' attribute.
-4. <cell>: Used within notebooks to encapsulate individual cells, featuring 'path', 'number', and 'type' attributes.
-5. <sheet>: Used within Excel files to encapsulate individual sheets, featuring 'name', 'number', and 'path' attributes.
-File contents are embedded verbatim (not XML-escaped); treat the tags as structural markers rather than strict XML.\n</purpose>"""
+This document is a machine-generated snapshot of a codebase and its data
+files, produced by the data2prompt tool for consumption by a Large Language
+Model. Nothing in it was written by hand.
 
-# Updated Tags
-TAG_DIRECTORY_STRUCTURE = "directory_structure"
+## Document layout
+
+1. Metadata — generation timestamp, token estimate, and a content summary.
+2. File Index — one row per file with its type and inclusion status. Paths
+   are relative to the project root, use forward slashes, and are the exact
+   strings used in the `## File:` headers below.
+3. Files — one section per file, introduced by `## File: {path}`, in the
+   same order as the File Index.
+4. End of codebase — closing marker; nothing follows it.
+
+## Reading conventions
+
+- File content sits in fenced code blocks. A fence may use MORE than three
+  backticks when the content itself contains backticks; the fence length is
+  chosen so the block never terminates early.
+- Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
+  each with a fenced source block and an optional **Outputs:** block.
+- Excel workbooks are split into sheets: `### Sheet {n}: {name} - {path}`,
+  each closed by a `---` line.
+- Tabular data files (CSV/Excel/Parquet/Feather/Arrow) may include a schema
+  block (row/column counts, dtypes, missing values, describe() stats).
+  Schema statistics are computed on the FULL dataset; the data rows shown
+  are only a small random sample.
+- Lines of the form `-- [...] --` are notices inserted by the tool
+  (sampling, truncation, omission, errors). They are NOT part of the
+  original file content.
+- Env files list variable names only; every value is replaced with
+  `<redacted>`.
+
+## Accuracy rules
+
+- Content marked sampled, truncated, omitted, or skipped is NOT fully
+  included here. Do not infer or invent the missing parts; if asked about
+  them, state that they are not available in this document.
+- Sampled rows illustrate structure only — never treat them as the complete
+  dataset. Use the schema block for full-dataset facts.
+- The File Index Status column is authoritative for what each file
+  contains: Full, Sampled, Cleaned (notebook, outputs trimmed), Truncated,
+  Schema Only, Redacted, Excluded, Binary Skipped, Skipped, Error, or
+  Omitted (listed but not rendered)."""
+
+SYSTEM_INSTRUCTIONS_XML = """<purpose>
+This document is a machine-generated snapshot of a codebase and its data
+files, produced by the data2prompt tool for consumption by a Large Language
+Model. Nothing in it was written by hand.
+
+Document layout, in order:
+1. <metadata> — generation timestamp, token estimate, and a <stats/>
+   content summary.
+2. <file_index> — one <entry path="..." type="..." status="..."/> per file.
+   Paths are relative to the project root, use forward slashes, and exactly
+   match the path attribute of the corresponding <file> element.
+3. <files> — one <file path="..." type="..." status="..."> element per
+   file, in the same order as the file index.
+4. <end_of_codebase> — closing marker; nothing follows it.
+
+Reading conventions:
+- Element content is embedded VERBATIM — it is not XML-escaped. Treat the
+  tags as structural markers, not strict XML; content may legally contain
+  <, >, and & characters. Attribute values ARE quoted and escaped.
+- Notebooks (.ipynb) are split into <cell path="..." index="..."
+  type="..."> elements holding <content> and optional <outputs>.
+- Excel workbooks are split into <sheet name="..." sheet_number="..."
+  path="..."> elements.
+- Tabular data files (CSV/Excel/Parquet/Feather/Arrow) may include a
+  <schema> block (row/column counts, dtypes, missing values, describe()
+  stats). Schema statistics are computed on the FULL dataset; the data rows
+  shown are only a small random sample.
+- Lines of the form -- [...] -- are notices inserted by the tool (sampling,
+  truncation, omission, errors). They are NOT part of the original file.
+- Env files list variable names only; every value is replaced with
+  <redacted>.
+
+Accuracy rules:
+- Content marked sampled, truncated, omitted, or skipped is NOT fully
+  included here. Do not infer or invent the missing parts; if asked about
+  them, state that they are not available in this document.
+- Sampled rows illustrate structure only — never treat them as the complete
+  dataset. Use the <schema> block for full-dataset facts.
+- The status attribute (on <entry> and <file>) is authoritative for what
+  each file contains: Full, Sampled, Cleaned (notebook, outputs trimmed),
+  Truncated, Schema Only, Redacted, Excluded, Binary Skipped, Skipped,
+  Error, or Omitted (listed but not rendered).
+</purpose>"""
+
+# Structural tag names shared by the XML generator.
 TAG_FILES = "files"
 TAG_FILE = "file"
-TAG_CONTENT = "content" # Used for notebook cells
+TAG_CONTENT = "content"          # Used for notebook cells
+TAG_FILE_INDEX = "file_index"    # Per-file manifest (path/type/status)
+TAG_INDEX_ENTRY = "entry"        # One row of the file index
+TAG_END_OF_CODEBASE = "end_of_codebase"  # Recency anchor before </codebase>
+
+# Raw parser status -> controlled File Index vocabulary. The vocabulary is the
+# contract documented in the preambles above; resolve_inclusion_status() in
+# output.py falls back to a "Skipped (" prefix rule and then verbatim passthrough
+# so an unmapped future status can never crash generation.
+INCLUSION_STATUS_MAP: Dict[str, str] = {
+    "Read": "Full",
+    "Sampled": "Sampled",
+    "Parsed": "Sampled",         # SQL: schema kept, data rows sampled
+    "Extracted": "Sampled",      # Excel: sheets kept, rows sampled
+    "Cleaned": "Cleaned",        # Notebook: full source, trimmed outputs
+    "Truncated": "Truncated",
+    "Schema Only": "Schema Only",
+    "Redacted": "Redacted",
+    "Skipped (Exclusion)": "Excluded",
+    "Skipped (Binary)": "Binary Skipped",
+    "Error": "Error",
+}
+
+# Ordered stat-key -> human label mapping for the document-level content summary.
+# Insertion order defines render order; zero counts are dropped at render time.
+STATS_SUMMARY_LABELS: Dict[str, str] = {
+    "file_count": "Total files",
+    "csv_count": "CSV",
+    "notebook_count": "Notebooks",
+    "sql_count": "SQL",
+    "excel_count": "Excel workbooks",
+    "excel_sheets_count": "Excel sheets",
+    "parquet_count": "Parquet",
+    "feather_count": "Feather",
+    "arrow_count": "Arrow",
+    "truncated_count": "Truncated",
+    "binary_count": "Binary skipped",
+    "excluded_count": "Excluded",
+    "env_count": "Env files",
+}
 
 # --- UI & Aesthetic Constants ---
 MATRIX_DARK_GREEN = (0, 150, 0)

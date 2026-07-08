@@ -1,7 +1,7 @@
-import os
 import pandas as pd
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Type, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple, Type, TYPE_CHECKING
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
@@ -9,10 +9,14 @@ if TYPE_CHECKING:
     from data2prompt.cli import Config
 
 from data2prompt.constants import (
-    TAG_DIRECTORY_STRUCTURE,
     TAG_FILES,
     TAG_FILE,
     TAG_CONTENT,
+    TAG_FILE_INDEX,
+    TAG_INDEX_ENTRY,
+    TAG_END_OF_CODEBASE,
+    INCLUSION_STATUS_MAP,
+    STATS_SUMMARY_LABELS,
     SYSTEM_INSTRUCTIONS_MARKDOWN,
     SYSTEM_INSTRUCTIONS_XML,
     GENERATION_FLAG
@@ -25,6 +29,106 @@ from data2prompt.parsers import (
     enforce_table_limit,
     render_schema_block,
 )
+
+
+@dataclass(frozen=True)
+class IndexEntry:
+    """One File Index row: the canonical path key plus type and status."""
+    path: str
+    type: str
+    status: str
+
+
+def _display_path(rel_path: str) -> str:
+    """Project-relative path with forward slashes.
+
+    This string is the canonical path key: identical in the File Index, the
+    Markdown ``## File:`` headers, and the XML ``path`` attributes, so an LLM
+    can cross-reference sections by exact match.
+    """
+    return Path(rel_path).as_posix()
+
+
+def resolve_inclusion_status(status: str) -> str:
+    """Map a raw parser status onto the controlled File Index vocabulary.
+
+    Unmapped ``Skipped (...)`` variants collapse to ``Skipped``; anything else
+    unknown passes through verbatim, so a future status never breaks a run.
+    """
+    mapped = INCLUSION_STATUS_MAP.get(status)
+    if mapped is not None:
+        return mapped
+    if status.startswith("Skipped"):
+        return "Skipped"
+    return status
+
+
+def build_file_index(
+    tree_text: str,
+    files_data: List[FileData],
+) -> List[IndexEntry]:
+    """Build the File Index from rendered files plus tree-only leftovers.
+
+    Rendered files come first, in document order (index order matches the
+    order of the file sections). Paths present in the tree but not rendered
+    (e.g. previously generated outputs) are appended as ``Omitted`` so every
+    scanned file is accounted for.
+    """
+    entries: List[IndexEntry] = []
+    rendered_paths = set()
+    for file_info in files_data:
+        path = _display_path(file_info['path'])
+        rendered_paths.add(path)
+        entries.append(IndexEntry(
+            path=path,
+            type=file_info['type'],
+            status=resolve_inclusion_status(file_info['status']),
+        ))
+    leftovers = sorted(
+        line.strip()
+        for line in tree_text.splitlines()
+        if line.strip() and line.strip() not in rendered_paths
+    )
+    entries.extend(
+        IndexEntry(path=path, type="-", status="Omitted") for path in leftovers
+    )
+    return entries
+
+
+def summarize_stats(
+    stats: Dict[str, int],
+    file_total: int,
+) -> List[Tuple[str, int]]:
+    """(label, count) pairs for the content summary.
+
+    Order follows ``STATS_SUMMARY_LABELS``. ``Total files`` is always present
+    (falling back to ``file_total`` when the stat is missing or zero); other
+    zero counts are dropped to save tokens.
+    """
+    pairs: List[Tuple[str, int]] = []
+    for key, label in STATS_SUMMARY_LABELS.items():
+        if key == "file_count":
+            pairs.append((label, stats.get(key) or file_total))
+            continue
+        count = stats.get(key, 0)
+        if count:
+            pairs.append((label, count))
+    return pairs
+
+
+def _end_recap(project_name: str, indexed_count: int) -> str:
+    """One-sentence closing recap shared by both output formats."""
+    return (
+        f"This concludes the data2prompt snapshot of {project_name}. The File "
+        f"Index above lists all {indexed_count} files; content marked sampled, "
+        "truncated, or omitted is not fully included in this document."
+    )
+
+
+def _md_cell(text: str) -> str:
+    """Escape pipes so a value can sit inside a Markdown table cell."""
+    return text.replace("|", "\\|")
+
 
 class OutputGenerator(ABC):
     @abstractmethod
@@ -52,6 +156,10 @@ class MarkdownGenerator(OutputGenerator):
         render_block = stats_summary or schema_only
         render_data = not schema_only
 
+        index_entries = build_file_index(tree_text, files_data)
+        stat_pairs = summarize_stats(stats, len(files_data))
+        contents_line = " | ".join(f"{label}: {count}" for label, count in stat_pairs)
+
         lines = [
             f"<!-- {GENERATION_FLAG} -->",
             "",
@@ -62,27 +170,29 @@ class MarkdownGenerator(OutputGenerator):
             f"> Generated on: {timestamp}",
             # Placeholders substituted by main.py once the full output is counted.
             "> Tokens: {{TOTAL_TOKENS}} (est. via {{TOKEN_METHOD}})",
+            f"> Contents: {contents_line}",
             "",
-            "# Directory Structure",
-            "```text",
-            tree_text,
-            "```",
+            "# File Index",
             "",
-            "# Files",
-            "",
-            "This section contains the contents of the repository's files.",
-            ""
+            "| Path | Type | Status |",
+            "|---|---|---|",
         ]
-        
+        for entry in index_entries:
+            lines.append(
+                f"| {_md_cell(entry.path)} | {_md_cell(entry.type)} "
+                f"| {_md_cell(entry.status)} |"
+            )
+        lines.extend(["", "# Files", ""])
+
         for file_info in files_data:
             rel_path = file_info['path']
-            # Normalize path to match directory structure (always use backslashes)
-            display_path = rel_path.replace(os.sep, '\\')
             content = file_info['content']
             ext = Path(rel_path).suffix.lower()
-            
+            # Canonical forward-slash path — exact match with the File Index.
+            display_path = _display_path(rel_path)
+
             lines.append(f"## File: {display_path}")
-            
+
             if isinstance(content, list) and content and isinstance(content[0], NotebookCellIR):
                 # Render Notebook IR
                 for cell in content:
@@ -92,14 +202,14 @@ class MarkdownGenerator(OutputGenerator):
                     lines.append(f"{wrapper}{lang}")
                     lines.append(cell.source)
                     lines.append(wrapper)
-                    
+
                     if cell.outputs:
                         lines.append("\n**Outputs:**")
                         lines.append("```text")
                         lines.append(cell.outputs)
                         lines.append("```")
                     lines.append("")
-            
+
             elif isinstance(content, list) and content and isinstance(content[0], TableIR):
                 # Render Table IR (CSV/Excel)
                 for table in content:
@@ -137,7 +247,7 @@ class MarkdownGenerator(OutputGenerator):
                         lines.append("---")
 
                     lines.append("")
-            
+
             else:
                 # Standard files or fallback string content
                 str_content = str(content)
@@ -151,9 +261,15 @@ class MarkdownGenerator(OutputGenerator):
                 lines.append(f"{wrapper}{lang}")
                 lines.append(str_content)
                 lines.append(wrapper)
-            
+
             lines.append("")
-            
+
+        # Recency anchor: an explicit terminal section so the model knows the
+        # document is complete and nothing was cut off mid-file.
+        lines.append(f"# End of codebase: {project_name}")
+        lines.append("")
+        lines.append(_end_recap(project_name, len(index_entries)))
+
         return "\n".join(lines)
 
 class XMLGenerator(OutputGenerator):
@@ -172,6 +288,13 @@ class XMLGenerator(OutputGenerator):
         render_block = stats_summary or schema_only
         render_data = not schema_only
 
+        index_entries = build_file_index(tree_text, files_data)
+        stat_pairs = summarize_stats(stats, len(files_data))
+        stats_attrs = " ".join(
+            f'{label.lower().replace(" ", "_")}="{count}"'
+            for label, count in stat_pairs
+        )
+
         lines = [
             f"<!-- {GENERATION_FLAG} -->",
             "",
@@ -183,26 +306,39 @@ class XMLGenerator(OutputGenerator):
             f"    <generated_on>{timestamp}</generated_on>",
             # Placeholders substituted by main.py once the full output is counted.
             '    <total_tokens method="{{TOKEN_METHOD}}">{{TOTAL_TOKENS}}</total_tokens>',
+            f"    <stats {stats_attrs}/>",
             "</metadata>",
             "",
-            f"<{TAG_DIRECTORY_STRUCTURE}>",
-            tree_text,
-            f"</{TAG_DIRECTORY_STRUCTURE}>",
+            f"<{TAG_FILE_INDEX}>",
+        ]
+        for entry in index_entries:
+            lines.append(
+                f'    <{TAG_INDEX_ENTRY} path={quoteattr(entry.path)} '
+                f'type={quoteattr(entry.type)} '
+                f'status={quoteattr(entry.status)}/>'
+            )
+        lines.extend([
+            f"</{TAG_FILE_INDEX}>",
             "",
             f"<{TAG_FILES}>",
-            "This section contains the contents of the repository's files.",
             ""
-        ]
-        
+        ])
+
         for file_info in files_data:
             rel_path = file_info['path']
-            # Normalize path to match directory structure (always use backslashes)
-            display_path = rel_path.replace(os.sep, '\\')
             content = file_info['content']
-            
+            # Canonical forward-slash path — exact match with the file index.
+            display_path = _display_path(rel_path)
+
             # Attribute values come from user data (paths, sheet names) — quoteattr
             # keeps a name like `Q1 "final" <rev>` from breaking the tag structure.
-            lines.append(f'<{TAG_FILE} path={quoteattr(display_path)}>')
+            # status carries the resolved vocabulary so it cross-references the
+            # file index exactly.
+            lines.append(
+                f'<{TAG_FILE} path={quoteattr(display_path)} '
+                f'type={quoteattr(file_info["type"])} '
+                f'status={quoteattr(resolve_inclusion_status(file_info["status"]))}>'
+            )
 
             if isinstance(content, list) and content and isinstance(content[0], NotebookCellIR):
                 # Render Notebook IR to XML
@@ -260,17 +396,23 @@ class XMLGenerator(OutputGenerator):
                     # Close Sheet block if applicable
                     if table.sheet_number is not None:
                         lines.append('</sheet>')
-            
+
             else:
                 # Standard files or fallback string content
                 lines.append(str(content))
-            
+
             lines.append(f"</{TAG_FILE}>")
             lines.append("")
-            
+
         lines.append(f"</{TAG_FILES}>")
+        lines.append("")
+        # Recency anchor: an explicit terminal element so the model knows the
+        # document is complete and nothing was cut off mid-file.
+        lines.append(f"<{TAG_END_OF_CODEBASE}>")
+        lines.append(_end_recap(project_name, len(index_entries)))
+        lines.append(f"</{TAG_END_OF_CODEBASE}>")
         lines.append("</codebase>")
-        
+
         return "\n".join(lines)
 
 # Explicit strategy mapping — get_generator refuses unknown formats instead of

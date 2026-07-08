@@ -65,6 +65,19 @@ def test_env_local_routes_to_env_parser() -> None:
         assert result.stats_update == {"env_count": 1}
 
 
+def test_exclusion_note_uses_bracket_grammar() -> None:
+    """The skip_exts placeholder must use the `-- [...] --` notice grammar the
+    system instructions document, so the LLM can recognize it as tool-inserted."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        png = Path(tmpdir) / "logo.png"
+        png.write_bytes(b"\x89PNG fake")
+        result = process_target_file(png, _env_cfg())
+
+        assert result.status == "Skipped (Exclusion)"
+        assert result.content.startswith("-- [")
+        assert "*Note" not in result.content
+
+
 def test_config_env_routes_to_env_parser_even_when_ext_in_skip_exts() -> None:
     """Name-based routing wins even if '.env' is explicitly injected into skip_exts.
 

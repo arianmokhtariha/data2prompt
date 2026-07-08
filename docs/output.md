@@ -2,6 +2,12 @@
 
 The `data2prompt` project supports multiple output formats to ensure compatibility with various LLM context window requirements. The generation logic is implemented using the **Strategy Pattern**, allowing for easy extension to new formats.
 
+> **Extending the output?** The design invariants (format parity, notice
+> grammar, canonical path keys, controlled vocabularies) and step-by-step
+> integration checklists live in [`output-contract.md`](output-contract.md).
+> This file documents the structure as it exists; that one governs how it may
+> change.
+
 ## Architecture Overview
 
 The output module ([`src/data2prompt/output.py`](../src/data2prompt/output.py#L1)) is responsible for transforming parsed file data into structured text representations optimized for LLM consumption. It receives Intermediate Representations (IR) from the parsing layer and produces either Markdown or XML output.
@@ -69,18 +75,25 @@ point; the error guards programmatic callers.)
 
 ### 1. Markdown (`MarkdownGenerator`)
 
-The [`MarkdownGenerator`](../src/data2prompt/output.py#L35) produces structured Markdown documents optimized for human readability and LLM context windows that prefer Markdown formatting.
+The [`MarkdownGenerator`](../src/data2prompt/output.py) produces structured Markdown documents optimized for human readability and LLM context windows that prefer Markdown formatting.
 
 #### Output Structure
 
 | Section | Description |
 |---------|-------------|
-| Generation Flag | `<!-- DATA2PROMPT_GENERATED_CONTENT -->` marker for recursive scanning prevention |
+| Generation Flag | `<!-- DATA2PROMPT_GENERATED_CONTENT -->` marker for recursive scanning prevention (always line 1) |
 | Header | `# codebase: {project_name}` |
-| System Instructions | LLM instructions from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py#L53) |
-| Metadata | Timestamp and token estimation via [`o200k_base`](../src/data2prompt/utils.py#L62) |
-| Directory Structure | Code block with tree output |
-| Files | Individual files with `## File: {path}` headers |
+| System Instructions | LLM reading contract from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) — document layout, structural conventions, tool-notice grammar, and anti-hallucination accuracy rules |
+| Metadata | `> Generated on:`, `> Tokens:` (via [`o200k_base`](../src/data2prompt/utils.py)), and `> Contents:` — a content summary built from the `stats` dict (see [Stats Summary](#document-level-stats-summary)) |
+| File Index | `# File Index` — a `\| Path \| Type \| Status \|` table, one row per file (see [File Index](#file-index)) |
+| Files | Individual files with `## File: {path}` headers, in File Index order |
+| End Anchor | `# End of codebase: {project_name}` + one-sentence recap (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
+
+All paths in the output (index rows, `## File:` headers, cell/sheet labels) use
+**forward slashes on every platform** — they are one exact string, the canonical
+path key, so an LLM can cross-reference the index, headers, and tree by literal
+match. Backslashes were dropped because they collide with escape sequences in
+code contexts and tokenize worse.
 
 #### Notebook Rendering
 
@@ -134,9 +147,87 @@ Resulting behavior (all metadata is computed on the **full** DataFrame):
 | on | on | stats block, no rows |
 | on | `--no-stats-summary` | bare column + dtype schema, no rows |
 
+#### File Index
+
+The File Index **replaces the former `# Directory Structure` section** in both
+formats. The old tree was a flat sorted path list, so it carried no information
+the index doesn't; merging the two avoids serializing every path twice and gives
+the LLM a single orientation map: one entry per file with its `Type` and its
+inclusion `Status`.
+
+Construction ([`build_file_index()`](../src/data2prompt/output.py)):
+
+1. Rendered files come first, **in document order** — index order always matches
+   the order of the `## File:` / `<file>` sections below it.
+2. Paths present in `tree_text` but absent from `files_data` (files skipped via
+   `skip_file=True`, e.g. previously generated outputs detected by
+   `GENERATION_FLAG`) are appended with type `-` and status `Omitted`. Every
+   scanned file is therefore accounted for — previously these files appeared in
+   the tree with no content section and no explanation.
+
+Statuses come from [`resolve_inclusion_status()`](../src/data2prompt/output.py),
+which maps the raw parser statuses onto the controlled vocabulary documented in
+the system instructions via `INCLUSION_STATUS_MAP` ([`constants.py`](constants.md)):
+
+| Raw parser status | Index status |
+|---|---|
+| `Read` | `Full` |
+| `Sampled` / `Parsed` (SQL) / `Extracted` (Excel) | `Sampled` |
+| `Cleaned` | `Cleaned` |
+| `Truncated` | `Truncated` |
+| `Schema Only` | `Schema Only` |
+| `Redacted` | `Redacted` |
+| `Skipped (Exclusion)` | `Excluded` |
+| `Skipped (Binary)` | `Binary Skipped` |
+| `Error` | `Error` |
+| any other `Skipped (...)` | `Skipped` |
+| anything unknown | passed through verbatim (never raises) |
+
+In Markdown the index is a `| Path | Type | Status |` table (cell values are
+pipe-escaped via `_md_cell()`); in XML it is a
+`<file_index>` element of self-closing
+`<entry path="..." type="..." status="..."/>` rows (all attributes through
+`quoteattr`). The `IndexEntry` frozen dataclass carries one row.
+
+#### Document-Level Stats Summary
+
+The previously unused `stats: Dict[str, int]` parameter now feeds a one-line
+content summary in the metadata block, built by
+[`summarize_stats()`](../src/data2prompt/output.py) using the ordered
+`STATS_SUMMARY_LABELS` mapping ([`constants.py`](constants.md)):
+
+- Markdown: `> Contents: Total files: 12 | CSV: 3 | Notebooks: 2 | Truncated: 1`
+- XML: `<stats total_files="12" csv="3" notebooks="2" truncated="1"/>` inside
+  `<metadata>` (attribute names are the labels lowercased with underscores)
+
+`Total files` is always present (falling back to the rendered-file count when
+the stat is missing or zero — programmatic callers may pass `stats={}`); all
+other zero counts are dropped to save tokens.
+
+#### End-of-Codebase Anchor
+
+Both formats close with an explicit terminal section built by
+[`_end_recap()`](../src/data2prompt/output.py) — a recency anchor telling the
+model the document is complete and restating the core accuracy rule:
+
+- Markdown: `# End of codebase: {project_name}` followed by the recap sentence.
+- XML: `<end_of_codebase>` + recap + `</end_of_codebase>`, immediately before
+  `</codebase>`.
+
+The recap: *"This concludes the data2prompt snapshot of {name}. The File Index
+above lists all {N} files; content marked sampled, truncated, or omitted is not
+fully included in this document."*
+
+#### Scope of `--no-stats-summary`
+
+`--no-stats-summary` gates only the **per-table schema/stats block** (feature
+#4). The document-level scaffolding — the `> Contents:` line / `<stats/>`
+element, the File Index, and the end anchor — is unconditional; it costs a few
+hundred tokens and is what keeps the LLM oriented. See [cli.md](cli.md).
+
 ### 2. XML (`XMLGenerator`)
 
-The [`XMLGenerator`](../src/data2prompt/output.py#L138) produces XML-*style* documents for LLM context windows that benefit from explicit tagging.
+The [`XMLGenerator`](../src/data2prompt/output.py) produces XML-*style* documents for LLM context windows that benefit from explicit tagging.
 
 #### Escaping model — attributes quoted, content verbatim
 
@@ -160,12 +251,14 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 | Tag | Description |
 |-----|-------------|
 | `<codebase name={quoteattr}>` | Root element |
-| `<metadata>` | Generation timestamp and token count |
-| `<directory_structure>` | Tree output (verbatim) |
-| `<files>` | Container for file entries |
-| `<file path={quoteattr}>` | Individual file with quoted path attribute |
+| `<purpose>` | System instructions ([`SYSTEM_INSTRUCTIONS_XML`](constants.md)) |
+| `<metadata>` | Generation timestamp, token count, and `<stats/>` content summary |
+| `<file_index>` | One `<entry path type status/>` per file (see [File Index](#file-index)) |
+| `<files>` | Container for file entries (no prose inside — the former stray "This section contains..." line was removed) |
+| `<file path={quoteattr} type={quoteattr} status={quoteattr}>` | Individual file; `status` carries the **resolved** index vocabulary so it cross-references `<entry>` exactly |
 | `<cell path={quoteattr} index="" type={quoteattr}>` | Notebook cell encapsulation |
 | `<sheet name={quoteattr} sheet_number="" path={quoteattr}>` | Excel sheet encapsulation |
+| `<end_of_codebase>` | Terminal recap element, immediately before `</codebase>` |
 
 #### Notebook XML Rendering
 
@@ -310,14 +403,35 @@ To add a new output format:
 3. Update [`get_generator()`](../src/data2prompt/output.py#L232) to handle the new format
 4. Add format constant to [`SUPPORTED_FORMATS`](../src/data2prompt/constants.py#L43) if file extension mapping is needed
 
+## Module-Level Helpers
+
+All shared by both generators (single source of truth for the scaffolding):
+
+| Helper | Purpose |
+|--------|---------|
+| `IndexEntry` (frozen dataclass) | One File Index row: `path`, `type`, `status` |
+| `_display_path(rel_path) -> str` | Canonical forward-slash path key (`Path.as_posix()`) |
+| `resolve_inclusion_status(status) -> str` | Raw parser status → index vocabulary; `Skipped (...)` prefix fallback, then verbatim passthrough — never raises |
+| `build_file_index(tree_text, files_data) -> List[IndexEntry]` | Rendered files in document order + tree-only leftovers as `Omitted` |
+| `summarize_stats(stats, file_total) -> List[Tuple[str, int]]` | Ordered (label, count) pairs; `Total files` always present, zero counts dropped |
+| `_end_recap(project_name, indexed_count) -> str` | Shared closing recap sentence |
+| `_md_cell(text) -> str` | Escapes `\|` so values are safe inside the Markdown index table |
+
 ## Constants Reference
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| [`GENERATION_FLAG`](../src/data2prompt/constants.py#L49) | `"DATA2PROMPT_GENERATED_CONTENT"` | Recursive scanning prevention marker |
-| [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py#L53) | Multi-line string | LLM instructions for Markdown format |
-| [`SYSTEM_INSTRUCTIONS_XML`](../src/data2prompt/constants.py#L61) | Multi-line string | LLM instructions for XML format |
-| [`TAG_DIRECTORY_STRUCTURE`](../src/data2prompt/constants.py#L70) | `"directory_structure"` | XML tag name |
-| [`TAG_FILES`](../src/data2prompt/constants.py#L71) | `"files"` | XML tag name |
-| [`TAG_FILE`](../src/data2prompt/constants.py#L72) | `"file"` | XML tag name |
-| [`TAG_CONTENT`](../src/data2prompt/constants.py#L73) | `"content"` | XML tag for notebook cells |
+| [`GENERATION_FLAG`](../src/data2prompt/constants.py) | `"DATA2PROMPT_GENERATED_CONTENT"` | Recursive scanning prevention marker |
+| [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) | Multi-line string | LLM reading contract for Markdown format |
+| [`SYSTEM_INSTRUCTIONS_XML`](../src/data2prompt/constants.py) | Multi-line string | LLM reading contract for XML format |
+| [`TAG_FILES`](../src/data2prompt/constants.py) | `"files"` | XML tag name |
+| [`TAG_FILE`](../src/data2prompt/constants.py) | `"file"` | XML tag name |
+| [`TAG_CONTENT`](../src/data2prompt/constants.py) | `"content"` | XML tag for notebook cells |
+| [`TAG_FILE_INDEX`](../src/data2prompt/constants.py) | `"file_index"` | XML tag for the File Index |
+| [`TAG_INDEX_ENTRY`](../src/data2prompt/constants.py) | `"entry"` | XML tag for one index row |
+| [`TAG_END_OF_CODEBASE`](../src/data2prompt/constants.py) | `"end_of_codebase"` | XML tag for the terminal anchor |
+| [`INCLUSION_STATUS_MAP`](../src/data2prompt/constants.py) | `Dict[str, str]` | Raw status → File Index vocabulary |
+| [`STATS_SUMMARY_LABELS`](../src/data2prompt/constants.py) | `Dict[str, str]` | Ordered stat key → summary label |
+
+`TAG_DIRECTORY_STRUCTURE` was removed along with the `# Directory Structure` /
+`<directory_structure>` section — superseded by the File Index.

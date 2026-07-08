@@ -76,6 +76,9 @@ def test_default_parser_skips_binary_file() -> None:
         result = DefaultParser().parse(path, _cfg())
         assert result.status == "Skipped (Binary)"
         assert "Binary" in result.content
+        # Tool notices must follow the `-- [...] --` grammar documented in the
+        # system instructions, not the old `*Note:` star-note form.
+        assert result.content.startswith("-- [")
         assert result.stats_update == {"binary_count": 1}
         assert result.tokens == 0
     finally:

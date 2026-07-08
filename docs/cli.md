@@ -123,7 +123,7 @@ class Config:
 | Argument | Type | Default | Description |
 |:---------|:----:|:-------:|:------------|
 | `--schema-only` | `flag` | `False` | Emit only the schema (column names + dtypes) of data files (CSV/Excel), omitting all data rows. SQL files keep `CREATE TABLE`/schema statements and drop `INSERT` data. Non-data files (code, notebooks, text) are unaffected. Schema metadata is computed on the **full** DataFrame. |
-| `--no-stats-summary` | `flag` | `True` | When specified, disables the per-table stats metadata block (dtypes, missing count/%, and a `describe()` summary). The block is **on by default** and computed on the **full** DataFrame. |
+| `--no-stats-summary` | `flag` | `True` | When specified, disables the per-table stats metadata block (dtypes, missing count/%, and a `describe()` summary). The block is **on by default** and computed on the **full** DataFrame. Scope note: this flag gates only the *per-table* block — the document-level scaffolding (the `> Contents:` / `<stats/>` summary, the File Index, and the end-of-codebase anchor) is unconditional (see [output.md](output.md)). |
 
 ### Secrets Handling
 
