@@ -29,6 +29,20 @@ def test_count_tokens_hello_world() -> None:
     assert count == 2
 
 
+@pytest.mark.parametrize("special", ["<|endoftext|>", "<|endofprompt|>"])
+def test_count_tokens_special_token_text_stays_on_primary_path(special: str) -> None:
+    """Content containing special-token strings must count as plain text.
+
+    Regression: tiktoken's encode() defaults to disallowed_special="all" and
+    raises ValueError on these strings, which silently demoted every run over
+    content containing them (including this repo) to regex_fallback.
+    """
+    count, method = count_tokens(f"before {special} after")
+    assert method == "o200k_base"
+    # Encoded as ordinary text (several BPE tokens), not one special-token id.
+    assert count > 3
+
+
 def test_count_tokens_fallback_on_load_error() -> None:
     """When _load_encoding raises, count_tokens must fall back to regex_fallback."""
     with patch("data2prompt.utils._load_encoding", side_effect=RuntimeError("simulated failure")):

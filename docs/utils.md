@@ -7,6 +7,7 @@ The utilities module provides generic helper functions used throughout the data2
 ```python
 # Global state for tokenization (module-level, not class-based)
 _ENCODING: Optional[tiktoken.Encoding] = None  # populated once per process
+_FALLBACK_WARNED: bool = False  # one-time guard for the fallback warning
 
 # Key functions
 _load_encoding()     # Load bundled BPE file; cached after first call
@@ -34,6 +35,7 @@ with a regex approximation as a safety-net fallback.
 | Variable | Type | Purpose |
 |----------|------|---------|
 | `_ENCODING` | `Optional[tiktoken.Encoding]` | Cached encoding instance; `None` until first use, then held for the lifetime of the process |
+| `_FALLBACK_WARNED` | `bool` | Set after `count_tokens()` prints its first fallback warning, so the warning appears at most once per process |
 
 ### Loading the Encoding
 
@@ -50,8 +52,12 @@ encoding = _load_encoding()  # Fast after first call
 - Uses `importlib.resources.files("data2prompt") / "encodings" / "o200k_base.tiktoken"`
   to locate the file shipped inside the package — works for both editable installs and
   installed wheels.
-- Calls `tiktoken.load.load_tiktoken_bpe(str(path))` against the local path, which
-  reads the file directly without any network access.
+- Parses the BPE file **inline** with stdlib `base64` (each line is
+  `<base64-token> <rank>`), reading it via `bpe_ref.read_bytes()`. It deliberately
+  does **not** call `tiktoken.load.load_tiktoken_bpe()`: that helper routes through
+  `read_file_cached()`, which copies the 3.6 MB file into a temp cache on every
+  machine and, on tiktoken < 0.9, requires the optional `blobfile` package even for
+  local paths — turning a missing optional dependency into a silent regex fallback.
 - Constructs a `tiktoken.Encoding` with the exact parameters from `o200k_base`:
   `pat_str` (the GPT-4o pre-tokenization regex), `mergeable_ranks` (from the BPE
   file), and `special_tokens` (`<|endoftext|>: 199999`, `<|endofprompt|>: 200018`).
@@ -59,7 +65,7 @@ encoding = _load_encoding()  # Fast after first call
 
 **Why this matters:** tiktoken's default `get_encoding()` fetches the BPE file from
 the network on first use. Loading from a bundled local file eliminates that dependency
-entirely.
+entirely — no network, no temp cache, no `blobfile`.
 
 ---
 
@@ -82,9 +88,9 @@ token_count, method = count_tokens("def hello(): return 'world'")
 ┌─────────────────────────────────────────────────────┐
 │ 1. Bundled tiktoken (primary path)                  │
 │    └─ Call _load_encoding() → tiktoken.Encoding     │
-│    └─ encoding.encode(text) → token list            │
+│    └─ encoding.encode(text, disallowed_special=())  │
 │    └─ Return (len, "o200k_base")                    │
-│    └─ On any exception → fall through               │
+│    └─ On any exception → warn once, fall through    │
 │                                                     │
 │ 2. Regex Fallback (safety net only)                 │
 │    └─ pattern = r"""[^\r\n\p{L}\p{N}]?... """       │
@@ -105,6 +111,21 @@ token_count, method = count_tokens("def hello(): return 'world'")
 | Normal (bundled BPE loaded) | Accurate count | `"o200k_base"` |
 | BPE load failed | ~95-98% accurate | `"regex_fallback"` |
 | Regex also fails | Approximate | `"word_count"` |
+
+**Special-token strings in content are counted as plain text.** `encode()` is
+called with `disallowed_special=()`. tiktoken's default (`disallowed_special="all"`)
+raises `ValueError` whenever the text contains one of the encoding's special-token
+strings — and scanned projects legitimately contain literals like `<|endoftext|>`
+(this repo does, in `utils.py` itself). Before this override, packing any such
+project silently demoted the run to `regex_fallback` even though the bundled
+encoding loaded perfectly. Counting them as ordinary text is also the correct
+semantics: when the generated prompt is sent to an LLM as user content, those
+strings are plain text, not control tokens.
+
+**Fallback is no longer silent.** The first time the primary path fails in a
+process, `count_tokens()` prints a warning via `ui.print_warning()` that includes
+the caught exception's `repr`, then proceeds with the regex approximation. The
+`_FALLBACK_WARNED` module flag guarantees at most one warning per process.
 
 **The Regex Pattern Explained:**
 
@@ -573,7 +594,7 @@ All functions in `utils.py` follow defensive programming principles:
 | Function | Error Behavior | Return Value |
 |----------|---------------|--------------|
 | `_load_encoding()` | Any exception | Propagates to caller |
-| `count_tokens()` | BPE load fails → regex; regex fails → word count | Falls back to next method |
+| `count_tokens()` | Primary path fails → regex (warns once per process); regex fails → word count | Falls back to next method |
 | `is_binary()` | OSError reading file | `False` |
 | `load_ignore_file()` | Exception reading file | Empty list + warning |
 | `ProjectScanner.scan()` | OSError | Continues, skips file |

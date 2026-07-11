@@ -1,3 +1,4 @@
+import base64
 import importlib.resources
 import os
 import subprocess
@@ -8,12 +9,14 @@ from typing import List, Optional, Tuple, Union, Set
 import pathspec
 import regex as re
 import tiktoken
-from tiktoken.load import load_tiktoken_bpe
 
 from data2prompt.ui import ui
 
 # Module-level cache for the loaded tiktoken encoding (populated once per process)
 _ENCODING: Optional[tiktoken.Encoding] = None
+
+# Set after the first fallback warning so it is printed at most once per process.
+_FALLBACK_WARNED: bool = False
 
 
 def _load_encoding() -> tiktoken.Encoding:
@@ -22,9 +25,16 @@ def _load_encoding() -> tiktoken.Encoding:
     if _ENCODING is not None:
         return _ENCODING
 
+    # Parsed here instead of via tiktoken.load.load_tiktoken_bpe: that helper
+    # copies the file into a temp cache and, on tiktoken < 0.9, requires the
+    # optional blobfile package even for local paths — a silent-fallback trap.
     bpe_ref = importlib.resources.files("data2prompt") / "encodings" / "o200k_base.tiktoken"
-    with importlib.resources.as_file(bpe_ref) as bpe_path:
-        mergeable_ranks = load_tiktoken_bpe(str(bpe_path))
+    mergeable_ranks = {
+        base64.b64decode(token): int(rank)
+        for token, rank in (
+            line.split() for line in bpe_ref.read_bytes().splitlines() if line
+        )
+    }
 
     pat_str = "|".join(
         [
@@ -53,11 +63,20 @@ def count_tokens(text: str) -> Tuple[int, str]:
     Falls back to a regex approximation if loading fails, then to a plain word
     count as a last resort. Under normal conditions always returns 'o200k_base'.
     """
+    global _FALLBACK_WARNED
     try:
         encoding = _load_encoding()
-        return len(encoding.encode(text)), "o200k_base"
-    except Exception:
-        pass
+        # disallowed_special=() so content containing special-token strings
+        # (e.g. a literal "<|endoftext|>" in a scanned file) counts as plain
+        # text instead of raising — which is also how an LLM API treats it.
+        return len(encoding.encode(text, disallowed_special=())), "o200k_base"
+    except Exception as exc:
+        if not _FALLBACK_WARNED:
+            _FALLBACK_WARNED = True
+            ui.print_warning(
+                f"Accurate token counting unavailable ({exc!r}) — "
+                "using a regex approximation instead."
+            )
 
     # Regex fallback: Official OpenAI o200k_base pre-tokenization pattern
     # This pattern splits text into chunks exactly like the GPT-4o tokenizer
