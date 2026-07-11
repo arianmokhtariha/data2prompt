@@ -7,6 +7,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 import pandas as pd
 # Now that pandas is imported, we can reference its error types
 warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
+import time
 from pathlib import Path
 from typing import List, Set
 from data2prompt.cli import setup_cli, Config
@@ -62,8 +63,9 @@ def _run() -> None:
     Orchestrates the argument parsing, file discovery, content processing,
     and output generation. Wrapped by :func:`main` for top-level error handling.
     """
+    started = time.perf_counter()
     config = setup_cli() # Retrieve user settings from the terminal
-    
+
     project_path = Path.cwd()
     scanner = ProjectScanner(
         project_path=project_path,
@@ -78,7 +80,12 @@ def _run() -> None:
     total_steps = 1 + len(all_files) + 1
 
     # Initialize UI and start process
-    ui.on_start("[cyan]Starting process...[/cyan]", total=total_steps)
+    ui.on_start(
+        project_name=project_path.name,
+        format_name=config.format,
+        output_label="(clipboard)" if config.clipboard else config.output,
+        total_files=len(all_files),
+    )
 
     stats = {
         "file_count": 0,
@@ -99,11 +106,11 @@ def _run() -> None:
     # For the summary table
     processed_files_info: List[FileSummary] = []
 
-    with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
+    with ui.progress_bar("Initializing", total=total_steps) as handler:
         # 1. Generating project tree (reuses the scan — no second walk)
-        handler.on_progress("[cyan]Generating project tree...[/cyan]")
+        handler.on_progress("Indexing", "project tree")
         tree_text = scanner.generate_tree(all_files)
-        handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)
+        handler.on_progress(advance=1)
 
         # 2. Processing files
         files_data: List[FileData] = []
@@ -115,11 +122,11 @@ def _run() -> None:
 
             # Determine action for progress bar - show only filename
             action = get_ui_action(file_path.name, ext, config.skip_exts)
-            handler.on_progress(f"[cyan]{action}[/cyan] [bold]{file_path.name}[/bold] [cyan]...[/cyan]")
-            
+            handler.on_progress(action, file_path.name)
+
             result = process_target_file(file_path, config)
             if result.skip_file:
-                handler.on_progress(f"[cyan]{action}[/cyan] [bold]{file_path.name}[/bold] [cyan]...[/cyan]", advance=1)
+                handler.on_progress(advance=1)
                 continue
 
             # Collect file data for the generator
@@ -143,10 +150,10 @@ def _run() -> None:
                 "status": result.status
             })
             
-            handler.on_progress(f"[cyan]{action}[/cyan] [bold]{file_path.name}[/bold] [cyan]...[/cyan]", advance=1)
+            handler.on_progress(advance=1)
 
         # 3. Compiling project context
-        handler.on_progress("[cyan]Compiling project context...[/cyan]")
+        handler.on_progress("Compiling", config.output)
 
         generator = get_generator(config.format)
         final_output = generator.generate(
@@ -177,29 +184,40 @@ def _run() -> None:
             output_path.write_text(final_output, encoding='utf-8')
             output_destination = config.output
             file_size_kb = output_path.stat().st_size / 1024
-        handler.on_progress("[cyan]Compiling project context...[/cyan]", advance=1)
+        handler.on_progress(advance=1)
+
+    elapsed_seconds = time.perf_counter() - started
 
     if clipboard_failed:
         ui.print_warning_panel(
-            "[bold yellow]WARNING:[/bold yellow] No clipboard utility was available.\n"
-            f"[bold cyan]Fallback:[/bold cyan] Output written to {config.output} instead."
+            "No clipboard utility was available.\n"
+            f"[bold]Fallback:[/bold] output written to {config.output} instead."
         )
 
     # Display Final Report (Interactive Summary + Success Panel)
-    ui.print_final_report(processed_files_info, output_destination, file_size_kb, total_tokens, stats, method)
+    ui.print_final_report(
+        processed_files_info,
+        output_destination,
+        file_size_kb,
+        total_tokens,
+        stats,
+        method,
+        elapsed_seconds,
+    )
 
     if any(info.get("status") == "Skipped (No pyarrow)" for info in processed_files_info):
         ui.print_warning_panel(
-            "[bold yellow]WARNING:[/bold yellow] One or more Parquet / Feather / Arrow files "
-            "were skipped because [bold]pyarrow[/bold] is not installed.\n"
-            "[bold cyan]For pip users:[/bold cyan] pip install pyarrow\n"
-            "[bold cyan]For pipx users:[/bold cyan] pipx inject data2prompt pyarrow"
+            "One or more Parquet / Feather / Arrow files were skipped because "
+            "[bold]pyarrow[/bold] is not installed.\n"
+            "[bold]For pip users:[/bold] pip install pyarrow\n"
+            "[bold]For pipx users:[/bold] pipx inject data2prompt pyarrow"
         )
 
     if file_size_kb > 2000:
         ui.print_warning_panel(
-            "[bold yellow]WARNING:[/bold yellow] File is over 2MB. This might be too large for some context windows.\n"
-            "[bold cyan]Suggestion:[/bold cyan] Reduce --csv-sample-size, --sql-sample-size or --max-lines."
+            "Output is over 2MB. This might be too large for some context windows.\n"
+            "[bold]Suggestion:[/bold] reduce --csv-sample-size, --sql-sample-size "
+            "or --max-lines."
         )
 
 def main() -> None:

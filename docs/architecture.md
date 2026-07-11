@@ -76,12 +76,12 @@ sequenceDiagram
     Main->>UI: ui.progress_bar()
 
     loop For each file
-        Main->>UI: on_progress(action)
+        Main->>UI: on_progress(action, filename)
         Main->>Parser: registry.get_parser(ext)
         Parser-->>Main: BaseParser
         Main->>Parser: parser.parse(file, config) → ParserResult
         Parser-->>Main: ParserResult
-        Main->>UI: on_progress(completed)
+        Main->>UI: on_progress(advance=1)
     end
 
     Main->>Output: get_generator(format) → generator
@@ -166,7 +166,7 @@ final_output = final_output.replace("{{TOKEN_METHOD}}", method)
 1. **Generator Selection**: [`get_generator()`](../src/data2prompt/output.py#L232) returns the appropriate [`OutputGenerator`](../src/data2prompt/output.py#L23) strategy based on `config.format`. `generate()` emits `{{TOTAL_TOKENS}}`/`{{TOKEN_METHOD}}` placeholders in its metadata block instead of receiving a pre-computed count.
 2. **Token Estimation**: [`count_tokens()`](../src/data2prompt/utils.py#L47) runs on the **full rendered string** — so the reported total includes structural scaffolding (tags, headers, fences, metadata, system prompt) — and the two placeholders are substituted via `str.replace()`. Counted once on the placeholder string; inserting the digits shifts the true total by a token or two (labeled an estimate).
 3. **Output Destination**: when `config.clipboard` is set, the generated output is copied to the system clipboard via [`copy_to_clipboard()`](../src/data2prompt/utils.py) and no file is written; if no clipboard utility is available it falls back to writing `config.output` and warns. Otherwise the output is written to `config.output` as usual.
-4. **Final Report**: [`ui.print_final_report()`](../src/data2prompt/ui.py#L129) displays the interactive summary
+4. **Final Report**: [`ui.print_final_report()`](../src/data2prompt/ui.py) displays the compact report panel (summary, composition, attention items, heaviest/flagged files), including the elapsed time measured in `main.py`
 
 ### Design Patterns
 

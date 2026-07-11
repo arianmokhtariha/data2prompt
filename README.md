@@ -37,7 +37,7 @@ Generic code-to-prompt tools choke on data files—they either skip them entirel
 *   **Defensive Processing**: Automatic binary detection (Null-byte checks), Checks if a file is binary by looking for a Null byte in the first 1024 bytes.
 *   **Optimized LLM attention**: The default output format is markdown with well structured schema and another option is xml output with xml style tags to enhance LLM anchoring for complex analysis and large context windows
 *   **Token-Aware Output**: Real-time token estimation using `tiktoken` (`o200k_base`) to ensure prompts fit target LLMs (Claude 3.5, GPT-4o, Gemini 1.5) and advanced offline token counting via `regex`.
-*   **Professional TUI**: A high-fidelity terminal interface built with `Rich`, featuring a Matrix-style startup animation, a live progress bar, and a final scan report — identical on every platform.
+*   **Professional TUI**: A high-fidelity terminal interface built with `Rich` in a monochrome-and-crimson "BLACKSITE" theme — an animated banner reveal, a live progress bar with file counts and elapsed time, and a compact, stamped final report that reads at a glance: a token gauge against a 200K context window, a per-type composition bar chart, attention badges, and the heaviest/flagged files each with a token-share bar. Identical on every platform; animations auto-disable on non-interactive output.
 *   **Dynamic Markdown Wrapping**: Uses intelligent backtick depth to ensure robust nesting of code blocks in the final output.
 *   **Gitignore aware**: Respects the .gitignore rules by default and you can turn this feature off with cli argument(--no-gitignore) if needed.
 

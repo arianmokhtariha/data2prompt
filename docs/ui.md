@@ -1,184 +1,371 @@
 # User Interface (UI)
 
-The `data2prompt` project utilizes a sophisticated Terminal User Interface (TUI) built with the [`rich`](https://github.com/Textualize/rich) library to provide real-time feedback and a professional, tech-focused experience. All UI logic is encapsulated in the [`UIHandler`](../src/data2prompt/ui.py#L34) class.
+The `data2prompt` Terminal User Interface is built with the
+[`rich`](https://github.com/Textualize/rich) library and themed after the
+**BLACKSITE** palette — a near-monochrome, forensic-console look: bright white
+for data, dim gray for chrome, a crimson accent for structure (deepened into a
+three-shade gradient on the wordmark), yellow reserved for warnings, and
+reverse-red reserved for errors. All UI logic is
+encapsulated in the [`UIHandler`](../src/data2prompt/ui.py) class; the
+orchestration layer never emits markup of its own.
+
+## Design Principles
+
+1. **Color = meaning.** Every color is a semantic channel (see the table
+   below). Nothing decorative is bright, so the eye lands on information.
+2. **The report is the product.** The progress bar is transient and clears
+   itself; warnings and the final report own the screen at the end.
+3. **Compact over complete.** The final report shows the token-heaviest files
+   and *every* flagged file — never hundreds of unremarkable rows.
+4. **Numbers get a visual.** Every important quantity is doubled by a
+   proportional `▰▱` bar — the token gauge, the composition chart, the
+   per-file spark bars. The gauge and composition bars are scaled against
+   their **total**, so the fill literally reads as the percentage printed
+   next to it (one cell = 2% at the full 50-column track). Every bar draws
+   itself to exactly the width its row grants it — a bar is never
+   ellipsis-truncated by the layout.
+5. **Sections are ticked.** Section titles render as an accent `▰▰` tick
+   followed by letter-spaced bold-white caps and a dim rule
+   (`▰▰ C O M P O S I T I O N ───`). Reverse-video is reserved exclusively
+   for the warning and error channels — an inverted chip always means
+   "look here".
+6. **Fail loud.** A parser status the UI does not recognize renders in the
+   error channel, never as silently fine.
+
+### Semantic Color Channels
+
+Defined in [`constants.py`](../src/data2prompt/constants.py) (UI section):
+
+| Constant | Value | Channel |
+|:---|:---|:---|
+| `UI_ACCENT` | `#ff3b57` (crimson) | wordmark, markers, bar fill |
+| `UI_CHROME` | `grey35` | rules, labels, footnotes, bar tracks |
+| `UI_CHROME_BRIGHT` | `grey58` | panel borders, secondary labels, ok-statuses |
+| `UI_DATA` / `UI_DATA_BOLD` | `white` / `bold white` | paths, names, headline numbers |
+| `UI_WARN` | `yellow` | attention items, warn statuses, warnings |
+| `UI_ERROR` | `bold white on red3` | error statuses, fatal messages |
+| `UI_HEADING` | `bold white` | section/panel titles (after the accent `▰▰` tick) |
+| `UI_WARN_CHIP` | `bold black on yellow` | attention count badges |
 
 ## UIHandler Class
 
-The [`UIHandler`](../src/data2prompt/ui.py#L34) class in [`src/data2prompt/ui.py`](../src/data2prompt/ui.py) serves as the central point for all terminal output. It encapsulates Rich-based display components, formatting, and progress tracking.
+The [`UIHandler`](../src/data2prompt/ui.py) class serves as the central point
+for all terminal output.
 
 ### Core Responsibilities
 
 | Responsibility | Description |
 |:---|:---|
 | **Event Handling** | Processes lifecycle events: `on_start`, `on_progress` |
-| **Progress Tracking** | Manages real-time progress bars during file scanning and processing |
-| **Visual Components** | Renders panels, tables, spinners, and ASCII art headers |
-| **Final Report** | Prints success panel and full scan list table to the terminal |
-| **Error Display** | Shows formatted error and warning messages with hacker aesthetic |
+| **Progress Tracking** | Manages the transient single-line progress bar |
+| **Visual Components** | Renders the banner glitch sweep, panels, tables, gauges |
+| **Final Report** | Prints the "TRANSMISSION COMPLETE" report panel |
+| **Error Display** | Themed warning panels and inline warn/error lines |
 
 ### Event Handlers
 
-The [`UIHandler`](../src/data2prompt/ui.py#L34) provides two lifecycle event handler methods that integrate with the main processing flow:
-
 ```python
-def on_start(self, description: str, total: int) -> None:
-    """Event handler for process start."""
-    self.print_header()
+def on_start(
+    self,
+    project_name: str,
+    format_name: str,
+    output_label: str,
+    total_files: int,
+) -> None:
+    """Event handler for process start: renders the themed header."""
 ```
 
+`main.py` passes the project directory name, the output format, the output
+label (`"(clipboard)"` when `--clipboard` is active, otherwise the output
+filename), and the number of discovered files — so the header can state what
+is about to happen before any work starts.
+
 ```python
-def on_progress(self, description: str, advance: int = 0) -> None:
-    """Event handler for progress updates."""
-    if self._progress and self._task_id is not None:
-        self._progress.update(self._task_id, description=description)
-        if advance > 0:
-            self._progress.advance(self._task_id, advance)
+def on_progress(
+    self, action: str = "", target: str = "", advance: int = 0
+) -> None:
 ```
+
+`on_progress` takes **plain strings** — an action verb ("Sampling") and a
+target (usually a filename). All markup and theming is applied inside the
+UI layer via `_format_task()`, which pads both fields to fixed widths
+(`_ACTION_WIDTH` / `_TARGET_WIDTH`) so the progress line never jitters, and
+escapes the target so bracket characters in filenames cannot break markup.
+Calling it with only `advance=1` advances the bar without changing the
+description.
 
 Errors and warnings are surfaced directly through the
-[`print_error()`](../src/data2prompt/ui.py) and
-[`print_warning()`](../src/data2prompt/ui.py) display methods (and the
-[`print_warning_panel()`](../src/data2prompt/ui.py) panel variant), not via
-dedicated event handlers.
+[`print_error()`](../src/data2prompt/ui.py), [`print_warning()`](../src/data2prompt/ui.py),
+and [`print_warning_panel()`](../src/data2prompt/ui.py) display methods, not
+via dedicated event handlers.
 
 ## UI Components
 
-### Matrix Startup Animation
+### Startup Header — Glitch Sweep
 
-The [`print_header()`](../src/data2prompt/ui.py#L73) method displays an ASCII art banner with a Matrix-style decryption animation:
+`print_header()` renders the compact wordmark (`BANNER` in `constants.py`,
+under 80 columns) with a **glitch sweep** in three beats:
 
-```mermaid
-graph LR
-    A[Start] --> B[Generate Matrix Frame]
-    B --> C{Running?}
-    C -->|Yes| D[Update Live Display]
-    D --> B
-    C -->|No| E[Final Reveal]
-    E --> F[Neon Green Banner]
+1. **Cipher churn.** Unresolved columns render as dim block-glyph static
+   (`UI_CIPHER_GLYPHS`) that changes every frame — restrained redaction
+   noise, deliberately no letters or symbols. The wordmark's silhouette is
+   preserved: spaces stay spaces.
+2. **Resolve edge.** A hot edge (`█▓▒`, white-tipped) sweeps left-to-right
+   over `UI_REVEAL_DURATION` seconds at `UI_FRAME_DELAY` per frame; behind
+   it the glyphs settle into the wordmark's crimson gradient
+   (`UI_BANNER_GRADIENT`, one shade per row, hot top → deep bottom).
+3. **Flash settle.** When the sweep completes, the whole wordmark flashes
+   hot white for `UI_FLASH_FRAMES` frames (~40 ms), then settles into the
+   final gradient.
+
+Two guards keep this well-behaved:
+
+- **TTY guard**: the sweep (and the teletype line below) runs only when
+  `console.is_terminal` is true. Piped or CI output gets an instant static
+  gradient render — no animation frames ever reach a non-interactive stream.
+- Every frame is produced by `_banner_frame(revealed_cols, frame)`, a pure
+  function of the reveal position and frame index; the churn comes from
+  `cipher_mask()`, a deterministic spatial hash. There is still no
+  randomness anywhere in the animation.
+
+After the wordmark, the header prints a dim version line (no tagline — the
+user installed the tool and knows what it does) and a run-info line revealed
+with a one-pass teletype cursor (`▮`, via `_type_line()`):
+
 ```
-
-**Animation Parameters** (from [`constants.py`](../src/data2prompt/constants.py#L76)):
-- `MATRIX_DARK_GREEN = (0, 150, 0)` - Initial frame color
-- `MATRIX_NEON_GREEN = (0, 255, 0)` - Final reveal color
-- `STARTUP_ANIMATION_DURATION = 0.9` - Animation duration in seconds
-- `ANIMATION_FRAME_DELAY = 0.03` - Frame delay in seconds
-
-The [`_generate_matrix_frame()`](../src/data2prompt/ui.py#L63) method generates random binary/hex characters for each frame:
-```python
-def _generate_matrix_frame(self, width: int, height: int) -> Text:
-    """Generates a single frame of random binary/hex characters."""
-    chars = "0123456789ABCDEF"
-    lines = []
-    for _ in range(height):
-        line = "".join(random.choice(chars) if random.random() > 0.5 else str(random.randint(0, 1)) for _ in range(width))
-        lines.append(line)
-    return Text("\n".join(lines), style=Style(color=Color.from_rgb(*MATRIX_DARK_GREEN), dim=True))
+▰ TARGET my-project   ▰ FORMAT markdown   ▰ OUT PROMPT.md   ▰ FILES 128
 ```
 
 ### Progress Bar
 
-The [`progress_bar()`](../src/data2prompt/ui.py#L98) context manager provides a stable, two-line hacker-style progress bar:
+The [`progress_bar()`](../src/data2prompt/ui.py) context manager shows a
+single-line, information-dense bar and yields the handler:
 
-```python
-@contextmanager
-def progress_bar(self, description: str, total: int) -> Generator[Any, None, None]:
-    """Context manager for showing a stable, two-line hacker-style progress bar."""
-    progress = Progress(
-        TextColumn("[bold green][[/bold green]"),
-        BarColumn(bar_width=None, style="dim green", complete_style="bold green", finished_style="bold green"),
-        TextColumn("[bold green]][/bold green]"),
-        TaskProgressColumn(style="bold yellow"),
-        console=self.console,
-    )
+```
+⠹ Sampling   sales_data.csv   ━━━━━━╺━━━ 42/130 32% 0:00:03
 ```
 
-**Components:**
-- `TextColumn` - Opening/closing brackets with green styling
-- `BarColumn` - Visual progress bar with dim/complete/finished styles
-- `TaskProgressColumn` - Percentage display in yellow
-- `Spinner` - "dots12" tech-focused spinner animation
+Columns: `SpinnerColumn` (crimson dots) · task description (accent action +
+white target, fixed width) · `BarColumn` (gray track, crimson fill) ·
+`MofNCompleteColumn` · `TaskProgressColumn` · `TimeElapsedColumn`. The
+`Progress` is created with `transient=True`, so it erases itself when the
+context exits and the final report owns the screen.
 
 ## Final Report
 
-The [`print_final_report()`](../src/data2prompt/ui.py#L129) method displays the comprehensive scan summary with two main sections:
+`print_final_report()` renders one square-cornered panel (bright-gray
+border, vertical padding for breathing room). The panel title and every
+section title are **ticked headers** — an accent `▰▰` marker plus the
+letter-spaced title (`spaced_caps()`), produced by `_section_header()`,
+each preceded by a blank spacer line so sections are unmistakable at a
+glance. (Bars are shortened here for page width — the gauge and composition
+tracks cap at 50 columns, one cell = 2%.)
 
-### Success Panel
+```
+┌ ▰▰ T R A N S M I S S I O N  C O M P L E T E ────────────────────┐
+│                                                                  │
+│  OUTPUT  PROMPT.md · 412.3 KB                                    │
+│  TOKENS  96,420 (o200k_base)  ▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱ 48% of 200K   │
+│  TIME    3.2s · 128 files                                        │
+│                                                                  │
+│  ▰▰ C O M P O S I T I O N ───────────────────────────────────────│
+│  TYPE               FILES  SHARE                  TOKENS      %  │
+│  Notebook              ×6  ▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱   41,210    46%  │
+│  CSV                  ×12  ▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱   24,830    28%  │
+│  Excel · 7 sheets      ×2  ▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱   14,210    16%  │
+│  other                 ×9  ▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱    9,140    10%  │
+│                                                                  │
+│  ▰▰ A T T E N T I O N ───────────────────────────────────────────│
+│  ▓4▓ truncated    ▓2▓ binary skipped    ▓1▓ env redacted         │
+│                                                                  │
+│  ▰▰ H E A V I E S T  P A Y L O A D S ────────────────────────────│
+│        FILE          TYPE      STATUS   TOKENS                   │
+│  0x01  data/big.csv  CSV       Sampled  12,400  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ │
+│  0x02  nb/eda.ipynb  Notebook  Cleaned   8,210  ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱ │
+│        · · · flagged · · ·                                       │
+│  0x0B  logo.png      Binary    Skipped       0  ▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ │
+│  + 118 more · full index inside PROMPT.md                        │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-A styled panel showing compilation statistics:
-- Output destination (file path, or `(clipboard)` when `--clipboard` is used) and size
-- Total token count and method used
-- File type counts (CSV, Notebook, SQL, Excel)
-- Truncation and skip counts, including `ENV_REDACTED` (count of `.env` files redacted)
+(`▓…▓` marks the reverse-yellow attention badges — with the section titles
+no longer inverted, reverse-video appears only in the warning and error
+channels.)
 
-### Summary Table
+Section by section:
 
-A Rich table displaying processed files with columns:
-- `FILE_NAME` - Basename of the file
-- `TYPE` - File type/extension category
-- `TOKENS` - Token count (right-aligned, yellow)
-- `STATUS` - Processing status with color coding:
-  - **Green**: Read, Sampled, Cleaned, Parsed, Extracted
-  - **Yellow**: Truncated, Skipped (Binary), Skipped (Exclusion), Schema Only, Redacted, Skipped (Env)
-  - **Red**: Error states
+- **Summary grid** — output destination (file path, or `(clipboard)` when
+  `--clipboard` is used) with human-readable size (`_format_size()`: KB below
+  1 MB, MB above), the token count and encoding method with a **token
+  gauge** (`_token_gauge()`: a `▰▱` track of `total_tokens` against
+  `CONTEXT_WINDOW_REFERENCE` = 200 000, capped at `REPORT_GAUGE_WIDTH` = 50
+  columns — one cell = 2% of the window at the cap; the gauge turns yellow
+  at ≥ 85% of the window and red past 100%; the whole line is a one-row
+  grid so the gauge sizes itself between the count and the trailing
+  percentage label), and the elapsed wall-clock time (measured in
+  `main.py`) with the total file count.
+- **COMPOSITION** — a per-type token-share **bar chart** built by
+  `_composition_chart()` from the actual per-file summaries (not the flat
+  stat counters), under a dim header row (`TYPE FILES SHARE TOKENS %`):
+  type label · file count (`×N`) · a bar capped at `REPORT_CHART_WIDTH` =
+  50 columns and **scaled to the total of all rows**, so the fill visually
+  equals the percent column (one cell = 2% at the cap) · token sum ·
+  percent of all file tokens.
+  Row selection is the pure `summarize_composition()` (below). The Excel
+  row is annotated with the total sheet count from `stats`. Falls back to
+  a dim "nothing tokenized" note if no file contributed tokens.
+- **ATTENTION** — badge-counted items from `_attention_line()` driven by the
+  `_ATTENTION_SPECS` table (truncated, binary skipped, excluded, env
+  redacted). Each count renders as a reverse-yellow chip (`UI_WARN_CHIP`)
+  followed by its label. The section is omitted entirely on a clean run.
+- **HEAVIEST PAYLOADS** — the compact file table (see below), with a dim hex
+  gutter (`0x01`, `0x02`, …), the file's **relative path** (ellipsized past
+  44 cells), type, status, right-aligned token count, and a **spark bar**
+  capped at `REPORT_SPARK_WIDTH` = 16 columns, scaled to the heaviest listed
+  file, so relative weight is visible without reading the numbers (a
+  deliberately different scale from COMPOSITION: sparks compare files, not
+  percentages). Statuses are colored by severity: ok → bright gray, warn →
+  yellow, error → reverse-red.
+- **Footer** — `+ N more · full index inside <output>` when rows were
+  omitted, pointing at the File Index inside the generated document.
+
+Every bar is a `_CellBar` — a small frozen-dataclass renderable that
+delegates sizing to Rich itself: it advertises its width range (floor
+`_MIN_BAR_WIDTH` = 8, ceiling its `REPORT_*_WIDTH` cap) through
+`__rich_measure__`, then draws to exactly the width its table column was
+actually granted. That makes truncation structurally impossible — however
+long the neighboring path, type, or status strings get, the bar shrinks
+instead of overflowing into an ellipsis. Inside the track,
+`REPORT_BAR_CELL_WIDTH` sets the **cell density**: columns occupied per
+cell (1 = a cell in every column, the default contiguous look; 2 spaces
+cells one blank column apart with half as many cells), independent of the
+track's on-screen length.
+
+### Report and Animation Logic (pure helpers)
+
+Seven module-level pure functions carry the report's and the animation's
+logic contracts and are covered by
+[`tests/test_ui_report.py`](../tests/test_ui_report.py):
+
+```python
+def status_severity(status: str) -> Literal["ok", "warn", "error"]: ...
+def select_report_rows(
+    files: List[FileSummary], top_n: int
+) -> Tuple[List[FileSummary], int]: ...
+def bar_cells(value: int, max_value: int, cells: int) -> int: ...
+def bar_glyphs(filled: int, cells: int, cell_width: int) -> Tuple[str, str]: ...
+def summarize_composition(
+    files: List[FileSummary], max_rows: int
+) -> List[Tuple[str, int, int]]: ...
+def cipher_mask(line: str, frame: int, row: int) -> str: ...
+def spaced_caps(title: str) -> str: ...
+```
+
+- `status_severity()` maps a parser status onto the ok/warn/error channels
+  using the `_OK_STATUSES` / `_WARN_STATUSES` sets. **Unknown statuses return
+  `"error"`** so a future parser status can never render as silently fine.
+- `select_report_rows()` returns the `REPORT_TOP_FILES` (10) token-heaviest
+  files plus **every** flagged (non-ok) file beyond them — a redacted `.env`
+  with 0 tokens is always listed — together with the count of hidden files.
+  It sorts a copy; the caller's list is **not mutated**. In the rendered
+  table, flagged extras appear below a dim `· · · flagged · · ·` divider.
+- `bar_cells()` computes the filled-cell count for every proportional bar.
+  It is **zero-safe** (a run where every file was skipped gives a max of 0 —
+  the bar renders empty instead of dividing by zero) and guarantees any
+  positive value fills **at least one cell**, so small files never look like
+  missing data. Values beyond the reference clamp at full width.
+- `bar_glyphs()` renders a track's cells as text — `(filled part, empty
+  part)`, each cell exactly `cell_width` columns (glyph + blank columns) so
+  tracks stay aligned across table rows at every density. A non-positive
+  width clamps to 1 instead of crashing the report.
+- `summarize_composition()` groups per-file tokens by type for the chart:
+  zero-token files are dropped (they belong to ATTENTION), parenthetical
+  type variants merge (`"Excel (3 sheets)"` → `"Excel"`), rows sort
+  heaviest-first, and types beyond `REPORT_COMPOSITION_ROWS` (6) fold into
+  an exact `"other"` row so the chart never sprawls or understates totals.
+- `cipher_mask()` produces the banner churn **deterministically**: an XOR
+  spatial hash of prime products of frame, row, and column picks each
+  glyph. XOR rather than a plain sum, so the frame term can never
+  degenerate to a constant modulo the glyph count and freeze the churn.
+  Spaces map to spaces, so the wordmark silhouette survives every frame.
+- `spaced_caps()` letter-spaces section titles with a double space between
+  words, so multi-word titles (`"HEAVIEST PAYLOADS"`) never fuse into one.
 
 ## Error and Warning Display
 
 ### Warning Panel
 
-The [`print_warning_panel()`](../src/data2prompt/ui.py#L340) displays a styled warning panel:
-
 ```python
 def print_warning_panel(self, message: str) -> None:
-    """Displays a warning message in a hacker-style panel."""
-    self.console.print(Panel(
-        message,
-        border_style="bold yellow",
-        title="[bold yellow]SYSTEM_WARNING[/bold yellow]"
-    ))
 ```
+
+A square yellow-bordered panel whose title is a reverse-yellow `▲ WARNING`
+chip. The message may contain Rich markup (callers in `main.py` use `[bold]`
+for emphasis), so it is rendered unescaped.
 
 ### Inline Warning/Error
 
-The [`print_warning()`](../src/data2prompt/ui.py#L348) and [`print_error()`](../src/data2prompt/ui.py#L352) methods provide inline messages:
-
 ```python
-def print_warning(self, message: str) -> None:
-    """Displays a simple warning message with a hacker aesthetic."""
-    self.console.print(f"[bold yellow]![/bold yellow] [yellow]WARN: {message}[/yellow]")
-
-def print_error(self, message: str) -> None:
-    """Displays an error message with a hacker aesthetic."""
-    self.console.print(f"[bold red]![/bold red] [red]ERR_CRITICAL: {message}[/red]")
+def print_warning(self, message: str) -> None:   # ▲ WARN <message>
+def print_error(self, message: str) -> None:     #  ERROR  <message>
 ```
+
+Both treat the message as plain text and escape it, so file paths containing
+bracket characters cannot break the markup. `print_error` renders its label
+in the reverse-red `UI_ERROR` channel.
 
 ## Integration with Main Processing
 
-The [`UIHandler`](../src/data2prompt/ui.py#L34) integrates with [`main.py`](../src/data2prompt/main.py#L43) through event handlers:
-
 ```python
 # From main.py
-with ui.progress_bar("[cyan]Starting process...[/cyan]", total=total_steps) as handler:
-    handler.on_progress("[cyan]Generating project tree...[/cyan]")
-    tree_text = scanner.generate_tree()
-    handler.on_progress("[cyan]Generating project tree...[/cyan]", advance=1)
-    # ... file processing loop
+ui.on_start(
+    project_name=project_path.name,
+    format_name=config.format,
+    output_label="(clipboard)" if config.clipboard else config.output,
+    total_files=len(all_files),
+)
+
+with ui.progress_bar("Initializing", total=total_steps) as handler:
+    handler.on_progress("Indexing", "project tree")
+    tree_text = scanner.generate_tree(all_files)
+    handler.on_progress(advance=1)
+    # ... per file: handler.on_progress(action, file_path.name)
 ```
+
+`main.py` measures elapsed time with `time.perf_counter()` and passes it as
+the final `elapsed_seconds` argument of `print_final_report()`.
 
 ## Global Instance
 
-A global [`ui`](../src/data2prompt/ui.py#L357) instance is exported for use throughout the application:
+A global [`ui`](../src/data2prompt/ui.py) instance is exported for use
+throughout the application:
 
 ```python
 # Global UI instance
 ui = UIHandler()
 ```
 
+The `FileSummary` type is imported under `TYPE_CHECKING` only — a runtime
+import would create a `utils → ui → parsers → utils` cycle (guarded by
+`tests/test_import_hygiene.py`).
+
 ## Constants Used
 
 | Constant | Value | Purpose |
 |:---|:---|:---|
-| `MATRIX_DARK_GREEN` | `(0, 150, 0)` | Matrix animation frame color |
-| `MATRIX_NEON_GREEN` | `(0, 255, 0)` | Final banner color |
-| `STARTUP_ANIMATION_DURATION` | `0.9` | Animation duration (seconds) |
-| `ANIMATION_FRAME_DELAY` | `0.03` | Frame delay (seconds) |
-| `ASCII_ART` | list | Application banner lines |
+| `UI_ACCENT` … `UI_WARN_CHIP` | see table above | semantic color channels |
+| `UI_SECTION_MARKER` | `"▰▰"` | accent tick before section/panel titles |
+| `UI_REVEAL_DURATION` | `0.5` | banner sweep duration (seconds) |
+| `UI_FRAME_DELAY` | `0.02` | animation frame delay (seconds) |
+| `UI_FLASH_FRAMES` | `2` | white flash frames before the gradient settles |
+| `UI_CIPHER_GLYPHS` | `"░▒▓▌▐▄▀"` | block static churned ahead of the reveal edge |
+| `UI_BANNER_GRADIENT` | 3 crimson hexes | per-row wordmark gradient, hot top → deep bottom |
+| `REPORT_TOP_FILES` | `10` | heaviest files listed in the report |
+| `REPORT_COMPOSITION_ROWS` | `6` | file-type rows in the composition chart |
+| `REPORT_GAUGE_WIDTH` | `50` | token-gauge track cap in columns (1 cell = 2%) |
+| `REPORT_CHART_WIDTH` | `50` | composition track cap in columns (1 cell = 2%) |
+| `REPORT_SPARK_WIDTH` | `16` | payload spark-bar track cap in columns |
+| `REPORT_BAR_CELL_WIDTH` | `1` | bar cell density: columns per cell |
+| `CONTEXT_WINDOW_REFERENCE` | `200_000` | token-gauge reference window |
+| `BANNER` | list | compact wordmark (< 80 columns) |

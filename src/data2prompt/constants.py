@@ -203,19 +203,65 @@ STATS_SUMMARY_LABELS: Dict[str, str] = {
     "env_count": "Env files",
 }
 
-# --- UI & Aesthetic Constants ---
-MATRIX_DARK_GREEN = (0, 150, 0)
-MATRIX_NEON_GREEN = (0, 255, 0)
-STARTUP_ANIMATION_DURATION = 0.9
-ANIMATION_FRAME_DELAY = 0.03
+# --- UI & Aesthetic Constants (BLACKSITE theme) ---
+# Semantic color channels — in the TUI, color always carries meaning:
+# the accent marks structure, gray is chrome, white is data, yellow is a
+# warning, and reverse-red is an error. Nothing decorative is bright.
+UI_ACCENT = "#ff3b57"               # crimson: wordmark, titles, markers, bar fill
+UI_CHROME = "grey35"                # dim gray: rules, labels, footnotes
+UI_CHROME_BRIGHT = "grey58"         # lighter gray: borders, secondary labels
+UI_DATA = "white"                   # actual information: paths, names, counts
+UI_DATA_BOLD = "bold white"         # headline numbers
+UI_WARN = "yellow"                  # attention counts and warn-level statuses
+UI_ERROR = "bold white on red3"     # error statuses and fatal messages
 
-# ASCII Art for the application header
-ASCII_ART =  [
-"                                                                                                                   ",
-"  ██╗      ██████╗   █████╗  ████████╗  █████╗  ██████╗  ██████╗  ██████╗   ██████╗  ███╗   ███╗ ██████╗  ████████╗",
-"  ╚██╗     ██╔══██╗ ██╔══██╗ ╚══██╔══╝ ██╔══██╗ ╚════██╗ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ████╗ ████║ ██╔══██╗ ╚══██╔══╝",
-"   ╚██╗    ██║  ██║ ███████║    ██║    ███████║  █████╔╝ ██████╔╝ ██████╔╝ ██║   ██║ ██╔████╔██║ ██████╔╝    ██║   ",
-"   ██╔╝    ██║  ██║ ██╔══██║    ██║    ██╔══██║ ██╔═══╝  ██╔═══╝  ██╔══██╗ ██║   ██║ ██║╚██╔╝██║ ██╔═══╝     ██║   ",
-"  ██╔╝     ██████╔╝ ██║  ██║    ██║    ██║  ██║ ███████╗ ██║      ██║  ██║ ╚██████╔╝ ██║ ╚═╝ ██║ ██║         ██║   ",
-"  ╚═╝      ╚═════╝  ╚═╝  ╚═╝    ╚═╝    ╚═╝  ╚═╝ ╚══════╝ ╚═╝      ╚═╝  ╚═╝  ╚═════╝  ╚═╝     ╚═╝ ╚═╝         ╚═╝   "
-    ]
+# Section-title styling. Titles render as an accent ▰▰ marker followed by
+# letter-spaced bold-white caps — reverse-video is reserved exclusively for the
+# warning/error channels below, so an inverted chip always means "look here".
+UI_HEADING = "bold white"                   # section titles, panel title text
+UI_SECTION_MARKER = "▰▰"                    # accent tick before every title
+UI_WARN_CHIP = "bold black on yellow"       # attention count badges
+
+# Startup "glitch sweep": the wordmark churns as deterministic cipher glyphs,
+# resolves left-to-right behind a hot edge, flashes white, then settles into
+# the crimson gradient. Skipped entirely on non-TTY output.
+UI_REVEAL_DURATION = 0.5            # total sweep time in seconds
+UI_FRAME_DELAY = 0.02               # seconds per animation frame
+UI_FLASH_FRAMES = 2                 # full-wordmark white frames before settling
+# Unresolved columns churn through these block glyphs — restrained redaction
+# static, deliberately no letters or symbols.
+UI_CIPHER_GLYPHS = "░▒▓▌▐▄▀"
+
+# Wordmark gradient, one style per banner row: hot top → deep crimson bottom,
+# like a lit sign. Must stay the same length as BANNER.
+UI_BANNER_GRADIENT = ("#ff6b7f", "#ff3b57", "#c9203c")
+
+# Final-report shape
+REPORT_TOP_FILES = 10               # token-heaviest files listed in the report
+REPORT_COMPOSITION_ROWS = 6         # file-type rows in the composition chart
+CONTEXT_WINDOW_REFERENCE = 200_000  # token-gauge reference (200K-class window)
+
+# Final-report bar tracks. Every bar draws itself to exactly the width its
+# table column really grants it, so a bar can never overflow and be
+# ellipsis-truncated; these constants only cap that width (in terminal
+# columns). At the 50-column cap one cell reads as 2%, so the token gauge and
+# composition bars read as literal percentages. Spark bars stay narrower on
+# purpose: their row already carries a long path, and they show weight
+# relative to the heaviest file, not a percentage.
+REPORT_GAUGE_WIDTH = 50             # token gauge in the summary grid
+REPORT_CHART_WIDTH = 50             # composition chart rows
+REPORT_SPARK_WIDTH = 16             # per-file bars in the payload table
+
+# Bar cell density: terminal columns occupied by one bar cell. 1 packs a
+# cell into every column (densest track, finest resolution); 2 spaces the
+# cells one blank column apart (half as many cells over the same track), and
+# so on. This controls how tightly cells sit inside a bar — never how long
+# the bar is, which is fixed by the layout above.
+REPORT_BAR_CELL_WIDTH = 1
+
+# Compact wordmark for the application header (must stay under 80 columns).
+BANNER = [
+    "█▀▀▄ ▄▀▀▄ ▀▀█▀▀ ▄▀▀▄ ▀▀▀█ █▀▀▄ █▀▀▄ ▄▀▀▄ █▄ ▄█ █▀▀▄ ▀▀█▀▀",
+    "█  █ █▀▀█   █   █▀▀█  ▄▄▀ █▄▄▀ █▄▄▀ █  █ █ ▀ █ █▄▄▀   █  ",
+    "█▄▄▀ ▀  ▀   █   ▀  ▀ █▄▄▄ █    █ ▀▄ ▀▄▄▀ █   █ █      █  ",
+]

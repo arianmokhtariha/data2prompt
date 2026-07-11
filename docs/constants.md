@@ -273,58 +273,102 @@ Zero counts are dropped at render time; `Total files` always renders.
 
 ---
 
-### 6. UI & Aesthetic Constants
+### 6. UI & Aesthetic Constants (BLACKSITE theme)
 
-#### Color Palette
+#### Semantic Color Channels
 
 ```python
-MATRIX_DARK_GREEN = (0, 150, 0)
-MATRIX_NEON_GREEN = (0, 255, 0)
+UI_ACCENT = "#ff3b57"               # crimson: wordmark, titles, markers, bar fill
+UI_CHROME = "grey35"                # dim gray: rules, labels, footnotes
+UI_CHROME_BRIGHT = "grey58"         # lighter gray: borders, secondary labels
+UI_DATA = "white"                   # actual information: paths, names, counts
+UI_DATA_BOLD = "bold white"         # headline numbers
+UI_WARN = "yellow"                  # attention counts and warn-level statuses
+UI_ERROR = "bold white on red3"     # error statuses and fatal messages
+
+UI_HEADING = "bold white"                   # section titles, panel title text
+UI_SECTION_MARKER = "▰▰"                    # accent tick before every title
+UI_WARN_CHIP = "bold black on yellow"       # attention count badges
 ```
 
-**Type:** `tuple[int, int, int]`
+**Type:** `str` (Rich style strings; `UI_SECTION_MARKER` is a glyph pair)
 
-**Purpose:** RGB color values for the terminal UI theme, providing a consistent matrix-style aesthetic.
+**Purpose:** The theme's semantic color channels — in the TUI, color always
+carries meaning (accent = structure, gray = chrome, white = data, yellow =
+warning, reverse-red = error). Section titles render as the accent
+`UI_SECTION_MARKER` tick followed by letter-spaced `UI_HEADING` caps — so
+reverse-video is reserved exclusively for the warning/error channels, and an
+inverted chip always means "look here". See [ui.md](ui.md) for the design
+rationale.
 
-#### Animation Timing
+#### Glitch-Sweep Animation
 
 ```python
-STARTUP_ANIMATION_DURATION = 0.9
-ANIMATION_FRAME_DELAY = 0.03
+UI_REVEAL_DURATION = 0.5            # total sweep time in seconds
+UI_FRAME_DELAY = 0.02               # seconds per animation frame
+UI_FLASH_FRAMES = 2                 # full-wordmark white frames before settling
+UI_CIPHER_GLYPHS = "░▒▓▌▐▄▀"        # block static churned ahead of the edge
+UI_BANNER_GRADIENT = ("#ff6b7f", "#ff3b57", "#c9203c")
 ```
 
-**Type:** `float`
+**Purpose:** The startup "glitch sweep": unresolved wordmark columns churn as
+deterministic block static (`UI_CIPHER_GLYPHS` — deliberately blocks only, no
+letters or symbols), a hot white-tipped edge resolves them left-to-right, the
+wordmark flashes white for `UI_FLASH_FRAMES` frames, then settles into the
+per-row crimson gradient (`UI_BANNER_GRADIENT`, one shade per banner row, hot
+top → deep bottom; must stay the same length as `BANNER`). The animation is
+TTY-guarded — non-terminal output gets an instant static gradient banner.
 
-**Purpose:** Controls the startup banner animation and frame delay timing.
-
-#### Scroll Bar Characters
+#### Final-Report Shape
 
 ```python
-SCROLL_THUMB = "█"
-SCROLL_TRACK = "│"
+REPORT_TOP_FILES = 10               # token-heaviest files listed in the report
+REPORT_COMPOSITION_ROWS = 6         # file-type rows in the composition chart
+CONTEXT_WINDOW_REFERENCE = 200_000  # token-gauge reference (200K-class window)
+REPORT_GAUGE_WIDTH = 50             # token-gauge track cap (columns)
+REPORT_CHART_WIDTH = 50             # composition track cap (columns)
+REPORT_SPARK_WIDTH = 16             # payload spark-bar track cap (columns)
+REPORT_BAR_CELL_WIDTH = 1           # bar cell density: columns per cell
 ```
 
-**Type:** `str`
+**Type:** `int`
 
-**Purpose:** Unicode characters for custom scroll bar rendering in the TUI.
+**Purpose:** `REPORT_TOP_FILES` caps the compact report's file table (flagged
+files are always appended regardless of the cap). `REPORT_COMPOSITION_ROWS`
+caps the COMPOSITION bar chart's type rows (overflow types fold into a single
+"other" row). `CONTEXT_WINDOW_REFERENCE` is the denominator of the report's
+token gauge.
 
-#### ASCII Art Banner
+The `*_WIDTH` constants cap each bar's on-screen track, in terminal columns.
+They are ceilings, not fixed sizes: every bar (`ui._CellBar`) draws itself to
+exactly the width its table column really grants it, so a bar can never
+overflow its row and be ellipsis-truncated, however long the neighboring
+path/type/status strings get. At the 50-column cap one cell reads as 2%, so
+the gauge and composition bars read as literal percentages; spark bars stay
+narrower because their rows carry long paths and they compare files rather
+than percentages.
+
+`REPORT_BAR_CELL_WIDTH` is the density knob, decoupled from track length: the
+number of columns one cell occupies. `1` packs a cell into every column (the
+default contiguous `▰▱` look, finest resolution); `2` spaces the cells one
+blank column apart — half as many cells over the same track. Raising it never
+lengthens a bar; it only spreads the cells inside it.
+
+#### Banner
 
 ```python
-ASCII_ART =  [
-"                                                                                                                   ",
-"  ██╗      ██████╗   █████╗  ████████╗  █████╗  ██████╗  ██████╗  ██████╗   ██████╗  ███╗   ███╗ ██████╗  ████████╗",
-"  ╚██╗     ██╔══██╗ ██╔══██╗ ╚══██╔══╝ ██╔══██╗ ╚════██╗ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ████╗ ████║ ██╔══██╗ ╚══██╔══╝",
-"   ╚██╗    ██║  ██║ ███████║    ██║    ███████║  █████╔╝ ██████╔╝ ██████╔╝ ██║   ██║ ██╔████╔██║ ██████╔╝    ██║   ",
-"   ██╔╝    ██║  ██║ ██╔══██║    ██║    ██╔══██║ ██╔═══╝  ██╔═══╝  ██╔══██╗ ██║   ██║ ██║╚██╔╝██║ ██╔═══╝     ██║   ",
-"  ██╔╝     ██████╔╝ ██║  ██║    ██║    ██║  ██║ ███████╗ ██║      ██║  ██║ ╚██████╔╝ ██║ ╚═╝ ██║ ██║         ██║   ",
-"  ╚═╝      ╚═════╝  ╚═╝  ╚═╝    ╚═╝    ╚═╝  ╚═╝ ╚══════╝ ╚═╝      ╚═╝  ╚═╝  ╚═════╝  ╚═╝     ╚═╝ ╚═╝         ╚═╝   "
-    ]
+BANNER = [
+    "█▀▀▄ ▄▀▀▄ ▀▀█▀▀ ▄▀▀▄ ▀▀▀█ █▀▀▄ █▀▀▄ ▄▀▀▄ █▄ ▄█ █▀▀▄ ▀▀█▀▀",
+    "█  █ █▀▀█   █   █▀▀█  ▄▄▀ █▄▄▀ █▄▄▀ █  █ █ ▀ █ █▄▄▀   █  ",
+    "█▄▄▀ ▀  ▀   █   ▀  ▀ █▄▄▄ █    █ ▀▄ ▀▄▄▀ █   █ █      █  ",
+]
 ```
 
 **Type:** `list[str]`
 
-**Purpose:** Multi-line ASCII art banner displayed at application startup.
+**Purpose:** Compact wordmark rendered at startup (kept under 80 columns so it
+never wraps in a standard terminal). Only the version is printed beneath it —
+there is deliberately no tagline.
 
 ---
 
