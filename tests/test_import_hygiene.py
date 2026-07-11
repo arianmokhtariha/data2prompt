@@ -28,6 +28,7 @@ MODULES = [
     "data2prompt.utils",
     "data2prompt.ui",
     "data2prompt.output",
+    "data2prompt.budget",
     "data2prompt.cli",
     "data2prompt.main",
 ]

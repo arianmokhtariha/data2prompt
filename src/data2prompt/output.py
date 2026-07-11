@@ -7,6 +7,9 @@ from xml.sax.saxutils import quoteattr
 
 if TYPE_CHECKING:
     from data2prompt.cli import Config
+    # Imported only for type hints — a runtime import would cycle, since
+    # budget.py imports this module for get_generator().
+    from data2prompt.budget import BudgetReport
 
 from data2prompt.constants import (
     TAG_FILES,
@@ -15,6 +18,9 @@ from data2prompt.constants import (
     TAG_FILE_INDEX,
     TAG_INDEX_ENTRY,
     TAG_END_OF_CODEBASE,
+    TAG_BUDGET_REPORT,
+    TAG_ADJUSTMENT,
+    TAG_OMITTED_FILE,
     INCLUSION_STATUS_MAP,
     STATS_SUMMARY_LABELS,
     SYSTEM_INSTRUCTIONS_MARKDOWN,
@@ -130,6 +136,91 @@ def _md_cell(text: str) -> str:
     return text.replace("|", "\\|")
 
 
+def _budget_block_markdown(report: 'BudgetReport') -> List[str]:
+    """Render the Budget Report section as Markdown lines.
+
+    Emitted between the metadata block and the File Index only when a
+    token budget was requested. Mirrors ``_budget_block_xml`` so both
+    formats carry the same information (format parity).
+    """
+    lines = [
+        "# Budget Report",
+        "",
+        f"Requested budget: {report.requested_tokens:,} tokens.",
+        "",
+    ]
+
+    if report.adjustments:
+        lines.append(
+            "Data-cap parameters tightened to fit the budget (the Tokens "
+            "line above is the final count):"
+        )
+        lines.append("")
+        lines.append("| Parameter | Requested | Adjusted | Scope |")
+        lines.append("|---|---|---|---|")
+        for adjustment in report.adjustments:
+            lines.append(
+                f"| {_md_cell(adjustment.parameter)} "
+                f"| {_md_cell(adjustment.requested)} "
+                f"| {_md_cell(adjustment.adjusted)} "
+                f"| {_md_cell(adjustment.scope)} |"
+            )
+    else:
+        lines.append(
+            "No parameter adjustments were needed - the document fit as "
+            "generated."
+        )
+    lines.append("")
+
+    if report.omitted:
+        lines.append(
+            "Files omitted entirely to meet the budget (status Omitted in "
+            "the File Index):"
+        )
+        lines.append("")
+        lines.append("| Path | Est. tokens |")
+        lines.append("|---|---|")
+        for path, tokens in report.omitted:
+            lines.append(f"| {_md_cell(path)} | {tokens:,} |")
+        lines.append("")
+
+    return lines
+
+
+def _budget_block_xml(report: 'BudgetReport') -> List[str]:
+    """Render the Budget Report section as XML lines.
+
+    Emitted between ``</metadata>`` and ``<file_index>`` only when a token
+    budget was requested. Mirrors ``_budget_block_markdown`` so both
+    formats carry the same information (format parity). Numeric attributes
+    are plain digits (no thousands separators inside XML attributes).
+    """
+    if not report.adjustments and not report.omitted:
+        return [
+            f'<{TAG_BUDGET_REPORT} '
+            f'requested_tokens="{report.requested_tokens}"/>'
+        ]
+
+    lines = [
+        f'<{TAG_BUDGET_REPORT} requested_tokens="{report.requested_tokens}">'
+    ]
+    for adjustment in report.adjustments:
+        lines.append(
+            f'    <{TAG_ADJUSTMENT} '
+            f'parameter={quoteattr(adjustment.parameter)} '
+            f'requested={quoteattr(adjustment.requested)} '
+            f'adjusted={quoteattr(adjustment.adjusted)} '
+            f'scope={quoteattr(adjustment.scope)}/>'
+        )
+    for path, tokens in report.omitted:
+        lines.append(
+            f'    <{TAG_OMITTED_FILE} path={quoteattr(path)} '
+            f'estimated_tokens="{tokens}"/>'
+        )
+    lines.append(f'</{TAG_BUDGET_REPORT}>')
+    return lines
+
+
 class OutputGenerator(ABC):
     @abstractmethod
     def generate(self,
@@ -137,7 +228,8 @@ class OutputGenerator(ABC):
                  tree_text: str,
                  files_data: List[FileData],
                  stats: Dict[str, int],
-                 config: Optional['Config'] = None) -> str:
+                 config: Optional['Config'] = None,
+                 budget_report: Optional['BudgetReport'] = None) -> str:
         pass
 
 class MarkdownGenerator(OutputGenerator):
@@ -146,7 +238,8 @@ class MarkdownGenerator(OutputGenerator):
                  tree_text: str,
                  files_data: List[FileData],
                  stats: Dict[str, int],
-                 config: Optional['Config'] = None) -> str:
+                 config: Optional['Config'] = None,
+                 budget_report: Optional['BudgetReport'] = None) -> str:
 
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
 
@@ -172,11 +265,15 @@ class MarkdownGenerator(OutputGenerator):
             "> Tokens: {{TOTAL_TOKENS}} (est. via {{TOKEN_METHOD}})",
             f"> Contents: {contents_line}",
             "",
+        ]
+        if budget_report is not None:
+            lines.extend(_budget_block_markdown(budget_report))
+        lines.extend([
             "# File Index",
             "",
             "| Path | Type | Status |",
             "|---|---|---|",
-        ]
+        ])
         for entry in index_entries:
             lines.append(
                 f"| {_md_cell(entry.path)} | {_md_cell(entry.type)} "
@@ -278,7 +375,8 @@ class XMLGenerator(OutputGenerator):
                  tree_text: str,
                  files_data: List[FileData],
                  stats: Dict[str, int],
-                 config: Optional['Config'] = None) -> str:
+                 config: Optional['Config'] = None,
+                 budget_report: Optional['BudgetReport'] = None) -> str:
 
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
 
@@ -309,8 +407,11 @@ class XMLGenerator(OutputGenerator):
             f"    <stats {stats_attrs}/>",
             "</metadata>",
             "",
-            f"<{TAG_FILE_INDEX}>",
         ]
+        if budget_report is not None:
+            lines.extend(_budget_block_xml(budget_report))
+            lines.append("")
+        lines.append(f"<{TAG_FILE_INDEX}>")
         for entry in index_entries:
             lines.append(
                 f'    <{TAG_INDEX_ENTRY} path={quoteattr(entry.path)} '

@@ -45,6 +45,7 @@ class Config:
     schema_only: bool                    # Emit only data-file schemas (no rows)
     stats_summary: bool                  # Include the per-table stats metadata block
     env_keys: bool                       # List .env variable names (redacted values)
+    budget: Optional[int]                # Target token budget for --budget (None = off)
 ```
 
 ## CLI Arguments Reference
@@ -61,6 +62,18 @@ class Config:
 |:---------|:-----:|:----:|:--------:|:------------|
 | `--output` | `-o` | `str` | `PROMPT` | Base name of the generated output file. The appropriate extension (`.md` or `.xml`) is appended automatically based on the format. |
 | `--format` | `-f` | `str` | `markdown` | Output format. Valid values: `xml`, `markdown`. |
+
+### Budget Settings
+
+| Argument | Short | Type | Default | Description |
+|:---------|:-----:|:----:|:-------:|:------------|
+| `--budget` | `-b` | `_token_budget` | `None` (`DEFAULT_BUDGET`) | Target token budget for the generated output (e.g. `50000`, `100k`, `1m`). Data-cap parameters are tightened automatically, one [de-escalation ladder step](budget.md) at a time, until the output fits; if it still cannot fit once every parameter is at its floor and every reducible file has been omitted, **no output is written** and the process exits with code 1. |
+
+`--budget` is off (`None`) unless passed — a run without it behaves exactly
+like a pre-`--budget` run: `fit_to_budget()` in
+[`budget.py`](budget.md) is never called, and no per-file bookkeeping for it
+is allocated. See [`budget.md`](budget.md) for the full ladder, the fit test,
+and the infeasible-outcome contract.
 
 ### CSV Sampling Settings
 
@@ -198,6 +211,7 @@ from data2prompt.constants import (
     DEFAULT_SCHEMA_ONLY,
     DEFAULT_STATS_SUMMARY,
     DEFAULT_ENV_KEYS,
+    DEFAULT_BUDGET,
     SUPPORTED_FORMATS
 )
 ```
@@ -316,6 +330,15 @@ Numeric arguments use two custom `argparse` types defined in
   `--truncated-line-length`, `--table-truncate`, `--max-file-size`
 - `_positive_int` (≥ 1): thresholds that would be nonsensical at zero —
   `--line-length-threshold`, `--table-limit`
+- `_token_budget` (≥ 1): `--budget`. Accepts plain integers (`50000`),
+  thousands with a `k` suffix (`100k`), and millions with an `m` suffix
+  (`1m`, `1.5m`); case-insensitive, and commas/underscores are stripped
+  before parsing (`50,000` and `50_000` both work). The suffix is stripped,
+  the remainder parsed as `float`, then multiplied (`1_000` for `k`,
+  `1_000_000` for `m`) and truncated to `int`. Non-numeric input raises
+  `argparse.ArgumentTypeError` with an example-bearing message; a parsed
+  value `< 1` raises with `"must be >= 1 token, got {parsed}"`. Both
+  rejections exit with code 2, same as the other custom types.
 
 Invalid values are rejected at parse time with exit code 2, so they can never
 surface later as cryptic pandas/random errors inside the parsers. `--seed`
@@ -329,6 +352,7 @@ remains a plain `int` (any value is a valid seed).
 | Negative sample sizes | Rejected at parse time (`argparse` error, exit code 2) |
 | Zero sample size | Accepted — emits headers/schema with no data rows |
 | Non-existent folders in `--ignore-folders` | Silently ignored during scanning |
+| `--budget` below the document's reachable floor | Not a CLI error — `fit_to_budget()` runs the full ladder and still exceeds the budget: **infeasible**. No output file is written, no clipboard copy happens, a themed failure panel is printed, and the process exits with code 1. See [`budget.md`](budget.md#outcomes-fits-vs-infeasible). |
 
 ### Known Behaviors
 
@@ -359,6 +383,8 @@ def test_setup_cli_merges_defaults():
 ## See Also
 
 - [`src/data2prompt/main.py`](../src/data2prompt/main.py#L1) - Orchestration layer that consumes `Config`
+
+- [`docs/budget.md`](budget.md) - The `--budget` de-escalation ladder that consumes `Config.budget`
 
 - [`src/data2prompt/constants.py`](../src/data2prompt/constants.py#L1) - Core constants and default values
 

@@ -9,7 +9,7 @@ import pandas as pd
 warnings.filterwarnings("ignore", category=pd.errors.DtypeWarning)
 import time
 from pathlib import Path
-from typing import List, Set
+from typing import List, Optional, Set
 from data2prompt.cli import setup_cli, Config
 from data2prompt.parsers import (
     registry,
@@ -22,6 +22,7 @@ from data2prompt.parsers import (
 from data2prompt.utils import ProjectScanner, count_tokens, copy_to_clipboard
 from data2prompt.ui import ui
 from data2prompt.output import get_generator
+from data2prompt.budget import fit_to_budget, FileRecord, BudgetOutcome
 
 def get_ui_action(file_name: str, ext: str, skip_exts: Set[str]) -> str:
     """Determines the UI action string based on file name and extension."""
@@ -114,6 +115,9 @@ def _run() -> None:
 
         # 2. Processing files
         files_data: List[FileData] = []
+        # Only populated when --budget is set; fit_to_budget() re-parses
+        # from these in place, so a budget-less run pays nothing for this.
+        records: List[FileRecord] = []
 
         for file_path in all_files:
             relative_path = file_path.relative_to(project_path)
@@ -137,7 +141,14 @@ def _run() -> None:
                 "tokens": result.tokens,
                 "status": result.status
             })
-            
+
+            if config.budget is not None:
+                records.append(FileRecord(
+                    absolute_path=file_path,
+                    relative_path=str(relative_path),
+                    result=result,
+                ))
+
             # Update stats — .get() so a parser introducing a new stat key
             # can never crash the whole run with a KeyError.
             for key, value in result.stats_update.items():
@@ -155,38 +166,77 @@ def _run() -> None:
         # 3. Compiling project context
         handler.on_progress("Compiling", config.output)
 
-        generator = get_generator(config.format)
-        final_output = generator.generate(
-            project_name=project_path.name,
-            tree_text=tree_text,
-            files_data=files_data,
-            stats=stats,
-            config=config
-        )
+        outcome: Optional[BudgetOutcome] = None
+        if config.budget is not None:
+            # Re-parses only the files each ladder step affects, re-renders
+            # the whole document, and re-counts, until it fits config.budget
+            # (or the reduction floor is reached — see budget.py).
+            outcome = fit_to_budget(
+                budget=config.budget,
+                config=config,
+                records=records,
+                scanned_file_count=stats["file_count"],
+                tree_text=tree_text,
+                project_name=project_path.name,
+                reparse=process_target_file,
+                on_progress=handler.on_progress,
+            )
+            if outcome.fits:
+                total_tokens, method = outcome.total_tokens, outcome.method
+                files_data = outcome.files_data
+                stats = outcome.stats
+                processed_files_info = outcome.summaries
+                # fit_to_budget counted the placeholder string; substitute
+                # the real values exactly like the budget-less path below.
+                final_output = outcome.final_output
+                final_output = final_output.replace(
+                    "{{TOTAL_TOKENS}}", str(total_tokens)
+                )
+                final_output = final_output.replace("{{TOKEN_METHOD}}", method)
+        else:
+            generator = get_generator(config.format)
+            final_output = generator.generate(
+                project_name=project_path.name,
+                tree_text=tree_text,
+                files_data=files_data,
+                stats=stats,
+                config=config
+            )
 
-        # Count on the full rendered output so the reported total includes the
-        # structural scaffolding (tags, headers, fences, metadata, system prompt).
-        # Count once on the placeholder string and substitute; inserting the digits
-        # shifts the true count by a token or two, which the metadata labels an estimate.
-        total_tokens, method = count_tokens(final_output)
-        final_output = final_output.replace("{{TOTAL_TOKENS}}", str(total_tokens))
-        final_output = final_output.replace("{{TOKEN_METHOD}}", method)
+            # Count on the full rendered output so the reported total includes the
+            # structural scaffolding (tags, headers, fences, metadata, system prompt).
+            # Count once on the placeholder string and substitute; inserting the digits
+            # shifts the true count by a token or two, which the metadata labels an estimate.
+            total_tokens, method = count_tokens(final_output)
+            final_output = final_output.replace("{{TOTAL_TOKENS}}", str(total_tokens))
+            final_output = final_output.replace("{{TOKEN_METHOD}}", method)
 
         # Output destination: clipboard (if requested and available) or a file.
+        # Skipped entirely when the budget could not be met — nothing is
+        # written and nothing is copied for an infeasible run.
         clipboard_failed = False
-        if config.clipboard and copy_to_clipboard(final_output):
-            output_destination = "(clipboard)"
-            file_size_kb = len(final_output.encode('utf-8')) / 1024
-        else:
-            # Either a normal file run, or a clipboard run with no utility available.
-            clipboard_failed = config.clipboard
-            output_path = Path(config.output)
-            output_path.write_text(final_output, encoding='utf-8')
-            output_destination = config.output
-            file_size_kb = output_path.stat().st_size / 1024
+        if outcome is None or outcome.fits:
+            if config.clipboard and copy_to_clipboard(final_output):
+                output_destination = "(clipboard)"
+                file_size_kb = len(final_output.encode('utf-8')) / 1024
+            else:
+                # Either a normal file run, or a clipboard run with no utility available.
+                clipboard_failed = config.clipboard
+                output_path = Path(config.output)
+                output_path.write_text(final_output, encoding='utf-8')
+                output_destination = config.output
+                file_size_kb = output_path.stat().st_size / 1024
         handler.on_progress(advance=1)
 
     elapsed_seconds = time.perf_counter() - started
+
+    if outcome is not None and not outcome.fits:
+        ui.print_budget_failure(
+            requested=outcome.report.requested_tokens,
+            minimum_tokens=outcome.total_tokens,
+            report=outcome.report,
+        )
+        raise SystemExit(1)
 
     if clipboard_failed:
         ui.print_warning_panel(
@@ -203,6 +253,7 @@ def _run() -> None:
         stats,
         method,
         elapsed_seconds,
+        budget_report=outcome.report if outcome is not None else None,
     )
 
     if any(info.get("status") == "Skipped (No pyarrow)" for info in processed_files_info):

@@ -68,6 +68,9 @@ if TYPE_CHECKING:
     # Imported only for type hints — a runtime import would create a
     # utils → ui → parsers → utils cycle.
     from data2prompt.parsers import FileSummary
+    # Imported only for type hints — a runtime import would create a
+    # budget → parsers → utils → ui cycle.
+    from data2prompt.budget import BudgetReport
 
 
 Severity = Literal["ok", "warn", "error"]
@@ -83,6 +86,7 @@ _WARN_STATUSES = frozenset({
     "Redacted",
     "Skipped (Env)",
     "Skipped (No pyarrow)",
+    "Omitted (Budget)",
 })
 
 # Attention section of the final report: (stats key, badge label).
@@ -483,26 +487,34 @@ class UIHandler:
             ),
         )
 
-    def _token_gauge(self, total_tokens: int, method: str) -> Table:
+    def _token_gauge(
+        self, total_tokens: int, method: str, budget: Optional[int] = None
+    ) -> Table:
         """The TOKENS line: count, tokenizer, and a gauge of the count
-        against the reference context window (one cell = 2% at the full
-        50-column track); nearing the window turns it yellow, overflowing
-        turns it red. The gauge draws itself to whatever width the row
-        grants it, so the line never truncates."""
-        ratio = total_tokens / CONTEXT_WINDOW_REFERENCE
+        against the reference context window — or, when ``budget`` is
+        given, against the requested token budget instead (one cell = 2%
+        at the full 50-column track); nearing the reference turns it
+        yellow, overflowing turns it red. The gauge draws itself to
+        whatever width the row grants it, so the line never truncates."""
+        reference = budget if budget is not None else CONTEXT_WINDOW_REFERENCE
+        ratio = total_tokens / reference
         if ratio > 1.0:
             level_style = "bold red"
         elif ratio >= 0.85:
             level_style = UI_WARN
         else:
             level_style = UI_ACCENT
-        window_label = f"{CONTEXT_WINDOW_REFERENCE // 1000}K"
 
         prefix = Text()
         prefix.append(f"{total_tokens:,}", style=UI_DATA_BOLD)
         prefix.append(f" ({method})  ", style=UI_CHROME)
+        if budget is not None:
+            suffix_text = f" {round(ratio * 100)}% of {budget:,} budget"
+        else:
+            window_label = f"{CONTEXT_WINDOW_REFERENCE // 1000}K"
+            suffix_text = f" {round(ratio * 100)}% of {window_label} window"
         suffix = Text(
-            f" {round(ratio * 100)}% of {window_label} window",
+            suffix_text,
             style=UI_CHROME_BRIGHT if ratio < 0.85 else level_style,
         )
 
@@ -512,15 +524,52 @@ class UIHandler:
         line.add_column(no_wrap=True)
         line.add_row(
             prefix,
-            _CellBar(
-                total_tokens,
-                CONTEXT_WINDOW_REFERENCE,
-                REPORT_GAUGE_WIDTH,
-                level_style,
-            ),
+            _CellBar(total_tokens, reference, REPORT_GAUGE_WIDTH, level_style),
             suffix,
         )
         return line
+
+    def _budget_lines(
+        self, report: 'BudgetReport', total_tokens: int
+    ) -> RenderableType:
+        """The BUDGET section body: a requested/final headline, one line
+        per parameter adjustment, and one line per omitted file."""
+        pct = round(100 * total_tokens / report.requested_tokens)
+        headline = Text()
+        headline.append("requested ", style=UI_CHROME)
+        headline.append(f"{report.requested_tokens:,}", style=UI_DATA_BOLD)
+        headline.append(
+            f" · final {total_tokens:,} ({pct}% of budget)",
+            style=UI_CHROME_BRIGHT,
+        )
+        lines: List[RenderableType] = [headline]
+
+        for adjustment in report.adjustments:
+            line = Text()
+            line.append("▰ ", style=UI_ACCENT)
+            line.append(adjustment.parameter, style=UI_DATA)
+            line.append("  ")
+            line.append(
+                f"{adjustment.requested} → {adjustment.adjusted}",
+                style=UI_DATA_BOLD,
+            )
+            line.append(f"  {adjustment.scope}", style=UI_CHROME)
+            lines.append(line)
+
+        for path, tokens in report.omitted:
+            line = Text(style=UI_WARN)
+            line.append("− ")
+            line.append(path)
+            line.append(f" · ~{tokens:,} tokens omitted")
+            lines.append(line)
+
+        if not report.adjustments and not report.omitted:
+            lines.append(Text(
+                "fit within budget — no parameter adjustments needed",
+                style=UI_CHROME,
+            ))
+
+        return Group(*lines)
 
     def _composition_chart(
         self, files: List["FileSummary"], stats: Dict[str, int]
@@ -596,9 +645,11 @@ class UIHandler:
         stats: Dict[str, int],
         method: str = "o200k_base",
         elapsed_seconds: float = 0.0,
+        budget_report: Optional['BudgetReport'] = None,
     ) -> None:
-        """Displays the final report panel: run summary, composition,
-        attention items, and the heaviest / flagged files."""
+        """Displays the final report panel: run summary, an optional
+        budget section, composition, attention items, and the heaviest /
+        flagged files."""
         summary = Table.grid(padding=(0, 2))
         summary.add_column(style=UI_CHROME, no_wrap=True)
         summary.add_column()
@@ -610,7 +661,12 @@ class UIHandler:
         )
         summary.add_row("OUTPUT", output_line)
 
-        summary.add_row("TOKENS", self._token_gauge(total_tokens, method))
+        gauge_budget = (
+            budget_report.requested_tokens if budget_report is not None else None
+        )
+        summary.add_row(
+            "TOKENS", self._token_gauge(total_tokens, method, budget=gauge_budget)
+        )
 
         time_line = Text()
         time_line.append(f"{elapsed_seconds:.1f}s", style=UI_DATA_BOLD)
@@ -619,11 +675,16 @@ class UIHandler:
         time_line.append(" files", style=UI_CHROME_BRIGHT)
         summary.add_row("TIME", time_line)
 
-        sections: List[RenderableType] = [
-            summary,
+        sections: List[RenderableType] = [summary]
+        if budget_report is not None:
+            sections.extend([
+                self._section_header("BUDGET"),
+                self._budget_lines(budget_report, total_tokens),
+            ])
+        sections.extend([
             self._section_header("COMPOSITION"),
             self._composition_chart(processed_files_info, stats),
-        ]
+        ])
 
         attention = self._attention_line(stats)
         if attention is not None:
@@ -720,6 +781,49 @@ class UIHandler:
         )
 
     # ------------------------------------------------------ warnings, errors
+
+    def print_budget_failure(
+        self, requested: int, minimum_tokens: int, report: 'BudgetReport'
+    ) -> None:
+        """Displays the themed failure panel for an infeasible --budget run:
+        even the maximally reduced document still exceeds the request, so
+        nothing was written or copied. Plain ``Text`` throughout — no
+        markup injection risk from paths or scope strings."""
+        requested_line = Text()
+        requested_line.append("Requested budget   ", style=UI_CHROME)
+        requested_line.append(f"{requested:,} tokens", style=UI_DATA)
+
+        minimum_line = Text()
+        minimum_line.append("Minimum achievable  ", style=UI_CHROME)
+        minimum_line.append(f"{minimum_tokens:,} tokens", style=UI_DATA_BOLD)
+
+        floor_text = "even with every data cap at its floor"
+        if report.omitted:
+            floor_text += f" and all {len(report.omitted)} file(s) omitted"
+        lines: List[RenderableType] = [
+            requested_line,
+            minimum_line,
+            Text(floor_text, style=UI_CHROME),
+        ]
+
+        for adjustment in report.adjustments:
+            lines.append(Text(
+                f"{adjustment.parameter} {adjustment.requested} → "
+                f"{adjustment.adjusted}",
+                style=UI_CHROME,
+            ))
+
+        lines.append(Text("No output was produced.", style=UI_WARN))
+
+        self.console.print(
+            Panel(
+                Group(*lines),
+                box=box.SQUARE,
+                border_style="red3",
+                title=Text(" ■ BUDGET INFEASIBLE ", style=UI_ERROR),
+                title_align="left",
+            )
+        )
 
     def print_warning_panel(self, message: str) -> None:
         """Displays a warning message in a themed panel. The message may

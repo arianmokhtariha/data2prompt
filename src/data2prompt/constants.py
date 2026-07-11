@@ -1,6 +1,6 @@
 # --- Core Defaults & Constants ---
 
-from typing import Dict
+from typing import Dict, Optional
 
 # Folders matching these names are excluded from both the project tree and content processing.
 CORE_IGNORES = {
@@ -51,6 +51,19 @@ DEFAULT_SCHEMA_ONLY = False                 # emit only the schema of data files
 DEFAULT_STATS_SUMMARY = True               # include per-table stats metadata block (--no-stats-summary disables)
 DEFAULT_ENV_KEYS = True                     # show env variable names with redacted values (--no-env-keys skips entirely)
 
+# --- Token Budget Targeting (--budget) ---
+# fit_to_budget() in budget.py tightens data-cap parameters down these
+# floors, one ladder step at a time, verifying the real rendered token
+# count after each step. Floors keep reduced output honest: a 5-row
+# sample still shows structure; 0 rows would not.
+DEFAULT_BUDGET: Optional[int] = None   # no budget targeting unless --budget
+BUDGET_TOKEN_MARGIN = 16       # safety margin: placeholder digits shift count
+BUDGET_MIN_CSV_SAMPLE = 5      # csv_sample_size floor (CSV/Excel/Arrow rows)
+BUDGET_MIN_NOTEBOOK_LINES = 10  # max_lines floor before outputs are dropped
+BUDGET_MIN_SQL_SAMPLE = 5      # sql_sample_size floor
+BUDGET_MIN_SQL_MAX_LINES = 20  # sql_max_lines floor
+BUDGET_TEXT_FILE_SIZE_KB = 10  # max_file_size cap for text-truncation step
+
 # Placeholder substituted for every value in a .env file so secrets never leak.
 ENV_VALUE_PLACEHOLDER = '<redacted>'
 
@@ -77,12 +90,16 @@ Model. Nothing in it was written by hand.
 ## Document layout
 
 1. Metadata — generation timestamp, token estimate, and a content summary.
-2. File Index — one row per file with its type and inclusion status. Paths
+2. Budget report — present only when a token budget was requested; states
+   the budget and every data-reduction adjustment applied to fit it,
+   including files omitted entirely (they appear in the File Index with
+   status Omitted).
+3. File Index — one row per file with its type and inclusion status. Paths
    are relative to the project root, use forward slashes, and are the exact
    strings used in the `## File:` headers below.
-3. Files — one section per file, introduced by `## File: {path}`, in the
+4. Files — one section per file, introduced by `## File: {path}`, in the
    same order as the File Index.
-4. End of codebase — closing marker; nothing follows it.
+5. End of codebase — closing marker; nothing follows it.
 
 ## Reading conventions
 
@@ -123,12 +140,15 @@ Model. Nothing in it was written by hand.
 Document layout, in order:
 1. <metadata> — generation timestamp, token estimate, and a <stats/>
    content summary.
-2. <file_index> — one <entry path="..." type="..." status="..."/> per file.
+2. <budget_report> — present only when a token budget was requested; its
+   entries state the budget and every data-reduction adjustment applied to
+   fit it, including files omitted entirely (status Omitted in the index).
+3. <file_index> — one <entry path="..." type="..." status="..."/> per file.
    Paths are relative to the project root, use forward slashes, and exactly
    match the path attribute of the corresponding <file> element.
-3. <files> — one <file path="..." type="..." status="..."> element per
+4. <files> — one <file path="..." type="..." status="..."> element per
    file, in the same order as the file index.
-4. <end_of_codebase> — closing marker; nothing follows it.
+5. <end_of_codebase> — closing marker; nothing follows it.
 
 Reading conventions:
 - Element content is embedded VERBATIM — it is not XML-escaped. Treat the
@@ -166,6 +186,9 @@ TAG_CONTENT = "content"          # Used for notebook cells
 TAG_FILE_INDEX = "file_index"    # Per-file manifest (path/type/status)
 TAG_INDEX_ENTRY = "entry"        # One row of the file index
 TAG_END_OF_CODEBASE = "end_of_codebase"  # Recency anchor before </codebase>
+TAG_BUDGET_REPORT = "budget_report"      # optional block: present only with --budget
+TAG_ADJUSTMENT = "adjustment"            # one parameter adjustment row
+TAG_OMITTED_FILE = "omitted_file"        # one file omitted to meet the budget
 
 # Raw parser status -> controlled File Index vocabulary. The vocabulary is the
 # contract documented in the preambles above; resolve_inclusion_status() in
@@ -200,6 +223,7 @@ STATS_SUMMARY_LABELS: Dict[str, str] = {
     "truncated_count": "Truncated",
     "binary_count": "Binary skipped",
     "excluded_count": "Excluded",
+    "budget_omitted_count": "Budget omitted",
     "env_count": "Env files",
 }
 

@@ -1,6 +1,6 @@
 import argparse
 from dataclasses import dataclass, field
-from typing import Set
+from typing import Optional, Set
 
 from data2prompt import __version__
 from data2prompt.constants import (
@@ -25,6 +25,7 @@ from data2prompt.constants import (
     DEFAULT_SCHEMA_ONLY,
     DEFAULT_STATS_SUMMARY,
     DEFAULT_ENV_KEYS,
+    DEFAULT_BUDGET,
     SUPPORTED_FORMATS
 )
 
@@ -45,6 +46,29 @@ def _positive_int(value: str) -> int:
     parsed = _non_negative_int(value)
     if parsed == 0:
         raise argparse.ArgumentTypeError("must be >= 1, got 0")
+    return parsed
+
+
+def _token_budget(value: str) -> int:
+    """argparse type: a positive token count with optional k/m suffix.
+
+    Accepts plain integers ('50000'), thousands ('100k'), and millions
+    ('1m', '1.5m'); case-insensitive, commas/underscores ignored.
+    """
+    raw = value.strip().lower().replace(",", "").replace("_", "")
+    multiplier = 1
+    if raw.endswith("k"):
+        multiplier, raw = 1_000, raw[:-1]
+    elif raw.endswith("m"):
+        multiplier, raw = 1_000_000, raw[:-1]
+    try:
+        parsed = int(float(raw) * multiplier)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid token budget: {value!r} (examples: 50000, 100k, 1.5m)"
+        )
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1 token, got {parsed}")
     return parsed
 
 
@@ -72,6 +96,7 @@ class Config:
     schema_only: bool = False
     stats_summary: bool = True
     env_keys: bool = True
+    budget: Optional[int] = None
 
 def setup_cli() -> Config:
     """Configures the Command Line Interface (CLI) for the tool.
@@ -94,6 +119,12 @@ def setup_cli() -> Config:
 
     parser.add_argument('-f', '--format', choices=list(SUPPORTED_FORMATS.keys()), default=DEFAULT_FORMAT,
                         help=f'Output format: xml or markdown (default: {DEFAULT_FORMAT})')
+
+    parser.add_argument('-b', '--budget', type=_token_budget, default=DEFAULT_BUDGET,
+                        help='Target token budget for the generated output '
+                             '(e.g. 50000, 100k, 1m). Data-cap parameters are '
+                             'tightened automatically until the output fits; '
+                             'if it cannot fit, no output is written.')
 
     # CSV sampling settings
     parser.add_argument('-s', '--csv-sample-size', type=_non_negative_int, default=DEFAULT_CSV_SAMPLE_SIZE,
@@ -196,5 +227,6 @@ def setup_cli() -> Config:
         clipboard=args.clipboard,
         schema_only=args.schema_only,
         stats_summary=args.stats_summary,
-        env_keys=args.env_keys
+        env_keys=args.env_keys,
+        budget=args.budget
     )

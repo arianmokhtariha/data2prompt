@@ -2,10 +2,10 @@
 
 `data2prompt` follows an internal layering convention we call **Modular Functional
 Orchestration (MFO)**: a thin orchestration layer (`main.py`) coordinates calls into
-focused, single-responsibility modules (parsing, output generation, scanning, UI),
-with shared configuration centralized in one place. It's not a named industry
-pattern — just a consistent way of describing how this codebase is organized so the
-layering stays intentional as it grows.
+focused, single-responsibility modules (parsing, output generation, scanning, UI,
+token-budget fitting), with shared configuration centralized in one place. It's not
+a named industry pattern — just a consistent way of describing how this codebase is
+organized so the layering stays intentional as it grows.
 
 ## Core Principles
 
@@ -29,6 +29,11 @@ graph TD
     Main -->|Strategy| Output[output.py]
     Main -->|Helpers| Utils[utils.py]
     Main -->|Feedback| UI[ui.py]
+    Main -->|--budget| Budget[budget.py]
+    Budget -->|Render + count| Output
+    Budget -->|Types, is_env_file| Parsers
+    Budget -->|count_tokens| Utils
+    Budget --> Constants
     Parsers --> Constants
     Output --> Constants
     Utils --> UI
@@ -57,6 +62,7 @@ graph TD
 | [`output.py`](../src/data2prompt/output.py#L1) | Output generation via Strategy pattern | `get_generator(config.format)` |
 | [`utils.py`](../src/data2prompt/utils.py#L1) | Project scanning, tokenization (bundled BPE) | `ProjectScanner`, `count_tokens()`, `_load_encoding()` |
 | [`ui.py`](../src/data2prompt/ui.py#L1) | Terminal feedback and reporting | `ui.on_start()`, `ui.progress_bar()` |
+| [`budget.py`](../src/data2prompt/budget.py#L1) | Token-budget de-escalation ladder (`--budget`, see [budget.md](budget.md)) | `fit_to_budget(...)` — called only when `config.budget is not None` |
 
 ### Data Flow
 
@@ -91,6 +97,15 @@ sequenceDiagram
     Main->>Filesystem: write(final_output)
     Main->>UI: print_final_report()
 ```
+
+(The diagram above shows the budget-less path. When `config.budget is not
+None`, `Main` calls `fit_to_budget()` in `budget.py` instead of calling
+`Output`/`Utils` directly — `budget.py` performs the render-and-count loop
+internally and returns a `BudgetOutcome` — then rejoins at
+`Main->>Filesystem: write(final_output)` if it fits, or diverts to
+`ui.print_budget_failure()` + `SystemExit(1)` if it doesn't. See the
+[Budget branch](#budget-branch-configbudget-is-not-none) below and
+[budget.md](budget.md).)
 
 ### Processing Pipeline
 
@@ -163,10 +178,70 @@ final_output = final_output.replace("{{TOTAL_TOKENS}}", str(total_tokens))
 final_output = final_output.replace("{{TOKEN_METHOD}}", method)
 ```
 
+This is the budget-**less** path (`config.budget is None`) — the code above
+runs unmodified when `--budget` is not passed, byte-for-byte identical to
+before the feature existed.
+
 1. **Generator Selection**: [`get_generator()`](../src/data2prompt/output.py#L232) returns the appropriate [`OutputGenerator`](../src/data2prompt/output.py#L23) strategy based on `config.format`. `generate()` emits `{{TOTAL_TOKENS}}`/`{{TOKEN_METHOD}}` placeholders in its metadata block instead of receiving a pre-computed count.
 2. **Token Estimation**: [`count_tokens()`](../src/data2prompt/utils.py#L47) runs on the **full rendered string** — so the reported total includes structural scaffolding (tags, headers, fences, metadata, system prompt) — and the two placeholders are substituted via `str.replace()`. Counted once on the placeholder string; inserting the digits shifts the true total by a token or two (labeled an estimate).
 3. **Output Destination**: when `config.clipboard` is set, the generated output is copied to the system clipboard via [`copy_to_clipboard()`](../src/data2prompt/utils.py) and no file is written; if no clipboard utility is available it falls back to writing `config.output` and warns. Otherwise the output is written to `config.output` as usual.
 4. **Final Report**: [`ui.print_final_report()`](../src/data2prompt/ui.py) displays the compact report panel (summary, composition, attention items, heaviest/flagged files), including the elapsed time measured in `main.py`
+
+##### Budget branch (`config.budget is not None`)
+
+When `--budget` was passed, Phase 2 also appends one
+[`FileRecord`](budget.md#public-data-structures) per non-`skip_file` result to
+a `records` list (this allocation is skipped entirely otherwise). Phase 3
+then branches before generator selection:
+
+```python
+outcome: Optional[BudgetOutcome] = None
+if config.budget is not None:
+    outcome = fit_to_budget(
+        budget=config.budget,
+        config=config,
+        records=records,
+        scanned_file_count=stats["file_count"],
+        tree_text=tree_text,
+        project_name=project_path.name,
+        reparse=process_target_file,
+        on_progress=handler.on_progress,
+    )
+    if outcome.fits:
+        total_tokens, method = outcome.total_tokens, outcome.method
+        files_data, stats = outcome.files_data, outcome.stats
+        processed_files_info = outcome.summaries
+        final_output = outcome.final_output  # still has {{...}} placeholders
+        final_output = final_output.replace("{{TOTAL_TOKENS}}", str(total_tokens))
+        final_output = final_output.replace("{{TOKEN_METHOD}}", method)
+else:
+    ...  # the budget-less path shown above, unchanged
+```
+
+- [`fit_to_budget()`](budget.md) (see [budget.md](budget.md) for the full
+  ladder) re-parses, re-renders, and re-counts internally; it returns a
+  `BudgetOutcome` rather than a bare string, since a budget run may also
+  change `files_data`, `stats`, and the TUI summaries (omitted files).
+- **Fits**: `total_tokens`, `method`, `files_data`, `stats`, and
+  `processed_files_info` are all swapped for the outcome's versions, and the
+  placeholder substitution happens exactly as it does on the budget-less
+  path. Execution then rejoins the common write/clipboard block, which is
+  gated by `if outcome is None or outcome.fits:` — so a `--budget` run that
+  fits writes output exactly like a normal run.
+- **Infeasible** (`outcome.fits is False`): the write/clipboard block is
+  skipped entirely (the `if outcome is None or outcome.fits:` guard is
+  `False`) — nothing is written, nothing is copied. After the progress
+  context exits, `main.py` checks `if outcome is not None and not
+  outcome.fits:` **before** building the final report, calls
+  [`ui.print_budget_failure(requested=..., minimum_tokens=outcome.
+  total_tokens, report=outcome.report)`](ui.md#budget-failure-panel), and
+  raises `SystemExit(1)` — `ui.print_final_report()` is never reached on
+  this path, so `total_tokens`/`output_destination`/`file_size_kb` (which
+  the success path would have populated) are never read.
+- On every run where `outcome is not None` and it fits,
+  `ui.print_final_report(...)` receives the additional
+  `budget_report=outcome.report` keyword argument, which adds the BUDGET
+  section to the TUI report (see [ui.md](ui.md)).
 
 ### Design Patterns
 
@@ -243,6 +318,7 @@ element) so the LLM sees the codebase's composition up front.
 | `truncated_count` | Files/content truncated due to size limits |
 | `binary_count` | Binary files detected and skipped |
 | `excluded_count` | Files excluded via ignore rules |
+| `budget_omitted_count` | Files omitted entirely to fit `--budget`; only present when `fit_to_budget()` omitted at least one file (see [budget.md](budget.md)) |
 | `env_count` | `.env` files redacted (or skipped via `--no-env-keys`) |
 
 ### Defensive Measures

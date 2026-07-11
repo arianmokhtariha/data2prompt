@@ -14,6 +14,7 @@ graph LR
     Constants --> Parsers[parsers.py]
     Constants --> Output[output.py]
     Constants --> Main[main.py]
+    Constants --> Budget[budget.py]
 ```
 
 ## Module Categories
@@ -104,6 +105,41 @@ All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and 
 | `DEFAULT_OUTPUT_FILE` | `'PROMPT'` | Default output base name |
 | `DEFAULT_FORMAT` | `'markdown'` | Default output format |
 
+#### Token Budget Targeting Constants (`--budget`)
+
+```python
+DEFAULT_BUDGET: Optional[int] = None   # no budget targeting unless --budget
+BUDGET_TOKEN_MARGIN = 16       # safety margin: placeholder digits shift count
+BUDGET_MIN_CSV_SAMPLE = 5      # csv_sample_size floor (CSV/Excel/Arrow rows)
+BUDGET_MIN_NOTEBOOK_LINES = 10  # max_lines floor before outputs are dropped
+BUDGET_MIN_SQL_SAMPLE = 5      # sql_sample_size floor
+BUDGET_MIN_SQL_MAX_LINES = 20  # sql_max_lines floor
+BUDGET_TEXT_FILE_SIZE_KB = 10  # max_file_size cap for text-truncation step
+```
+
+**Type:** `Optional[int]` (`DEFAULT_BUDGET`) / `int` (the rest)
+
+**Purpose:** [`fit_to_budget()`](../src/data2prompt/budget.py) in
+[`budget.py`](budget.md) tightens data-cap parameters down these floors, one
+[ladder step](budget.md#the-de-escalation-ladder) at a time, verifying the
+real rendered token count after each step. Floors keep reduced output
+honest — a 5-row sample still shows structure; 0 rows would not.
+
+| Constant | Default | Purpose |
+|----------|---------|---------|
+| `DEFAULT_BUDGET` | `None` | No token budget targeting unless `--budget` is passed; `Config.budget` default |
+| `BUDGET_TOKEN_MARGIN` | `16` | Fit-test safety margin: an attempt fits when `tokens <= budget - BUDGET_TOKEN_MARGIN`, covering the digit shift from the later `{{TOTAL_TOKENS}}`/`{{TOKEN_METHOD}}` substitution |
+| `BUDGET_MIN_CSV_SAMPLE` | `5` | Floor for `csv_sample_size` (CSV/Excel/Arrow row sampling) |
+| `BUDGET_MIN_NOTEBOOK_LINES` | `10` | Floor for `max_lines` before the ladder drops notebook outputs to 0 entirely |
+| `BUDGET_MIN_SQL_SAMPLE` | `5` | Floor for `sql_sample_size` |
+| `BUDGET_MIN_SQL_MAX_LINES` | `20` | Floor for `sql_max_lines` |
+| `BUDGET_TEXT_FILE_SIZE_KB` | `10` | `max_file_size` target for the text-truncation ladder step; matches `DefaultParser`'s fixed 10KB head read, so a lower cap would gain nothing |
+
+**Consumed by:**
+- [`cli.py`](../src/data2prompt/cli.py) — `DEFAULT_BUDGET` is the `-b`/`--budget` argparse default
+- [`budget.py`](budget.md) — the five `BUDGET_MIN_*`/`BUDGET_TEXT_FILE_SIZE_KB`
+  floors and `BUDGET_TOKEN_MARGIN` drive every ladder step and the fit test
+
 #### Boolean Feature Toggles
 
 Every CLI boolean flag reads its default from `constants.py`, so the flag-to-default
@@ -191,9 +227,14 @@ syntax differs) across four parts:
 
 1. **Purpose** — machine-generated snapshot, produced by data2prompt for LLM
    consumption.
-2. **Document layout** — the section order (Metadata → File Index → Files →
-   End of codebase) and the guarantee that paths are project-relative,
-   forward-slashed, and exact keys across index/headers/attributes.
+2. **Document layout** — the section order (Metadata → Budget report → File
+   Index → Files → End of codebase) and the guarantee that paths are
+   project-relative, forward-slashed, and exact keys across
+   index/headers/attributes. Both preambles' layout lists now carry **five**
+   items: the Budget report is item 2, inserted between Metadata and the File
+   Index, and is present only when a token budget was requested (see
+   [`budget.md`](budget.md)); the remaining items renumber accordingly
+   (File Index is 3, Files is 4, End of codebase is 5).
 3. **Reading conventions** — dynamic backtick fencing, notebook cell and Excel
    sheet labeling, schema blocks (full-dataset stats vs. sampled rows), the
    `-- [...] --` tool-notice grammar, and env-value redaction.
@@ -217,6 +258,9 @@ TAG_CONTENT = "content"          # Used for notebook cells
 TAG_FILE_INDEX = "file_index"    # Per-file manifest (path/type/status)
 TAG_INDEX_ENTRY = "entry"        # One row of the file index
 TAG_END_OF_CODEBASE = "end_of_codebase"  # Recency anchor before </codebase>
+TAG_BUDGET_REPORT = "budget_report"      # optional block: present only with --budget
+TAG_ADJUSTMENT = "adjustment"            # one parameter adjustment row
+TAG_OMITTED_FILE = "omitted_file"        # one file omitted to meet the budget
 ```
 
 **Type:** `str`
@@ -224,11 +268,15 @@ TAG_END_OF_CODEBASE = "end_of_codebase"  # Recency anchor before </codebase>
 **Purpose:** Consistent XML tag names for structured output generation.
 `TAG_DIRECTORY_STRUCTURE` was removed — the `<directory_structure>` section is
 superseded by the `<file_index>` manifest (see [output.md](output.md#file-index)).
+`TAG_BUDGET_REPORT` / `TAG_ADJUSTMENT` / `TAG_OMITTED_FILE` back the optional
+Budget Report block emitted only when a token budget was requested (see
+[output.md](output.md#budget-report)).
 
 **Consumed by:**
 - [`output.py`](../src/data2prompt/output.py) — `<files>`/`<file>` structure,
-  `<content>` for notebook cells, `<file_index>`/`<entry>` rows, and the
-  `<end_of_codebase>` anchor
+  `<content>` for notebook cells, `<file_index>`/`<entry>` rows, the
+  `<end_of_codebase>` anchor, and the `<budget_report>`/`<adjustment>`/
+  `<omitted_file>` block
 
 #### `INCLUSION_STATUS_MAP` — File Index Vocabulary
 
@@ -270,6 +318,13 @@ STATS_SUMMARY_LABELS: Dict[str, str] = {
 **Purpose:** Ordered stat-key → human label mapping for the document-level
 content summary (`> Contents:` line in Markdown, `<stats/>` element in XML).
 Zero counts are dropped at render time; `Total files` always renders.
+
+`"budget_omitted_count": "Budget omitted"` was added immediately after
+`"excluded_count"`. It renders only on a `--budget` run that actually omitted
+files (`stats["budget_omitted_count"]` is only set, by
+[`_materialize()`](budget.md#_materialize-rebuilding-state-every-attempt) in
+`budget.py`, when at least one file was omitted to fit the budget) — same
+zero-count-dropped behavior as every other key here.
 
 ---
 
@@ -394,6 +449,8 @@ constants.py
     ├──► parsers.py ──────────────────────► Processing functions (sampling/truncation logic)
     │
     ├──► output.py ───────────────────────► Generator classes (formatting logic)
+    │
+    ├──► budget.py ───────────────────────► fit_to_budget() ladder floors/margin
     │
     └──► utils.py (indirectly) ───────────► ProjectScanner (file discovery)
 ```

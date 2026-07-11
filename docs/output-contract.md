@@ -15,6 +15,7 @@ current concrete structure lives in the module docs:
 | Every existing `-- [...] --` notice and which function emits it | [`parsers.md`](parsers.md) — "Tool-Notice Grammar" |
 | Preamble text, `INCLUSION_STATUS_MAP`, `STATS_SUMMARY_LABELS`, tags | [`constants.md`](constants.md) |
 | Orchestration and the stats dict lifecycle | [`architecture.md`](architecture.md) |
+| Budget report block (`--budget`) | [`budget.md`](budget.md) / [`output.md`](output.md) |
 
 ## Design Rationale
 

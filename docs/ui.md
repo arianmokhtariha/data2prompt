@@ -161,6 +161,16 @@ each preceded by a blank spacer line so sections are unmistakable at a
 glance. (Bars are shortened here for page width — the gauge and composition
 tracks cap at 50 columns, one cell = 2%.)
 
+`print_final_report()` accepts a trailing, optional
+`budget_report: Optional['BudgetReport'] = None` parameter. `main.py` passes
+`outcome.report if outcome is not None else None`, so it is only non-`None`
+on a `--budget` run that actually reached the report (an infeasible run never
+gets here — it exits via `print_budget_failure()` first, see
+[Budget Failure Panel](#budget-failure-panel)). `BudgetReport` is imported
+under `TYPE_CHECKING` only, alongside `FileSummary` — a runtime import would
+create a `budget → parsers → utils → ui` cycle (same rationale as the
+existing `FileSummary` import, see [Global Instance](#global-instance)).
+
 ```
 ┌ ▰▰ T R A N S M I S S I O N  C O M P L E T E ────────────────────┐
 │                                                                  │
@@ -205,6 +215,8 @@ Section by section:
   grid so the gauge sizes itself between the count and the trailing
   percentage label), and the elapsed wall-clock time (measured in
   `main.py`) with the total file count.
+- **BUDGET** *(only when `--budget` was requested)* — see
+  [Budget Section](#budget-section-only-when---budget-was-requested) below.
 - **COMPOSITION** — a per-type token-share **bar chart** built by
   `_composition_chart()` from the actual per-file summaries (not the flat
   stat counters), under a dim header row (`TYPE FILES SHARE TOKENS %`):
@@ -242,6 +254,92 @@ cell (1 = a cell in every column, the default contiguous look; 2 spaces
 cells one blank column apart with half as many cells), independent of the
 track's on-screen length.
 
+### Budget Section (only when `--budget` was requested)
+
+When `print_final_report()` receives a non-`None` `budget_report`, two things
+change in the report above:
+
+1. The TOKENS row's gauge is built with `budget=budget_report.
+   requested_tokens` instead of the default reference — see
+   [Budget-Scaled Token Gauge](#budget-scaled-token-gauge) below.
+2. A **BUDGET** section is inserted right after the summary grid, *before*
+   COMPOSITION:
+
+```
+│  ▰▰ B U D G E T ──────────────────────────────────────────────────│
+│  requested 50,000 · final 47,820 (96% of budget)                  │
+│  ▰ csv-sample-size   15 → 5  6 tabular data file(s) re-sampled     │
+│  ▰ schema-only   off → on  9 data file(s) reduced to schema only   │
+│  − data/big.csv · ~12,400 tokens omitted                          │
+```
+
+Rendered by `_budget_lines(self, report, total_tokens) -> RenderableType`,
+under the `_section_header("BUDGET")` ticked header:
+
+- **Headline**: `"requested "` (chrome) + `{requested:,}` (bold white) +
+  `" · final {total:,} ({pct}% of budget)"` (bright chrome), where
+  `pct = round(100 * total_tokens / report.requested_tokens)`.
+- **One line per adjustment**: an accent `"▰ "` marker, the parameter name
+  (`UI_DATA`), then `"{requested} → {adjusted}"` (`UI_DATA_BOLD`), then the
+  scope string (`UI_CHROME`) — the exact wording documented in
+  [budget.md § The De-escalation Ladder](budget.md#the-de-escalation-ladder).
+- **One line per omitted file**: the whole line renders in the **warn**
+  channel (`UI_WARN`) — content removal is warn-level information — as
+  `"− {path} · ~{tokens:,} tokens omitted"`.
+- **Nothing changed**: if `report.adjustments` and `report.omitted` are both
+  empty (the first, unmodified-config attempt already fit), a single dim
+  chrome line renders instead: `"fit within budget — no parameter
+  adjustments needed"`.
+
+#### Budget-Scaled Token Gauge
+
+```python
+def _token_gauge(
+    self, total_tokens: int, method: str, budget: Optional[int] = None
+) -> Table:
+```
+
+`_token_gauge()` gained an optional `budget` parameter. When given, the
+gauge's reference denominator becomes `budget` instead of
+`CONTEXT_WINDOW_REFERENCE`, and the trailing label reads `" {pct}% of
+{budget:,} budget"` instead of `" {pct}% of {window_label} window"` — same
+color thresholds (yellow at ≥ 85%, red past 100%) and same `_CellBar`
+sizing behavior, just against a different denominator.
+`print_final_report()` passes `budget=budget_report.requested_tokens` only
+when a `budget_report` was given; otherwise the gauge behaves exactly as
+before.
+
+### Budget Failure Panel
+
+```python
+def print_budget_failure(
+    self, requested: int, minimum_tokens: int, report: 'BudgetReport'
+) -> None:
+```
+
+Called by `main.py` in place of `print_final_report()` when
+`outcome.fits` is `False` — the fully de-escalated document still exceeds
+the budget, so nothing was written or copied
+(see [budget.md § Outcomes](budget.md#outcomes-fits-vs-infeasible)). Renders
+a square-cornered `Panel` (`box.SQUARE`, `border_style="red3"`) titled
+`" ■ BUDGET INFEASIBLE "` in the reverse `UI_ERROR` style, left-aligned. Body
+(plain `Text`, no markup — paths and scope strings are never trusted as
+markup input):
+
+- `"Requested budget   {requested:,} tokens"`
+- `"Minimum achievable  {minimum_tokens:,} tokens"` (the number in
+  `UI_DATA_BOLD`)
+- a chrome line: `"even with every data cap at its floor"`, extended with
+  `" and all {len(report.omitted)} file(s) omitted"` only when at least one
+  file was omitted — the panel never claims omissions happened if none did
+- one dim chrome line per adjustment that was tried:
+  `"{parameter} {requested} → {adjusted}"` — **only the count** of omitted
+  files appears above; individual omitted paths are never listed here (a
+  failed run can have omitted hundreds of files, and the panel stays
+  compact by design, same philosophy as `select_report_rows()`'s
+  flagged-file cap in the success report)
+- a final `UI_WARN` line: `"No output was produced."`
+
 ### Report and Animation Logic (pure helpers)
 
 Seven module-level pure functions carry the report's and the animation's
@@ -265,6 +363,10 @@ def spaced_caps(title: str) -> str: ...
 - `status_severity()` maps a parser status onto the ok/warn/error channels
   using the `_OK_STATUSES` / `_WARN_STATUSES` sets. **Unknown statuses return
   `"error"`** so a future parser status can never render as silently fine.
+  `_WARN_STATUSES` includes `"Omitted (Budget)"` (added alongside `Redacted`,
+  `Skipped (Env)`, `Skipped (No pyarrow)`) — a `--budget` run's omitted files
+  render as a yellow warn status in the HEAVIEST PAYLOADS table, never as the
+  red unknown-status error channel.
 - `select_report_rows()` returns the `REPORT_TOP_FILES` (10) token-heaviest
   files plus **every** flagged (non-ok) file beyond them — a redacted `.env`
   with 0 tokens is always listed — together with the count of hidden files.
@@ -336,6 +438,13 @@ with ui.progress_bar("Initializing", total=total_steps) as handler:
 `main.py` measures elapsed time with `time.perf_counter()` and passes it as
 the final `elapsed_seconds` argument of `print_final_report()`.
 
+On a `--budget` run, `main.py` calls `fit_to_budget()` (see
+[budget.md](budget.md)) after the per-file loop. If the result is infeasible,
+`main.py` calls `ui.print_budget_failure(...)` instead of
+`ui.print_final_report(...)` and raises `SystemExit(1)` — the success report
+is never printed on that path. If it fits, `print_final_report()` is called
+as usual with `budget_report=outcome.report`.
+
 ## Global Instance
 
 A global [`ui`](../src/data2prompt/ui.py) instance is exported for use
@@ -348,7 +457,10 @@ ui = UIHandler()
 
 The `FileSummary` type is imported under `TYPE_CHECKING` only — a runtime
 import would create a `utils → ui → parsers → utils` cycle (guarded by
-`tests/test_import_hygiene.py`).
+`tests/test_import_hygiene.py`). `BudgetReport` (from
+[`budget.py`](budget.md)) is imported the same way, for the same reason: a
+runtime import would create a `budget → parsers → utils → ui` cycle, since
+`budget.py` already imports `parsers.py` and `utils.py` at runtime.
 
 ## Constants Used
 

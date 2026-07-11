@@ -19,6 +19,7 @@ graph LR
     Output -->|Strategy| XMLGenerator[XMLGenerator]
     Constants[constants.py] -->|System Instructions<br>Tags| Output
     Utils[utils.py] -->|get_dynamic_wrapper| Output
+    Budget[budget.py] -.BudgetReport, TYPE_CHECKING only.-> Output
 ```
 
 ## Strategy Pattern Implementation
@@ -35,7 +36,8 @@ class OutputGenerator(ABC):
                  tree_text: str,
                  files_data: List[FileData],
                  stats: Dict[str, int],
-                 config: Optional['Config'] = None) -> str:
+                 config: Optional['Config'] = None,
+                 budget_report: Optional['BudgetReport'] = None) -> str:
         pass
 ```
 
@@ -43,6 +45,17 @@ class OutputGenerator(ABC):
 processed file (`path`, `content`, `type`, `tokens`, `status`); it replaces the
 former loosely-typed `Dict[str, Any]` and gives key-name safety across the
 main → output boundary. `stats` is a plain `Dict[str, int]` of running counts.
+
+`budget_report` is an optional [`BudgetReport`](budget.md) from
+[`budget.py`](budget.md), passed only on a `--budget` run — `budget.py`
+re-calls `generate()` once per ladder attempt with a freshly built report, so
+the rendered Budget Report block always matches exactly what that attempt's
+verified token count measured. `BudgetReport` is imported only under
+`TYPE_CHECKING` (string-annotated as `'BudgetReport'`): `budget.py` imports
+this module at runtime for `get_generator()`, so a runtime import in the
+other direction would create a cycle. See
+[Budget Report](#budget-report) below and
+[budget.md § Import-cycle design](budget.md#import-cycle-design).
 
 Generators no longer receive a pre-computed token count. They emit
 `{{TOTAL_TOKENS}}` and `{{TOKEN_METHOD}}` placeholders in their metadata block;
@@ -85,6 +98,7 @@ The [`MarkdownGenerator`](../src/data2prompt/output.py) produces structured Mark
 | Header | `# codebase: {project_name}` |
 | System Instructions | LLM reading contract from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) — document layout, structural conventions, tool-notice grammar, and anti-hallucination accuracy rules |
 | Metadata | `> Generated on:`, `> Tokens:` (via [`o200k_base`](../src/data2prompt/utils.py)), and `> Contents:` — a content summary built from the `stats` dict (see [Stats Summary](#document-level-stats-summary)) |
+| Budget Report | `# Budget Report` — present only when `--budget` was requested (see [Budget Report](#budget-report)) |
 | File Index | `# File Index` — a `\| Path \| Type \| Status \|` table, one row per file (see [File Index](#file-index)) |
 | Files | Individual files with `## File: {path}` headers, in File Index order |
 | End Anchor | `# End of codebase: {project_name}` + one-sentence recap (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
@@ -146,6 +160,82 @@ Resulting behavior (all metadata is computed on the **full** DataFrame):
 | off | `--no-stats-summary` | sampled rows only (legacy behavior) |
 | on | on | stats block, no rows |
 | on | `--no-stats-summary` | bare column + dtype schema, no rows |
+
+#### Budget Report
+
+Emitted by [`_budget_block_markdown()`](../src/data2prompt/output.py) /
+[`_budget_block_xml()`](../src/data2prompt/output.py) — one shared source of
+truth per format, mirroring each other for format parity (invariant 1 of
+[output-contract.md](output-contract.md)) — **only when `budget_report is not
+None`**, i.e. only on a `--budget` run. On a run without `--budget` neither
+block is emitted and the document is byte-for-byte what a pre-`--budget` run
+produced.
+
+**Placement — Markdown**: between the metadata blockquote block and the
+`# File Index` heading:
+
+```markdown
+# Budget Report
+
+Requested budget: 50,000 tokens.
+
+Data-cap parameters tightened to fit the budget (the Tokens line above is
+the final count):
+
+| Parameter | Requested | Adjusted | Scope |
+|---|---|---|---|
+| csv-sample-size | 15 | 5 | 6 tabular data file(s) re-sampled |
+
+Files omitted entirely to meet the budget (status Omitted in the File
+Index):
+
+| Path | Est. tokens |
+|---|---|
+| data/big.csv | 12,400 |
+```
+
+If no adjustments were needed, the adjustments table is replaced by a single
+line: `No parameter adjustments were needed - the document fit as
+generated.` The omitted-files table is only emitted when `report.omitted` is
+non-empty. Token counts in both tables are formatted with `{:,}`; all cell
+text goes through `_md_cell()` (pipe-escaping), same as the File Index.
+
+**Placement — XML**: between `</metadata>` and `<file_index>`:
+
+```xml
+<budget_report requested_tokens="50000">
+    <adjustment parameter="csv-sample-size" requested="15" adjusted="5" scope="6 tabular data file(s) re-sampled"/>
+    <omitted_file path="data/big.csv" estimated_tokens="12400"/>
+</budget_report>
+```
+
+String attributes (`parameter`, `requested`, `adjusted`, `scope`, `path`) go
+through `quoteattr()`, same as every other user-data attribute in this
+format. Numeric attributes (`requested_tokens`, `estimated_tokens`) are plain
+digits — no thousands separators inside XML attributes. When there are no
+adjustments and no omissions, the element self-closes instead of carrying
+empty children: `<budget_report requested_tokens="50000"/>`.
+
+The block is built from a [`BudgetReport`](budget.md) — `requested_tokens`,
+an ordered `adjustments: List[BudgetAdjustment]`, and an ordered
+`omitted: List[Tuple[str, int]]` of `(canonical forward-slash path, estimated
+tokens)` pairs. See [budget.md](budget.md#public-data-structures) for the
+dataclass shapes and [budget.md § The De-escalation Ladder](budget.md#the-de-escalation-ladder)
+for exactly which adjustment scope strings can appear.
+
+The block **never** contains the literal placeholder strings
+`{{TOTAL_TOKENS}}` or `{{TOKEN_METHOD}}` (output-contract invariant 7) — the
+final, verified token count lives only in the metadata `> Tokens:` /
+`<total_tokens>` line, never restated inside the Budget Report itself.
+
+Files a `--budget` run omitted entirely are **not** listed by path inside the
+Budget Report's omitted-files table alone — they also surface in the File
+Index with status `Omitted`, through the *same* existing mechanism that lists
+any tree-scanned-but-not-rendered file (see [File Index](#file-index) below):
+`budget.py`'s `_materialize()` simply never adds an omitted record to
+`files_data`, so `build_file_index()`'s "present in `tree_text`, absent from
+`files_data`" leftover rule picks it up automatically — no File Index code
+changed for this feature.
 
 #### File Index
 
@@ -253,6 +343,7 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 | `<codebase name={quoteattr}>` | Root element |
 | `<purpose>` | System instructions ([`SYSTEM_INSTRUCTIONS_XML`](constants.md)) |
 | `<metadata>` | Generation timestamp, token count, and `<stats/>` content summary |
+| `<budget_report requested_tokens="...">` | Present only when `--budget` was requested (see [Budget Report](#budget-report)) |
 | `<file_index>` | One `<entry path type status/>` per file (see [File Index](#file-index)) |
 | `<files>` | Container for file entries (no prose inside — the former stray "This section contains..." line was removed) |
 | `<file path={quoteattr} type={quoteattr} status={quoteattr}>` | Individual file; `status` carries the **resolved** index vocabulary so it cross-references `<entry>` exactly |
@@ -384,6 +475,9 @@ using:
 - `config.table_limit`: Maximum characters allowed
 - `config.table_truncate`: Characters to retain when truncated
 
+`generate()` also accepts the optional `budget_report` parameter described
+above — see [Budget Report](#budget-report).
+
 ## Output Format Configuration
 
 Output formats are configured via CLI arguments defined in [`src/data2prompt/cli.py`](../src/data2prompt/cli.py#L1):
@@ -416,6 +510,8 @@ All shared by both generators (single source of truth for the scaffolding):
 | `summarize_stats(stats, file_total) -> List[Tuple[str, int]]` | Ordered (label, count) pairs; `Total files` always present, zero counts dropped |
 | `_end_recap(project_name, indexed_count) -> str` | Shared closing recap sentence |
 | `_md_cell(text) -> str` | Escapes `\|` so values are safe inside the Markdown index table |
+| `_budget_block_markdown(report) -> List[str]` | Renders the Markdown Budget Report section (see [Budget Report](#budget-report)) |
+| `_budget_block_xml(report) -> List[str]` | Renders the XML `<budget_report>` element (see [Budget Report](#budget-report)) |
 
 ## Constants Reference
 
@@ -430,6 +526,9 @@ All shared by both generators (single source of truth for the scaffolding):
 | [`TAG_FILE_INDEX`](../src/data2prompt/constants.py) | `"file_index"` | XML tag for the File Index |
 | [`TAG_INDEX_ENTRY`](../src/data2prompt/constants.py) | `"entry"` | XML tag for one index row |
 | [`TAG_END_OF_CODEBASE`](../src/data2prompt/constants.py) | `"end_of_codebase"` | XML tag for the terminal anchor |
+| [`TAG_BUDGET_REPORT`](../src/data2prompt/constants.py) | `"budget_report"` | XML tag for the optional Budget Report block |
+| [`TAG_ADJUSTMENT`](../src/data2prompt/constants.py) | `"adjustment"` | XML tag for one Budget Report parameter-adjustment row |
+| [`TAG_OMITTED_FILE`](../src/data2prompt/constants.py) | `"omitted_file"` | XML tag for one Budget Report omitted-file row |
 | [`INCLUSION_STATUS_MAP`](../src/data2prompt/constants.py) | `Dict[str, str]` | Raw status → File Index vocabulary |
 | [`STATS_SUMMARY_LABELS`](../src/data2prompt/constants.py) | `Dict[str, str]` | Ordered stat key → summary label |
 
