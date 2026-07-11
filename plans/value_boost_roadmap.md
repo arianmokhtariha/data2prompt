@@ -19,7 +19,7 @@ plugs the tool into the place where context is consumed (agents, teams, pipeline
 
 | # | Feature | Value | Effort | Priority |
 |---|---------|-------|--------|----------|
-| 1 | Token budget targeting (`--budget`) | ★★★★★ | Medium | **P0** |
+| 1 | Token budget targeting (`--budget`) | ★★★★★ | Medium | **✅ Implemented** |
 | 2 | SQLite/DuckDB parser | ★★★★★ | Low | **P0** |
 | 3 | Programmatic API (`data2prompt.api`) | ★★★★ (enabler) | Low | **P0** |
 | 4 | MCP server mode | ★★★★★ | Medium | **P1** |
@@ -38,6 +38,11 @@ plugs the tool into the place where context is consumed (agents, teams, pipeline
 ## P0 — build these first
 
 ### 1. Token budget targeting — `--budget 100k`
+
+> **✅ Implemented and graduated.** Built in `src/data2prompt/budget.py` and
+> documented in [docs/budget.md](../docs/budget.md). The design below is retained
+> for historical context; `docs/budget.md` is the source of truth for actual
+> behavior.
 
 **What:** The user states the *outcome* ("fit this project into 100k tokens") and
 data2prompt tunes its own knobs to hit it, instead of the user hand-adjusting
@@ -309,7 +314,7 @@ Optional `data2prompt[polars]` backend only if profiling proves demand.
 ## Suggested sequencing
 
 ```
-#3 API refactor  ──►  #1 --budget  ──►  #4 MCP server
+#3 API refactor  ──►  #1 --budget ✅  ──►  #4 MCP server
       │                                   (uses both)
       ├──►  #5 config file  ──►  #6 --focus
       └──►  #7 compression report (anytime, independent)
