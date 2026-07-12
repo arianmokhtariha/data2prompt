@@ -62,6 +62,32 @@ for all terminal output.
 | **Final Report** | Prints the "TRANSMISSION COMPLETE" report panel |
 | **Error Display** | Themed warning panels and inline warn/error lines |
 
+### Startup: Forcing UTF-8 Output
+
+`UIHandler.__init__` reconfigures `sys.stdout`/`sys.stderr` to UTF-8
+(`errors="replace"`) **before** constructing the `rich.Console`, via
+`stream.reconfigure(...)` when the stream supports it (guarded with
+`hasattr` and a `try/except (OSError, ValueError)` so a stream that refuses
+it can never crash startup). This runs once, the first time the module-level
+[`ui`](#global-instance) singleton is created.
+
+Without it, the banner and report glyphs (block characters, `▰▱` bars) crash
+the whole process with an uncaught `UnicodeEncodeError` on any Python
+process whose stdout encoding isn't already UTF-8 — which is the common
+case, not an exotic one: the legacy Windows ANSI codepage (`cp1252`) or a
+bare POSIX locale (`ascii`, e.g. many minimal Docker images and CI runners
+with no `LANG` set) are both real, reachable defaults. Rich's own internal
+handling doesn't fully cover this: on the "legacy Windows console" render
+path (used whenever stdout isn't a full ANSI-capable interactive terminal —
+redirected/piped output, many CI runners, or an old `cmd.exe` — regardless
+of whether `console.is_terminal` is true), Rich writes through the stream's
+raw encoding with **no exception handling at all**; even on the normal
+render path, Rich catches `UnicodeEncodeError` only to re-raise it with an
+extra hint (`*** You may need to add PYTHONIOENCODING=utf-8 ***`) — it still
+crashes. Setting the encoding proactively, the same fix Rich's own message
+suggests, means the tool never depends on the invoking shell already having
+it configured correctly.
+
 ### Event Handlers
 
 ```python

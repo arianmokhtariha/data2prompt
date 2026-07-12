@@ -22,6 +22,21 @@ def test_setup_cli_merges_defaults():
         assert ".git" in args.ignore_folders
         assert ".exe" in args.skip_exts
 
+def test_setup_cli_lowercases_user_skip_exts():
+    """--skip-exts must be lowercased to match file_path.suffix.lower(),
+    which is how process_target_file reads every file's extension — an
+    uppercase or mixed-case value the user typed must still match."""
+    test_args = ["data2prompt", "--skip-exts", ".TXT", ".Csv"]
+
+    with patch.object(sys, 'argv', test_args):
+        args = setup_cli()
+
+        assert ".txt" in args.skip_exts
+        assert ".csv" in args.skip_exts
+        assert ".TXT" not in args.skip_exts
+        assert ".Csv" not in args.skip_exts
+
+
 def test_setup_cli_output_naming():
     # Test default naming
     with patch.object(sys, 'argv', ["data2prompt"]):

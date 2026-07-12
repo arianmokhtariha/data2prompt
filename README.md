@@ -15,7 +15,7 @@
 data2prompt is a CLI tool designed to bridge the gap between local data-heavy projects and Large Language Model (LLM) context windows. Unlike generic code-packagers, it provides an intelligent,optimized output for LLM attention mechanism, token-aware representation of a project's structure and content.
 
 ## 📝 Important Note
-**Data2prompt** is purpose-built for **data-heavy projects** (`.csv`, `.sql`, `.xlsx`, `.ipynb`, `.db`), not large pure-code repositories. It intelligently samples and truncates data files to prevent context window explosion while preserving semantic structure.
+**Data2prompt** is purpose-built for **data-heavy projects** (`.csv`, `.sql`, `.xlsx`/`.xlsm`, `.ipynb`, `.db`, `.parquet`), not large pure-code repositories. It intelligently samples and truncates data files to prevent context window explosion while preserving semantic structure.
 
 
 ## 🎯 Why Data2Prompt?
@@ -28,6 +28,7 @@ Generic code-to-prompt tools choke on data files—they either skip them entirel
 
 ## ✨ Core Features
 
+*   **Token Budget Targeting**: `--budget 100k` states the *outcome* you want instead of the knobs to get there — data2prompt automatically tightens sampling, drops notebook outputs, switches to schema-only, and (as a last resort) omits the heaviest remaining files until the generated document fits, re-verifying the real rendered token count at every step. A [Budget Report](docs/budget.md) in the output states exactly what was adjusted.
 *   **Smart Jupyter Parsing**: Intelligently extracts code, markdown, and text outputs from [`.ipynb`](docs/parsers.md) files while stripping heavy Base64 images and raw HTML to preserve context.
 *   **Multi-Format Sampling**: Advanced sampling strategies for [CSV, SQL, and Excel](docs/parsers.md) files to preserve schema and data context which reduces the data size significantly while extracting the needed context for llm.
 *   **SQLite Database Extraction**: Reads `.db`/`.sqlite`/`.sqlite3` databases with the standard library (zero extra dependencies) — one section per table/view with its `CREATE TABLE` DDL (keys, foreign keys, indexes), a schema/stats block, and a sampled preview. Huge tables degrade to a head sample automatically, and the whole thing respects `--budget` and `--schema-only`. Cap tables per database with `--max-tables`.
@@ -139,6 +140,7 @@ data2prompt --output my_analysis --format xml --csv-sample-size 50 --ignore-fold
 | :--- | :--- | :--- |
 | `-o`, `--output` | Base name of the generated file | `PROMPT` |
 | `-f`, `--format` | Output format (`xml` or `markdown`) | `markdown` |
+| `-b`, `--budget` | Target token budget (e.g. `50000`, `100k`, `1.5m`); auto-tightens sampling until the output fits | off |
 | `-s`, `--csv-sample-size` | Number of random rows to sample from CSVs | `15` |
 | `--max-lines` | Max lines of text output per notebook cell | `40` |
 | `--max-tables` | Max tables/views to process per SQLite database | `25` |

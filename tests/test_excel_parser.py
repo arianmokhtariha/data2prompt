@@ -18,7 +18,12 @@ from unittest.mock import patch
 
 import openpyxl
 
-from data2prompt.parsers import ExcelParser, _xlsx_has_visuals, process_excel
+from data2prompt.parsers import (
+    ExcelParser,
+    _xlsx_has_visuals,
+    process_excel,
+    registry,
+)
 
 
 def _make_config(
@@ -102,6 +107,49 @@ def test_process_excel_max_sheets_truncation_note(tmp_path: Path) -> None:
 
     assert len(tables) == 2
     assert "Workbook truncated" in (tables[-1].footer_note or "")
+
+
+def test_xlsm_routes_to_excel_parser_and_reads_correctly(tmp_path: Path) -> None:
+    """.xlsm (macro-enabled Excel) is the same OOXML zip container as .xlsx
+    and needs no extra dependency — it must be registered to ExcelParser
+    rather than falling through to the binary-detecting DefaultParser."""
+    path = tmp_path / "book.xlsm"
+    _write_workbook(path, {"Sales": [["id", "amount"], [1, 10.0], [2, 20.0]]})
+
+    assert isinstance(registry.get_parser(".xlsm"), ExcelParser)
+
+    tables = process_excel(path, display_path="book.xlsm")
+    assert tables[0].name == "Sales"
+    assert list(tables[0].df.columns) == ["id", "amount"]
+
+    result = ExcelParser().parse(path, _make_config())
+    assert result.status == "Extracted"
+    assert result.stats_update == {"excel_count": 1, "excel_sheets_count": 1}
+
+
+def test_xlsm_visual_detection_uses_same_zip_probe(tmp_path: Path) -> None:
+    path = tmp_path / "dashboard.xlsm"
+    _write_workbook(path, {"Data": [["col"], [1]]})
+    _inject_fake_image(path)
+
+    tables = process_excel(path)
+
+    assert "visual elements" in (tables[0].header_note or "")
+
+
+def test_process_excel_max_sheets_zero_still_emits_a_notice(tmp_path: Path) -> None:
+    """max_sheets=0 hits the truncation branch before any TableIR exists to
+    attach the note to. It must not silently return an empty list — output.py
+    renders TableIR lists specially, and an empty list would fall through
+    to its plain-string fallback and print a bare "[]" with no explanation."""
+    path = tmp_path / "many2.xlsx"
+    _write_workbook(path, {"Sales": [["id"], [1]], "Costs": [["id"], [2]]})
+
+    tables = process_excel(path, max_sheets=0)
+
+    assert len(tables) == 1
+    assert "Workbook truncated" in (tables[0].footer_note or "")
+    assert tables[0].df.empty
 
 
 def test_process_excel_schema_only_drops_rows_keeps_schema(tmp_path: Path) -> None:

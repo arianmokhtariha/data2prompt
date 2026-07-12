@@ -229,7 +229,10 @@ def setup_cli() -> Config:
         ignore_folders=set(args.ignore_folders) | CORE_IGNORES,
         ignore_files=set(args.ignore_files) | CORE_IGNORE_FILES,
         max_file_size=args.max_file_size,
-        skip_exts=set(args.skip_exts) | CORE_SKIP_EXTS,
+        # Lowercased to match file_path.suffix.lower(), which is how every
+        # extension check in the pipeline reads a file's extension — without
+        # this, `--skip-exts .TXT` would silently never match a `.txt` file.
+        skip_exts={ext.lower() for ext in args.skip_exts} | CORE_SKIP_EXTS,
         use_gitignore=args.use_gitignore,
         clipboard=args.clipboard,
         schema_only=args.schema_only,

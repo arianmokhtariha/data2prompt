@@ -155,6 +155,21 @@ def test_process_sqlite_schema_only_drops_rows_keeps_schema(tmp_path: Path) -> N
     assert "Schema only" in (customers.header_note or "")
 
 
+def test_process_sqlite_max_tables_zero_still_emits_a_notice(tmp_path: Path) -> None:
+    """max_tables=0 hits the truncation branch before any TableIR exists to
+    attach the note to. It must not silently return an empty list — output.py
+    renders TableIR lists specially, and an empty list would fall through
+    to its plain-string fallback and print a bare "[]" with no explanation."""
+    db = tmp_path / "app.db"
+    _build_db(db)
+
+    tables = process_sqlite(db, max_tables=0)
+
+    assert len(tables) == 1
+    assert "Database truncated" in (tables[0].footer_note or "")
+    assert tables[0].df.empty
+
+
 def test_process_sqlite_max_tables_truncation_note(tmp_path: Path) -> None:
     db = tmp_path / "app.db"
     _build_db(db)
@@ -181,6 +196,28 @@ def test_process_sqlite_quotes_hostile_identifier(tmp_path: Path) -> None:
     assert tables[0].name == 'odd"name'
     assert tables[0].schema.row_count == 2
     assert tables[0].footer_note is None or "Error" not in tables[0].footer_note
+
+
+def test_process_sqlite_corrupted_after_header_check_does_not_crash(tmp_path: Path) -> None:
+    """A file can pass the 16-byte magic-header sniff yet still be corrupted
+    (a truncated download, a partial write) — sqlite3.Error is not an
+    OSError subclass, so an uncaught one here would skip both this
+    function's error handling and main()'s top-level `except OSError`,
+    crashing the whole run over one bad file instead of degrading it."""
+    db = tmp_path / "corrupt.db"
+    _build_db(db)
+    # Truncate well past the valid header but into the middle of the file,
+    # so the magic bytes are intact but the page structure is garbage.
+    with open(db, "r+b") as f:
+        f.truncate(200)
+
+    tables = process_sqlite(db, display_path="corrupt.db")
+
+    assert len(tables) == 1
+    assert "Error reading DB" in (tables[0].footer_note or "")
+
+    result = SQLiteParser().parse(db, _make_config())
+    assert result.tokens >= 0  # must return a ParserResult, not raise
 
 
 def test_process_sqlite_empty_database_notes_no_tables(tmp_path: Path) -> None:

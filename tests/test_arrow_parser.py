@@ -162,6 +162,32 @@ def test_sampling_is_applied_when_rows_exceed_sample_size(tmp_path: Path) -> Non
     assert "PARQUET truncated" in table_ir.footer_note
 
 
+def test_duplicate_field_names_do_not_crash(tmp_path: Path) -> None:
+    """Arrow schemas (unlike pandas DataFrames from CSV/Excel) permit duplicate
+    field names. .to_pandas() carries the duplicate straight through, so this
+    must render the file instead of collapsing it to a read-error note."""
+    path = tmp_path / "dup.feather"
+    table = pa.table({
+        "a": pa.array([1, 2, 3], type=pa.int64()),
+        "b": pa.array([4.0, None, 6.0], type=pa.float64()),
+    })
+    table = table.append_column("a", pa.array([7, 8, 9], type=pa.int64()))
+    pf.write_feather(table, path)
+    config = _make_config(stats_summary=True)
+
+    result = ArrowParser().parse(path, config)
+
+    assert result.status == "Sampled"
+    table_ir = result.content[0]
+    assert table_ir.footer_note is None
+    assert list(table_ir.df.columns) == ["a", "b", "a"]
+    assert table_ir.schema is not None
+    assert [c.name for c in table_ir.schema.columns] == ["a", "b", "a"]
+    # Positionally-correct pyarrow dtypes for both same-named columns.
+    assert table_ir.schema.columns[0].dtype == "int64"
+    assert table_ir.schema.columns[2].dtype == "int64"
+
+
 def test_no_sampling_when_rows_within_limit(tmp_path: Path) -> None:
     """When the file has fewer rows than sample_size, the full table is returned."""
     path = tmp_path / "small.parquet"

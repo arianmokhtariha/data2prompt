@@ -32,7 +32,7 @@ def get_ui_action(file_name: str, ext: str, skip_exts: Set[str]) -> str:
     elif ext in ['.parquet', '.feather', '.arrow']: return "Sampling"
     elif ext == '.ipynb': return "Cleaning"
     elif ext == '.sql': return "Parsing"
-    elif ext in ['.xlsx', '.xls']: return "Extracting"
+    elif ext in ['.xlsx', '.xls', '.xlsm']: return "Extracting"
     elif ext in ['.db', '.sqlite', '.sqlite3']: return "Querying"
     return "Reading"
 

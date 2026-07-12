@@ -11,6 +11,7 @@ Covers the four branching paths in order of evaluation:
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from data2prompt.parsers import DefaultParser
 from data2prompt.constants import GENERATION_FLAG
@@ -192,5 +193,32 @@ def test_default_parser_no_extension_type_is_text() -> None:
     try:
         result = DefaultParser().parse(path, _cfg())
         assert result.type == "text"
+    finally:
+        path.unlink()
+
+
+# ---------------------------------------------------------------------------
+# 5. Defensive I/O: a file that becomes unreadable between scan and parse
+# ---------------------------------------------------------------------------
+
+def test_default_parser_degrades_gracefully_when_stat_raises() -> None:
+    """A file that vanishes or loses permissions between scan and parse (a
+    locked file, a permission change, a network-drive hiccup) must degrade
+    to this one file's Error status, not propagate an OSError that would
+    abort the entire run (main.py only catches OSError at the top level,
+    so an uncaught one here would end the whole process, not just skip a
+    file — the opposite of every other parser's graceful-degradation
+    contract)."""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False, encoding="utf-8"
+    ) as tmp:
+        tmp.write("hello world\n")
+        path = Path(tmp.name)
+    try:
+        with patch.object(Path, "stat", side_effect=PermissionError("denied")):
+            result = DefaultParser().parse(path, _cfg())
+        assert result.status == "Error"
+        assert result.type == "Error"
+        assert result.tokens == 0
     finally:
         path.unlink()

@@ -52,7 +52,7 @@ class ParserRegistry:
 | [`CSVParser`](../src/data2prompt/parsers.py#L419) | `.csv` | Samples rows to fit context limits |
 | [`NotebookParser`](../src/data2prompt/parsers.py#L438) | `.ipynb` | Cleans and truncates notebook cells and outputs |
 | [`SQLParser`](../src/data2prompt/parsers.py#L456) | `.sql` | Parses SQL files, sampling table data while preserving schema |
-| [`ExcelParser`](../src/data2prompt/parsers.py#L478) | `.xlsx`, `.xls` | Extracts data from sheets, detecting visual elements |
+| [`ExcelParser`](../src/data2prompt/parsers.py#L478) | `.xlsx`, `.xls`, `.xlsm` | Extracts data from sheets, detecting visual elements |
 | [`ArrowParser`](../src/data2prompt/parsers.py) | `.parquet`, `.feather`, `.arrow` | Samples rows; uses native pyarrow schema for exact dtypes; requires optional `pyarrow` |
 | [`SQLiteParser`](../src/data2prompt/parsers.py) | `.db`, `.sqlite`, `.sqlite3` | One `TableIR` per table/view: CREATE-statement DDL, schema/stats, and a row sample; stdlib `sqlite3`, no dependency |
 | [`EnvParser`](../src/data2prompt/parsers.py) | `.env` & variants (by name) | Lists variable names with redacted values; never emits a value |
@@ -258,13 +258,25 @@ def render_schema_block(schema, *, show_missing: bool, show_describe: bool) -> s
 - [`build_table_schema()`](../src/data2prompt/parsers.py) computes row/column counts,
   per-column dtype and missing stats from the **full** DataFrame, plus an optional
   transposed `describe()` summary (`include_describe`). `describe()` is wrapped in
-  try/except and empty frames are handled gracefully.
+  try/except and empty frames are handled gracefully. Columns are read
+  **positionally** (`df.iloc[:, i]`), not by label (`df[name]`): a pandas
+  DataFrame can carry duplicate column labels (reachable via `ArrowParser`,
+  since Arrow schemas permit duplicate field names, unlike CSV/Excel readers
+  which auto-deduplicate on read), and `df[name]` on a duplicate label
+  returns a DataFrame instead of a Series — `int(<Series>.isna().sum())`
+  would then raise `TypeError` and the whole file would degrade to a generic
+  read-error note instead of rendering.
 - [`render_schema_block()`](../src/data2prompt/parsers.py) renders a `TableSchema` to a
   Markdown snippet (rows × cols header followed by a single unified table). When
   `show_describe=True` and a `describe_df` is available, the `describe()` statistics
   (`count`, `unique`, `top`, `freq`, `mean`, `std`, `min`, `25%`, `50%`, `75%`, `max`)
   are appended as additional columns in the same table alongside `column`, `dtype`,
-  `missing`, and `missing %` — one row per column, NaN cells rendered as empty strings.
+  `missing`, and `missing %` — one row per column, NaN cells rendered as empty strings,
+  paired with `describe_df`'s rows **positionally** (`desc.iloc[i]`) for the same
+  duplicate-column reason as `build_table_schema()` above: `describe()` preserves
+  column order even when two columns share a name, but a name-based `.loc[name]`
+  lookup would ambiguously return every matching row instead of the one row that
+  actually lines up with this column.
   When `show_describe=False`, only `column | dtype [| missing | missing %]` are shown.
   It is the **single source of truth** for schema rendering, used by both `flatten_ir()`
   (token estimate) and the output generators in [`output.py`](output.md).
@@ -314,7 +326,14 @@ Uses [`process_notebook()`](../src/data2prompt/parsers.py#L178) to:
      and `error` tracebacks (joined from the `traceback` list, prefixed with
      `-- [Error output] --`)
    - Apply max_lines limit per output block
-3. Return a list of `NotebookCellIR` objects
+3. Return a list of `NotebookCellIR` objects. A notebook with a valid but
+   empty `"cells": []` list returns a single placeholder cell
+   (`-- [Note: notebook contains no cells] --`) instead of an empty list —
+   an empty `ParserContent` list would fall through `output.py`'s
+   `NotebookCellIR`/`TableIR` branch checks (which require a non-empty list)
+   to the plain-string fallback and render the bare Python repr `[]` with no
+   explanation, violating the "nothing partial may look complete" invariant
+   (see [output-contract.md](output-contract.md)).
 
 **Error Handling:**
 - JSON decode errors → Single error cell with malformed notebook message
@@ -322,6 +341,8 @@ Uses [`process_notebook()`](../src/data2prompt/parsers.py#L178) to:
 - Missing `cell_type` or `source` keys in an individual cell → safe defaults;
   the loop continues; only a truly unrecoverable file-level exception returns the
   global error cell
+- A genuinely empty `"cells": []` list → single placeholder cell noting the
+  notebook has no cells (not an error, but not an empty list either)
 
 ### SQLParser
 
@@ -364,13 +385,19 @@ class ExcelParser:
 
 Uses [`process_excel()`](../src/data2prompt/parsers.py) to:
 1. Detect visual elements up front via [`_xlsx_has_visuals()`](#visual-element-detection)
-   (`.xlsx` only)
+   (`.xlsx`/`.xlsm` only — both are the same OOXML zip container; legacy
+   `.xls` is a different, non-zip binary format and is never checked)
 2. Open the workbook **once** with `pd.ExcelFile` inside a context manager — all
    sheets are parsed from the single handle (the old per-sheet `pd.read_excel`
    re-opened and re-parsed the file for every sheet), and the handle is released
    even on error paths (no lingering file locks on Windows)
 3. Process up to `config.max_sheets` sheets; when the workbook has more, a
-   `-- [Workbook truncated: ...] --` note is appended to the last processed sheet
+   `-- [Workbook truncated: ...] --` note is appended to the last processed sheet.
+   When `max_sheets` is `0`, no sheet is ever processed, so there is no existing
+   `TableIR` to attach that note to — a standalone placeholder `TableIR` carrying
+   the note is emitted instead of returning an empty list (see the note on
+   `max_sheets`/`max_tables` == 0 under [SQLiteParser](#sqliteparser) below,
+   which shares the exact same fix for the same reason)
 4. For each sheet:
    - Parse into a DataFrame via `excel_file.parse(sheet_name)`
    - Compute a `TableSchema` on the **full** sheet when `stats_summary`/`schema_only` set
@@ -391,9 +418,9 @@ canonical path keys used by the output File Index and file headers.
 def _xlsx_has_visuals(file_path) -> bool: ...
 ```
 
-An `.xlsx` file is a zip archive; embedded images live under `xl/media/` and
-charts under `xl/charts/`. `_xlsx_has_visuals()` inspects the archive listing —
-no workbook load required. When visuals are present, a single
+An `.xlsx`/`.xlsm` file is a zip archive; embedded images live under
+`xl/media/` and charts under `xl/charts/`. `_xlsx_has_visuals()` inspects the
+archive listing — no workbook load required. When visuals are present, a single
 `-- [Note: Workbook contains visual elements (images/charts); they are not
 extracted] --` header note is emitted on the **first sheet** (drawings are stored
 at workbook level in the archive, so attribution is workbook-level).
@@ -414,10 +441,19 @@ parser returns a single `TableIR` with an actionable note
 routed through `openpyxl`, which cannot read the BIFF format at all — every
 `.xls` file produced a generic read error.)
 
+`.xlsm` (macro-enabled Excel) needs no such optional dependency: it is the
+same OOXML zip container as `.xlsx`, read through the same `openpyxl` engine
+pandas already selects for `.xlsx` — registering it was a one-line addition
+to the `ParserRegistry`, `budget.py`'s `EXTS_TABULAR`, and `main.py`'s
+`get_ui_action()`, with zero new parsing code.
+
 **Error Handling:**
 - Empty sheets → Note indicating visual dashboard or empty
 - Sheet read errors → Empty DataFrame with sanitized error message
 - Workbook open errors → single `TableIR` with sanitized error note
+- `--max-sheets 0` → a standalone placeholder `TableIR` carrying the
+  `-- [Workbook truncated: Only first 0 sheets processed] --` note, not an
+  empty list (see step 3 above)
 
 ### ArrowParser
 
@@ -439,9 +475,15 @@ Handles columnar binary formats via [`process_arrow_file()`](../src/data2prompt/
    - `.arrow` → `pyarrow.ipc.open_file()`, falling back to `open_stream()` for
      IPC stream files
 3. **Exact schema**: pyarrow's native type strings (e.g. `int64`, `utf8`,
-   `timestamp[us, tz=UTC]`) are collected from `table.schema` and used to populate
-   `ColumnSchema.dtype`, overriding the pandas-inferred types that `build_table_schema()`
-   would otherwise assign.
+   `timestamp[us, tz=UTC]`) are collected from `table.schema`, **by column
+   position**, and used to populate `ColumnSchema.dtype`, overriding the
+   pandas-inferred types that `build_table_schema()` would otherwise assign.
+   Positional, not name-keyed: unlike a pandas DataFrame, an Arrow schema
+   permits duplicate field names (e.g. a table produced by a join that never
+   disambiguated overlapping columns) — a `{name: dtype}` dict would silently
+   collapse two same-named columns onto one dtype string, and
+   `df.to_pandas()` carries the duplicate straight through (pandas' own
+   CSV/Excel readers auto-deduplicate on read, so this is Arrow-specific).
 4. **Schema & stats on full data**: `build_table_schema()` runs on the full DataFrame
    before sampling, so row counts and missing percentages reflect the entire file.
 5. **Sampling**: mirrors `CSVParser` — if the row count exceeds `config.csv_sample_size`,
@@ -479,12 +521,26 @@ blocks, table-size capping, canonical paths, File Index status, and the
 2. **Read-only, query-only connection.** Opens
    `sqlite3.connect("file:{path}?mode=ro", uri=True)` and sets
    `PRAGMA query_only = ON`; only `SELECT`/`PRAGMA` are ever executed, and the
-   connection is closed in a `finally`.
+   connection is closed in a `finally`. The `PRAGMA` call and the
+   `sqlite_master` discovery query are themselves wrapped in a
+   `try/except sqlite3.Error` that degrades to the same
+   `-- [Error reading DB: ...] --` `TableIR` as a connection-open failure: a
+   file can pass the 16-byte magic-header sniff yet still be corrupted (a
+   truncated download, a partial write) — and since `sqlite3.Error` is not an
+   `OSError` subclass, an uncaught one here would skip both this function's
+   own error handling *and* `main.py`'s top-level `except OSError`, crashing
+   the whole run over one bad file.
 3. **Discovery & ordering.** Reads `sqlite_master` for tables and views
    (skipping internal `sqlite_%`), ordered tables-first then views, each
    alphabetical, and capped at `config.max_tables`. When more exist, a
    `-- [Database truncated: Only first N tables processed] --` note is appended
-   to the last table (the Excel `max_sheets` pattern).
+   to the last table (the Excel `max_sheets` pattern). When `max_tables` is
+   `0`, no table is ever processed, so there is no existing `TableIR` to
+   attach that note to — a standalone placeholder `TableIR` carrying the note
+   is emitted instead of returning an empty list, which `output.py`'s
+   `TableIR` rendering branch (it requires a non-empty list) would otherwise
+   silently fall through on, rendering the bare Python repr `[]` with no
+   explanation of what happened to the data.
 4. **Per-table rendering** (`_process_sqlite_table()`), with three read paths
    that keep partial output honest:
    - **DDL** — the table's `CREATE` statement plus its index `CREATE`s, from
@@ -525,8 +581,14 @@ cwd-relative forward-slashed path (`Path.as_posix()`), and returns
 **Error handling:**
 - Non-SQLite `.db` → `Skipped (Binary)` with an actionable note.
 - Connection open failure → single `TableIR` with `-- [Error reading DB: ...] --`.
+- Corrupted database that passes the magic-byte sniff but fails on the
+  discovery query (`PRAGMA`/`sqlite_master`) → the same
+  `-- [Error reading DB: ...] --` `TableIR`, not an uncaught `sqlite3.Error`.
 - Database with no user tables → `-- [Note: database contains no user tables] --`.
 - Per-table read error → error-note `TableIR` for that table only.
+- `--max-tables 0` → a standalone placeholder `TableIR` carrying the
+  `-- [Database truncated: Only first 0 tables processed] --` note, not an
+  empty list (see step 3 above).
 
 ### DefaultParser
 
@@ -541,7 +603,13 @@ Handles all unhandled file types with defensive measures (in evaluation order):
    binary content (checked first, and exactly once per file)
 2. **Generation flag check**: Skip files containing the `GENERATION_FLAG` marker
    in their first 100 characters
-3. **File size check**: If file exceeds `config.max_file_size` KB, read only first 10KB
+3. **File size check**: If file exceeds `config.max_file_size` KB, read only first 10KB.
+   The `file_path.stat()` call itself shares the same `try/except Exception` as the
+   read that follows it: a file that vanished or became unreadable between the
+   project scan and this parse call (a locked file, a permission change, a
+   network-drive hiccup) degrades to this one file's `status="Error"` instead of
+   propagating an `OSError` out of `process_target_file()` and aborting the
+   entire run — the opposite of every other parser's graceful-degradation contract.
 4. **Line truncation**: Apply [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118) for remaining content
 
 ### EnvParser
@@ -621,9 +689,19 @@ All parsing functions implement try-except blocks with graceful degradation:
 - **CSV**: Empty DataFrame with error note
 - **Notebook**: File-level failures → single error cell with exception message;
   individual cells with missing keys degrade to empty/typed content via `.get()`
-  defaults rather than aborting the whole notebook
+  defaults rather than aborting the whole notebook; a genuinely empty
+  `"cells": []` list → single placeholder cell, never an empty `ParserContent` list
 - **SQL**: Error string with exception message
-- **Excel**: Empty sheet entry with error note
+- **Excel**: Empty sheet entry with error note; `--max-sheets 0` → standalone
+  placeholder `TableIR`, never an empty `ParserContent` list
+- **SQLite**: Corrupted-after-header-check DB → the same
+  `-- [Error reading DB: ...] --` `TableIR` as an open failure, not an
+  uncaught `sqlite3.Error` (not an `OSError` subclass, so it would otherwise
+  bypass `main.py`'s top-level handler too); `--max-tables 0` → standalone
+  placeholder `TableIR`, never an empty `ParserContent` list
+- **DefaultParser**: a file that becomes unreadable between scan and parse
+  (permission change, lock, vanished file) → `status="Error"` for that file
+  only, not a propagated `OSError`
 
 #### Error sanitisation
 
@@ -675,7 +753,8 @@ Current notices:
 | `-- [Env file skipped (--no-env-keys): content not included] --` | `EnvParser` |
 | `-- [Skipped: file.parquet requires pyarrow, which is not installed] --` | `ArrowParser` |
 | `-- [Error: Malformed Jupyter Notebook (Invalid JSON)] --` | `process_notebook` |
-| `-- [Error reading CSV/SQL/Excel/...: message] --` | error paths (sanitized) |
+| `-- [Note: notebook contains no cells] --` | `process_notebook` on a valid, genuinely empty `"cells": []` notebook |
+| `-- [Error reading CSV/SQL/Excel/DB/...: message] --` | error paths (sanitized); `DB` covers both a connection-open failure and a database that passes the magic-byte sniff but fails on the discovery query |
 
 ## Constants Used
 

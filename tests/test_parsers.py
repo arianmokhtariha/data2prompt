@@ -128,6 +128,31 @@ def test_build_table_schema_without_describe():
     assert schema.row_count == 3
 
 
+def test_build_table_schema_duplicate_column_names_does_not_crash():
+    """A DataFrame with duplicate column labels must not crash schema
+    computation. This is unreachable from CSV/Excel (pandas auto-dedupes
+    those readers' headers) but is a real Arrow/Parquet/Feather edge case:
+    Arrow schemas permit duplicate field names, and df[name] on a duplicate
+    pandas label returns a DataFrame instead of a Series, so int(<Series>)
+    used to raise TypeError inside the per-column loop."""
+    df = pd.DataFrame([[1, 4.0], [2, None], [3, 6.0]])
+    df.columns = ["a", "a"]
+    schema = build_table_schema(df, include_describe=True)
+
+    assert [c.name for c in schema.columns] == ["a", "a"]
+    # Each duplicate-named column keeps its own, positionally-correct stats
+    # rather than both collapsing onto whichever one a name lookup finds.
+    assert schema.columns[0].missing == 0
+    assert schema.columns[1].missing == 1
+
+    # render_schema_block must not crash either, and must keep both
+    # same-named columns' describe() rows distinct.
+    result = render_schema_block(schema, show_missing=True, show_describe=True)
+    a_lines = [l for l in result.splitlines() if l.startswith("| a |")]
+    assert len(a_lines) == 2
+    assert a_lines != [a_lines[0], a_lines[0]]  # the two rows are not identical
+
+
 def test_process_csv_schema_only_drops_rows_keeps_schema():
     csv_content = "id,name\n1,alice\n2,bob\n3,carol\n"
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as tmp:
@@ -405,6 +430,27 @@ def test_process_notebook_missing_source_key_does_not_abort():
         assert "print('hello')" in cells[0].source
         # Malformed cell degrades to empty source rather than aborting.
         assert cells[1].source == ""
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_process_notebook_empty_cells_list_does_not_render_as_bare_list():
+    """A valid but genuinely empty notebook ("cells": []) must not return an
+    empty list: output.py's NotebookCellIR branch requires a non-empty list
+    to take that rendering path, and an empty one would silently fall
+    through to rendering the bare Python repr "[]" with no explanation."""
+    nb = {"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": []}
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".ipynb", delete=False, encoding="utf-8"
+    ) as tmp:
+        json.dump(nb, tmp)
+        path = tmp.name
+
+    try:
+        cells = process_notebook(path)
+        assert len(cells) == 1
+        assert "no cells" in cells[0].source
     finally:
         if os.path.exists(path):
             os.remove(path)

@@ -1,3 +1,4 @@
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -291,6 +292,23 @@ class UIHandler:
     """
 
     def __init__(self) -> None:
+        # Force UTF-8 on stdout/stderr before constructing the Console.
+        # Whenever stdout isn't a full ANSI-capable interactive terminal —
+        # redirected/piped output, many CI runners, a container with no
+        # locale configured — Rich falls back to a render path that writes
+        # through the stream's own encoding with no exception handling. The
+        # banner and report glyphs sit outside legacy encodings (cp1252 on
+        # Windows, ASCII under a bare POSIX locale), so without this the
+        # tool crashes with an uncaught UnicodeEncodeError before anything
+        # runs. errors="replace" keeps any genuinely unencodable character
+        # non-fatal too; the reconfigure call itself is also best-effort so
+        # a stream that refuses it can never crash startup.
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                try:
+                    stream.reconfigure(encoding="utf-8", errors="replace")
+                except (OSError, ValueError):
+                    pass
         self.console = Console()
         self._progress: Optional[Progress] = None
         self._task_id: Optional[TaskID] = None

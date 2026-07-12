@@ -42,7 +42,7 @@ from data2prompt.utils import count_tokens
 # lowercase suffix; re-parsing a file that comes back unchanged is harmless,
 # so selection by extension is sufficient (no per-parser bookkeeping needed).
 EXTS_TABULAR = frozenset(
-    {".csv", ".xlsx", ".xls", ".parquet", ".feather", ".arrow",
+    {".csv", ".xlsx", ".xls", ".xlsm", ".parquet", ".feather", ".arrow",
      ".db", ".sqlite", ".sqlite3"}
 )
 EXTS_SQL = frozenset({".sql"})

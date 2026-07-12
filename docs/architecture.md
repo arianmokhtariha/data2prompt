@@ -157,7 +157,7 @@ The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the pr
 | `.parquet`, `.feather`, `.arrow` | "Sampling" |
 | `.ipynb` | "Cleaning" |
 | `.sql` | "Parsing" |
-| `.xlsx`, `.xls` | "Extracting" |
+| `.xlsx`, `.xls`, `.xlsm` | "Extracting" |
 | `.db`, `.sqlite`, `.sqlite3` | "Querying" |
 | Other | "Reading" |
 
@@ -265,7 +265,7 @@ Registered parsers include:
 - [`CsvParser`](../src/data2prompt/parsers.py#L1) → `.csv`
 - [`SqlParser`](../src/data2prompt/parsers.py#L1) → `.sql`
 - [`NotebookParser`](../src/data2prompt/parsers.py#L1) → `.ipynb`
-- [`ExcelParser`](../src/data2prompt/parsers.py#L1) → `.xlsx`, `.xls`
+- [`ExcelParser`](../src/data2prompt/parsers.py#L1) → `.xlsx`, `.xls`, `.xlsm`
 - [`ArrowParser`](../src/data2prompt/parsers.py#L1) → `.parquet`, `.feather`, `.arrow` (requires optional `pyarrow`)
 
 In addition, `EnvParser` handles `.env` files. It is dispatched **by filename** (not via
@@ -335,6 +335,14 @@ own contents (the stats summary).
 2. **Offline-safe tokenization**: [`_load_encoding()`](../src/data2prompt/utils.py#L19) reads the bundled BPE file — no network call is ever made
 3. **File Size Warning**: Triggers a warning panel if output exceeds 2MB (potential context window issues)
 4. **Graceful Skipping**: Files matching skip extensions receive a placeholder result rather than failing
+5. **Per-file error containment**: every parser wraps its own filesystem/library
+   calls in `try/except` and degrades a single bad file to an error-note result
+   (see [parsers.md § Error Recovery](parsers.md#error-recovery)) — this is the
+   real line of defense, not `main()`'s top-level boundary below. That boundary
+   only catches `KeyboardInterrupt`/`OSError`; a library exception that is
+   *not* an `OSError` subclass (e.g. `sqlite3.Error`, which inherits from
+   `Exception` directly) would bypass it entirely and crash the whole run with
+   a raw traceback if a parser ever let one escape uncaught.
 
 ### Statistics Aggregation Safety
 

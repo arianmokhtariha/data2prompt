@@ -118,12 +118,18 @@ def build_table_schema(df: pd.DataFrame, include_describe: bool) -> TableSchema:
     """
     row_count = int(len(df))
     columns: List[ColumnSchema] = []
-    for name in df.columns:
-        missing = int(df[name].isna().sum())
+    # Positional access (.iloc), not df[name]: pandas allows duplicate column
+    # labels (most commonly reached via a pyarrow Table with duplicate field
+    # names converted with .to_pandas(), which pandas' own CSV/Excel readers
+    # would otherwise have auto-deduplicated). df[name] on a duplicate label
+    # returns a DataFrame instead of a Series, and int(<Series>.sum()) raises.
+    for i, name in enumerate(df.columns):
+        series = df.iloc[:, i]
+        missing = int(series.isna().sum())
         missing_pct = round(missing / row_count * 100, 2) if row_count else 0.0
         columns.append(ColumnSchema(
             name=str(name),
-            dtype=str(df[name].dtype),
+            dtype=str(series.dtype),
             missing=missing,
             missing_pct=missing_pct,
         ))
@@ -173,13 +179,19 @@ def render_schema_block(
         lines.append("| " + " | ".join(header) + " |")
         lines.append("|" + "|".join(["---"] * len(header)) + "|")
 
-        for col in schema.columns:
+        # Positional pairing with desc's rows (not desc.loc[col.name]):
+        # describe() preserves column order even for duplicate-named
+        # columns, where a name-based lookup would be ambiguous — pandas
+        # returns every matching row instead of the one that lines up with
+        # this column, and pd.isna() on that multi-row result raises.
+        for i, col in enumerate(schema.columns):
             row: List[str] = [col.name, col.dtype]
             if show_missing:
                 row += [str(col.missing), str(col.missing_pct)]
-            if col.name in desc.index:
+            if i < len(desc.index):
+                stats_row = desc.iloc[i]
                 for stat in stat_cols:
-                    val = desc.loc[col.name, stat]
+                    val = stats_row[stat]
                     row.append("" if pd.isna(val) else str(val))
             else:
                 row += [""] * len(stat_cols)
@@ -442,7 +454,18 @@ def process_notebook(
                 source=source,
                 outputs=cell_outputs
             ))
-            
+
+        if not cells_ir:
+            # A valid but genuinely empty notebook ("cells": []) must not
+            # return an empty list: output.py's NotebookCellIR branch
+            # requires a non-empty list, and an empty one would silently
+            # fall through to rendering the bare Python repr "[]".
+            return [NotebookCellIR(
+                number=0,
+                type="markdown",
+                source="-- [Note: notebook contains no cells] --",
+            )]
+
         return cells_ir
     except json.JSONDecodeError:
         return [NotebookCellIR(
@@ -587,11 +610,12 @@ def process_sql(
         return f"-- [Error reading SQL: {_sanitize_error(e, Path(file_path))}] --"
 
 def _xlsx_has_visuals(file_path: Union[str, Path]) -> bool:
-    """Cheaply detect embedded images/charts in an .xlsx workbook.
+    """Cheaply detect embedded images/charts in an .xlsx/.xlsm workbook.
 
-    An .xlsx file is a zip archive; images live under ``xl/media/`` and charts
-    under ``xl/charts/``. Inspecting the archive listing avoids loading the
-    workbook and works where openpyxl's read-only mode never parses drawings.
+    Both extensions are the same OOXML zip container; images live under
+    ``xl/media/`` and charts under ``xl/charts/``. Inspecting the archive
+    listing avoids loading the workbook and works where openpyxl's read-only
+    mode never parses drawings.
     """
     try:
         with zipfile.ZipFile(file_path) as archive:
@@ -614,7 +638,7 @@ def process_excel(
 ) -> List[TableIR]:
     fp = Path(file_path)
     ext = fp.suffix.lower()
-    has_visuals = ext == ".xlsx" and _xlsx_has_visuals(file_path)
+    has_visuals = ext in (".xlsx", ".xlsm") and _xlsx_has_visuals(file_path)
 
     # A single pd.ExcelFile parses the workbook once for all sheets (the old
     # per-sheet pd.read_excel re-opened the file for every sheet) and its
@@ -647,6 +671,20 @@ def process_excel(
                         (tables_ir[-1].footer_note or "")
                         + f"\n-- [Workbook truncated: Only first {max_sheets} sheets processed] --"
                     )
+                else:
+                    # max_sheets == 0: no TableIR exists yet to attach the
+                    # note to. Emit a standalone placeholder instead of
+                    # returning an empty list — output.py's TableIR branch
+                    # requires a non-empty content list, and an empty one
+                    # would silently fall through to rendering `str([])`.
+                    tables_ir.append(TableIR(
+                        name=fp.name,
+                        df=pd.DataFrame(),
+                        footer_note=(
+                            f"-- [Workbook truncated: Only first {max_sheets} "
+                            "sheets processed] --"
+                        ),
+                    ))
                 break
 
             try:
@@ -839,8 +877,11 @@ def process_arrow_file(
             except Exception:
                 table = pa.ipc.open_stream(fp).read_all()
 
-        # Exact pyarrow dtype strings, e.g. "int64", "utf8", "timestamp[us, tz=UTC]"
-        dtype_map: Dict[str, str] = {field.name: str(field.type) for field in table.schema}
+        # Exact pyarrow dtype strings, e.g. "int64", "utf8", "timestamp[us, tz=UTC]".
+        # Positional, not name-keyed: unlike a pandas DataFrame, an Arrow
+        # schema permits duplicate field names, and a name-keyed dict would
+        # silently collapse two same-named columns onto one dtype string.
+        dtype_by_position: List[str] = [str(f.type) for f in table.schema]
 
         df = table.to_pandas()
 
@@ -848,9 +889,9 @@ def process_arrow_file(
         if stats_summary or schema_only:
             schema = build_table_schema(df, include_describe=stats_summary)
             # Replace pandas-inferred dtypes with the native pyarrow types
-            for col in schema.columns:
-                if col.name in dtype_map:
-                    col.dtype = dtype_map[col.name]
+            for i, col in enumerate(schema.columns):
+                if i < len(dtype_by_position):
+                    col.dtype = dtype_by_position[i]
 
         if schema_only:
             return [TableIR(
@@ -969,8 +1010,13 @@ class DefaultParser:
         except OSError:
             pass
 
-        file_size_kb = file_path.stat().st_size / 1024
         try:
+            # stat() shares the try/except below deliberately: a file that
+            # vanished or became unreadable between scan and parse (a locked
+            # file, a permission change, a network-drive hiccup) must degrade
+            # to this one file's Error status, not propagate an OSError out
+            # of process_target_file and abort the entire run.
+            file_size_kb = file_path.stat().st_size / 1024
             if file_size_kb > config.max_file_size:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     header_content = f.read(10 * 1024)
@@ -1295,12 +1341,24 @@ def process_sqlite(
 
     tables_ir: List[TableIR] = []
     try:
-        connection.execute("PRAGMA query_only = ON")
-        master = connection.execute(
-            "SELECT name, sql FROM sqlite_master "
-            "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
-            "ORDER BY type = 'view', name"
-        ).fetchall()
+        # A file can pass the 16-byte magic-header sniff yet still be
+        # corrupted (a truncated download, a partial write, a bad backup) —
+        # sqlite3.Error is not an OSError subclass, so an uncaught one here
+        # would skip both this function's own error handling *and* main()'s
+        # top-level `except OSError`, crashing the whole run over one file.
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            master = connection.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+                "ORDER BY type = 'view', name"
+            ).fetchall()
+        except sqlite3.Error as e:
+            return [TableIR(
+                name=fp.name,
+                df=pd.DataFrame(),
+                footer_note=f"-- [Error reading DB: {_sanitize_error(e, fp)}] --",
+            )]
 
         if not master:
             return [TableIR(
@@ -1317,6 +1375,20 @@ def process_sqlite(
                         + f"\n-- [Database truncated: Only first {max_tables} "
                         "tables processed] --"
                     )
+                else:
+                    # max_tables == 0: no TableIR exists yet to attach the
+                    # note to. Emit a standalone placeholder instead of
+                    # returning an empty list — output.py's TableIR branch
+                    # requires a non-empty content list, and an empty one
+                    # would silently fall through to rendering `str([])`.
+                    tables_ir.append(TableIR(
+                        name=fp.name,
+                        df=pd.DataFrame(),
+                        footer_note=(
+                            f"-- [Database truncated: Only first {max_tables} "
+                            "tables processed] --"
+                        ),
+                    ))
                 break
 
             try:
@@ -1419,7 +1491,7 @@ registry = ParserRegistry()
 registry.register(['.csv'], CSVParser())
 registry.register(['.ipynb'], NotebookParser())
 registry.register(['.sql'], SQLParser())
-registry.register(['.xlsx', '.xls'], ExcelParser())
+registry.register(['.xlsx', '.xls', '.xlsm'], ExcelParser())
 registry.register(['.parquet', '.feather', '.arrow'], ArrowParser())
 registry.register(['.db', '.sqlite', '.sqlite3'], SQLiteParser())
 

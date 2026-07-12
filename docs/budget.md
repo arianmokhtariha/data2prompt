@@ -290,8 +290,8 @@ section, see [ui.md](ui.md)).
 ## Selection Helpers
 
 ```python
-EXTS_TABULAR = frozenset({".csv", ".xlsx", ".xls", ".parquet", ".feather", ".arrow",
-                          ".db", ".sqlite", ".sqlite3"})
+EXTS_TABULAR = frozenset({".csv", ".xlsx", ".xls", ".xlsm", ".parquet", ".feather",
+                          ".arrow", ".db", ".sqlite", ".sqlite3"})
 EXTS_SQL = frozenset({".sql"})
 EXTS_NOTEBOOK = frozenset({".ipynb"})
 ```

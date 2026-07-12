@@ -363,6 +363,7 @@ remains a plain `int` (any value is a valid seed).
 | Negative sample sizes | Rejected at parse time (`argparse` error, exit code 2) |
 | Zero sample size | Accepted — emits headers/schema with no data rows |
 | Non-existent folders in `--ignore-folders` | Silently ignored during scanning |
+| `--skip-exts .PNG` (any case) | Lowercased before merging with `CORE_SKIP_EXTS`, so it still matches — every extension check in the pipeline reads `file_path.suffix.lower()`, and an un-lowercased entry would silently never match |
 | `--budget` below the document's reachable floor | Not a CLI error — `fit_to_budget()` runs the full ladder and still exceeds the budget: **infeasible**. No output file is written, no clipboard copy happens, a themed failure panel is printed, and the process exits with code 1. See [`budget.md`](budget.md#outcomes-fits-vs-infeasible). |
 
 ### Known Behaviors
@@ -372,7 +373,7 @@ remains a plain `int` (any value is a valid seed).
    data2prompt -o test.md -f xml  # Results in: test.md.xml
    ```
 
-2. **Set Merging**: User-provided exclusions are merged with core exclusions using set union (`|`), ensuring core ignores are never bypassed.
+2. **Set Merging**: User-provided exclusions are merged with core exclusions using set union (`|`), ensuring core ignores are never bypassed. `--skip-exts` values are additionally lowercased before the merge (`ignore_folders`/`ignore_files` are not — they go through `pathspec`'s gitignore-style matching, which is intentionally case-sensitive, mirroring real `.gitignore` behavior).
 
 3. **Token-Aware Defaults**: Default values are tuned for typical token budgets (e.g., 15 CSV rows ≈ 600 tokens with tiktoken).
 
