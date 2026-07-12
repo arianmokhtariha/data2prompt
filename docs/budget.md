@@ -454,7 +454,7 @@ while _over_budget():
     for record in included:
         omitted.add(record.relative_path)
         omitted_list.append(
-            (Path(record.relative_path).as_posix(), record.result.tokens)
+            (record.relative_path.replace("\\", "/"), record.result.tokens)
         )
         taken += record.result.tokens
         if taken >= overshoot:
@@ -472,11 +472,19 @@ sum of their tokens covers the current overshoot (`result.tokens -
 threshold`), then re-renders and re-counts; if the real reduction differs
 from the estimated one, the outer `while` runs another pass with a freshly
 sorted, freshly computed overshoot. Omitted files are recorded as
-`(Path(record.relative_path).as_posix(), record.result.tokens)` — the
-`.as_posix()` form is mandatory: it is the same canonical forward-slash path
-key the File Index and `## File:` headers use (output-contract invariant 5),
-so the Budget Report's omitted-file table and the File Index's `Omitted`
-rows name the same file with the identical string. Omitted files are never
+`(record.relative_path.replace("\\", "/"), record.result.tokens)` — the
+forward-slash normalization is mandatory: it is the same canonical path key
+the File Index and `## File:` headers use (output-contract invariant 5), so
+the Budget Report's omitted-file table and the File Index's `Omitted` rows
+name the same file with the identical string. A plain string replace is used
+instead of `Path(...).as_posix()` because `pathlib.Path` only treats `\` as a
+separator on Windows (`WindowsPath`) — on POSIX (`PosixPath`, including every
+Linux CI runner), `\` is just a literal filename character, so
+`.as_posix()` would silently no-op on a backslash-separated string and leave
+it unnormalized. `relative_path` is built with the current OS's native
+separator, so this only mattered for Windows-built paths, but the unconditional
+string replace makes normalization correct regardless of which OS runs the
+code. Omitted files are never
 deleted from `records` or the tree — they stay scanned, so
 `output.build_file_index()`'s existing "present in the tree but absent from
 `files_data`" leftover rule picks them up automatically and lists them with

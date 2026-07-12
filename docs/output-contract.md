@@ -59,9 +59,16 @@ degrades the product.
    any other shape is invisible to that rule.
 
 5. **One canonical path key.** Every file has exactly one display path:
-   project-relative, forward-slashed via `Path.as_posix()` (produced by
-   `ProjectScanner.generate_tree()` and normalized again by
-   `_display_path()` in `output.py`). The *identical string* appears in the
+   project-relative, forward-slashed (produced by `ProjectScanner
+   .generate_tree()` via `Path.as_posix()` on real `Path` objects, and
+   normalized again by `_display_path()` in `output.py` and the omission
+   phase in `budget.py`, both via a plain `rel_path.replace("\\", "/")` on
+   the already-stringified `relative_path`). The plain string replace —
+   rather than reconstructing a `Path` and calling `.as_posix()` on it — is
+   deliberate: `pathlib.Path` only treats `\` as a separator on Windows, so
+   re-wrapping an already-`str` relative path in `Path(...)` on a POSIX
+   runner (e.g. GitHub Actions' `ubuntu-latest`) silently fails to normalize
+   a backslash-separated string. The *identical string* appears in the
    File Index, the `## File:` header / `path="..."` attribute, and any notice
    that names the file. The LLM cross-references sections by literal string
    match; two spellings of one path breaks that link.

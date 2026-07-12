@@ -527,7 +527,7 @@ All shared by both generators (single source of truth for the scaffolding):
 | Helper | Purpose |
 |--------|---------|
 | `IndexEntry` (frozen dataclass) | One File Index row: `path`, `type`, `status` |
-| `_display_path(rel_path) -> str` | Canonical forward-slash path key (`Path.as_posix()`) |
+| `_display_path(rel_path) -> str` | Canonical forward-slash path key (`rel_path.replace("\\", "/")`) |
 | `resolve_inclusion_status(status) -> str` | Raw parser status → index vocabulary; `Skipped (...)` prefix fallback, then verbatim passthrough — never raises |
 | `build_file_index(tree_text, files_data) -> List[IndexEntry]` | Rendered files in document order + tree-only leftovers as `Omitted` |
 | `summarize_stats(stats, file_total) -> List[Tuple[str, int]]` | Ordered (label, count) pairs; `Total files` always present, zero counts dropped |

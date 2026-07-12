@@ -50,9 +50,14 @@ def _display_path(rel_path: str) -> str:
 
     This string is the canonical path key: identical in the File Index, the
     Markdown ``## File:`` headers, and the XML ``path`` attributes, so an LLM
-    can cross-reference sections by exact match.
+    can cross-reference sections by exact match. A plain string replace is
+    used instead of ``Path(rel_path).as_posix()`` because ``pathlib.Path``
+    only treats ``\\`` as a separator on Windows — on POSIX it is a literal
+    filename character, so ``.as_posix()`` would silently no-op on a
+    backslash-separated string built on a different OS than the one running
+    this code (e.g. in cross-platform tests).
     """
-    return Path(rel_path).as_posix()
+    return rel_path.replace("\\", "/")
 
 
 def resolve_inclusion_status(status: str) -> str:

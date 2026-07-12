@@ -428,7 +428,7 @@ def fit_to_budget(
         for record in included:
             omitted.add(record.relative_path)
             omitted_list.append(
-                (Path(record.relative_path).as_posix(), record.result.tokens)
+                (record.relative_path.replace("\\", "/"), record.result.tokens)
             )
             taken += record.result.tokens
             if taken >= overshoot:
