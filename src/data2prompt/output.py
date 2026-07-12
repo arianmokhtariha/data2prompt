@@ -308,11 +308,21 @@ class MarkdownGenerator(OutputGenerator):
                     lines.append("")
 
             elif isinstance(content, list) and content and isinstance(content[0], TableIR):
-                # Render Table IR (CSV/Excel)
+                # Render Table IR (CSV/Excel/SQLite)
                 for table in content:
-                    # Handle Excel Sheet Metadata
+                    # Sub-section heading (Excel sheets, SQLite tables)
                     if table.sheet_number is not None:
-                        lines.append(f"### Sheet {table.sheet_number}: {table.name} - {table.file_path}")
+                        lines.append(
+                            f"### {table.section_label} {table.sheet_number}: "
+                            f"{table.name} - {table.file_path}"
+                        )
+
+                    # DDL (SQLite CREATE statements) — gated like the schema block.
+                    if render_block and table.ddl:
+                        lines.append("```sql")
+                        lines.append(table.ddl)
+                        lines.append("```")
+                        lines.append("")
 
                     # Schema / stats metadata block (computed on the full df)
                     if render_block and table.schema is not None:
@@ -460,13 +470,20 @@ class XMLGenerator(OutputGenerator):
             elif isinstance(content, list) and content and isinstance(content[0], TableIR):
                 # Render Table IR to XML
                 for table in content:
-                    # Handle Excel Sheet Metadata
+                    # Sub-section element (Excel <sheet>, SQLite <table>)
+                    tag = table.section_label.lower()
                     if table.sheet_number is not None:
                         lines.append(
-                            f'<sheet name={quoteattr(table.name)} '
-                            f'sheet_number="{table.sheet_number}" '
+                            f'<{tag} name={quoteattr(table.name)} '
+                            f'{tag}_number="{table.sheet_number}" '
                             f'path={quoteattr(table.file_path or "")}>'
                         )
+
+                    # DDL (SQLite CREATE statements) — gated like the schema block.
+                    if render_block and table.ddl:
+                        lines.append('<ddl>')
+                        lines.append(table.ddl)
+                        lines.append('</ddl>')
 
                     # Schema / stats metadata block (computed on the full df)
                     if render_block and table.schema is not None:
@@ -494,9 +511,9 @@ class XMLGenerator(OutputGenerator):
 
                     lines.append(table_text)
 
-                    # Close Sheet block if applicable
+                    # Close the sub-section element if applicable
                     if table.sheet_number is not None:
-                        lines.append('</sheet>')
+                        lines.append(f'</{tag}>')
 
             else:
                 # Standard files or fallback string content

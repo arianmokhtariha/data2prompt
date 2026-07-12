@@ -17,7 +17,9 @@ CORE_IGNORE_FILES = set()
 # but their actual content will be skipped.
 CORE_SKIP_EXTS = {
     # Data & Databases
-    '.pbix', '.db', '.sqlite', '.sqlite3', '.pkl', '.pickle', '.h5',
+    # Note: '.db'/'.sqlite'/'.sqlite3' are intentionally NOT here — they are
+    # routed to SQLiteParser, which extracts tables, DDL, and sampled rows.
+    '.pbix', '.pkl', '.pickle', '.h5',
     # Compressed & Binary
     '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
     # Media
@@ -34,6 +36,9 @@ DEFAULT_SQL_SAMPLE_SIZE = 15                # Controls the number of INSERT/data
 DEFAULT_SQL_MAX_LINES = 50                  # Caps the total number of non-data lines (comments, setup, etc.) in SQL files.
 DEFAULT_MAX_LINES = 40                      # Max lines of text output to keep per notebook cell.
 DEFAULT_MAX_SHEETS = 10                     # Max number of sheets to process in Excel files.
+DEFAULT_MAX_TABLES = 25                     # Max tables/views to process per SQLite database.
+DEFAULT_DB_FULL_SCAN_MAX_ROWS = 100_000     # Above this row count, tables are LIMIT-sampled instead of fully read.
+DEFAULT_DB_COUNT_MAX_BYTES = 1_073_741_824  # Skip COUNT(*) for DB files larger than ~1 GiB (rows then 'unknown').
 DEFAULT_SEED = 42                           # Random seed for consistent sampling.
 DEFAULT_LINE_LENGTH_THRESHOLD = 4000        # Max characters allowed per line before truncation is triggered.
 DEFAULT_TRUNCATED_LINE_LENGTH = 1000        # Number of characters to keep when a line is truncated.
@@ -58,7 +63,7 @@ DEFAULT_ENV_KEYS = True                     # show env variable names with redac
 # sample still shows structure; 0 rows would not.
 DEFAULT_BUDGET: Optional[int] = None   # no budget targeting unless --budget
 BUDGET_TOKEN_MARGIN = 16       # safety margin: placeholder digits shift count
-BUDGET_MIN_CSV_SAMPLE = 5      # csv_sample_size floor (CSV/Excel/Arrow rows)
+BUDGET_MIN_CSV_SAMPLE = 5      # csv_sample_size floor (CSV/Excel/Arrow/SQLite rows)
 BUDGET_MIN_NOTEBOOK_LINES = 10  # max_lines floor before outputs are dropped
 BUDGET_MIN_SQL_SAMPLE = 5      # sql_sample_size floor
 BUDGET_MIN_SQL_MAX_LINES = 20  # sql_max_lines floor
@@ -110,10 +115,15 @@ Model. Nothing in it was written by hand.
   each with a fenced source block and an optional **Outputs:** block.
 - Excel workbooks are split into sheets: `### Sheet {n}: {name} - {path}`,
   each closed by a `---` line.
-- Tabular data files (CSV/Excel/Parquet/Feather/Arrow) may include a schema
-  block (row/column counts, dtypes, missing values, describe() stats).
+- SQLite databases are split into tables: `### Table {n}: {name} - {path}`,
+  each closed by a `---` line. A table's `CREATE TABLE` DDL, when shown,
+  appears in a fenced sql code block before its schema block.
+- Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
+  schema block (row/column counts, dtypes, missing values, describe() stats).
   Schema statistics are computed on the FULL dataset; the data rows shown
-  are only a small random sample.
+  are only a small random sample. A very large database table instead shows
+  only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
+  notice.
 - Lines of the form `-- [...] --` are notices inserted by the tool
   (sampling, truncation, omission, errors). They are NOT part of the
   original file content.
@@ -158,10 +168,15 @@ Reading conventions:
   type="..."> elements holding <content> and optional <outputs>.
 - Excel workbooks are split into <sheet name="..." sheet_number="..."
   path="..."> elements.
-- Tabular data files (CSV/Excel/Parquet/Feather/Arrow) may include a
+- SQLite databases are split into <table name="..." table_number="..."
+  path="..."> elements. A table's CREATE TABLE DDL, when shown, appears in a
+  <ddl> element before its <schema> block.
+- Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
   <schema> block (row/column counts, dtypes, missing values, describe()
   stats). Schema statistics are computed on the FULL dataset; the data rows
-  shown are only a small random sample.
+  shown are only a small random sample. A very large database table instead
+  shows only its DDL and a small head sample, flagged by a
+  -- [Large table: ...] -- notice.
 - Lines of the form -- [...] -- are notices inserted by the tool (sampling,
   truncation, omission, errors). They are NOT part of the original file.
 - Env files list variable names only; every value is replaced with
@@ -220,6 +235,8 @@ STATS_SUMMARY_LABELS: Dict[str, str] = {
     "parquet_count": "Parquet",
     "feather_count": "Feather",
     "arrow_count": "Arrow",
+    "sqlite_count": "SQLite databases",
+    "db_tables_count": "Database tables",
     "truncated_count": "Truncated",
     "binary_count": "Binary skipped",
     "excluded_count": "Excluded",

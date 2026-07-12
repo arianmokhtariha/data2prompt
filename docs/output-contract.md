@@ -102,7 +102,7 @@ degrades the product.
    in `main.py` and add a label to `STATS_SUMMARY_LABELS` (dict order = render
    order; zero counts are dropped automatically).
 6. **Structure:** if the type renders as multiple sub-sections (like notebook
-   cells or Excel sheets), define the marker in both generators
+   cells, Excel sheets, or SQLite tables), define the marker in both generators
    (Markdown heading form + XML element with `quoteattr`-escaped attributes)
    and document the convention in *both* preambles' reading conventions.
 7. **Paths:** any path the parser displays goes through `.as_posix()`,
@@ -142,6 +142,17 @@ degrades the product.
 Note the fallback design: a raw status like `Skipped (Env)` needs *no* map
 entry — the `Skipped (...)` prefix rule folds it into `Skipped`. Only map it
 explicitly if it deserves its own LLM-facing term.
+
+> **Worked example — `SQLiteParser` (`.db`/`.sqlite`/`.sqlite3`).** Added
+> following exactly the checklist above: it reuses the existing raw statuses
+> `Sampled`/`Schema Only`/`Skipped (Binary)` (no `INCLUSION_STATUS_MAP`
+> change), adds the `sqlite_count`/`db_tables_count` counters with
+> `STATS_SUMMARY_LABELS`, renders each table as a `### Table {n}:` sub-section
+> (`<table table_number="">` in XML) plus a fenced `sql` DDL block
+> (`<ddl>` in XML) — all defined in both generators and documented in both
+> preambles — and generalizes the shared sub-section machinery via
+> `TableIR.section_label` so Excel's `Sheet` output is unchanged. See
+> [parsers.md](parsers.md#sqliteparser).
 
 ### Adding a new stats counter
 

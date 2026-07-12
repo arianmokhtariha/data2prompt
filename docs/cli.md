@@ -32,6 +32,7 @@ class Config:
     sql_max_lines: int                   # Max non-data lines in SQL files
     max_lines: int                       # Max lines per notebook cell
     max_sheets: int                      # Excel sheets to process
+    max_tables: int                      # SQLite tables/views per database
     line_length_threshold: int           # Chars per line before truncation
     truncated_line_length: int           # Truncation target length
     table_limit: int                     # Max chars per table after sampling
@@ -100,6 +101,12 @@ and the infeasible-outcome contract.
 | Argument | Type | Default | Description |
 |:---------|:----:|:--------|:------------|
 | `--max-sheets` | `int` | `10` | Maximum number of sheets to process in Excel files. Sheets beyond this limit are skipped. |
+
+### SQLite Settings
+
+| Argument | Type | Default | Description |
+|:---------|:----:|:--------|:------------|
+| `--max-tables` | `int` | `25` | Maximum number of tables/views to process per SQLite database (`.db`/`.sqlite`/`.sqlite3`). Tables beyond this limit are noted (`-- [Database truncated ...] --`) and skipped. |
 
 ### Line Truncation Settings
 
@@ -198,6 +205,7 @@ from data2prompt.constants import (
     DEFAULT_SQL_MAX_LINES,
     DEFAULT_MAX_LINES,
     DEFAULT_MAX_SHEETS,
+    DEFAULT_MAX_TABLES,
     DEFAULT_SEED,
     DEFAULT_LINE_LENGTH_THRESHOLD,
     DEFAULT_TRUNCATED_LINE_LENGTH,
@@ -230,7 +238,9 @@ These sets are defined in [`constants.py`](../src/data2prompt/constants.py#L4) a
 **[`CORE_SKIP_EXTS`](../src/data2prompt/constants.py#L16)** - Extensions skipped (name listed, content excluded):
 ```python
 # Data & Databases
-'.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
+# ('.db'/'.sqlite'/'.sqlite3' are NOT here — handled by SQLiteParser;
+#  '.parquet'/'.feather'/'.arrow' are NOT here — handled by ArrowParser)
+'.pbix', '.pkl', '.pickle', '.h5',
 # Compressed & Binary
 '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
 # Media
@@ -327,7 +337,8 @@ Numeric arguments use two custom `argparse` types defined in
 
 - `_non_negative_int` (≥ 0): all counts and sizes — `--csv-sample-size`,
   `--sql-sample-size`, `--sql-max-lines`, `--max-lines`, `--max-sheets`,
-  `--truncated-line-length`, `--table-truncate`, `--max-file-size`
+  `--max-tables`, `--truncated-line-length`, `--table-truncate`,
+  `--max-file-size`
 - `_positive_int` (≥ 1): thresholds that would be nonsensical at zero —
   `--line-length-threshold`, `--table-limit`
 - `_token_budget` (≥ 1): `--budget`. Accepts plain integers (`50000`),

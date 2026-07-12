@@ -20,7 +20,7 @@ plugs the tool into the place where context is consumed (agents, teams, pipeline
 | # | Feature | Value | Effort | Priority |
 |---|---------|-------|--------|----------|
 | 1 | Token budget targeting (`--budget`) | ★★★★★ | Medium | **✅ Implemented** |
-| 2 | SQLite/DuckDB parser | ★★★★★ | Low | **P0** |
+| 2 | SQLite/DuckDB parser | ★★★★★ | Low | **✅ Implemented (SQLite)** |
 | 3 | Programmatic API (`data2prompt.api`) | ★★★★ (enabler) | Low | **P0** |
 | 4 | MCP server mode | ★★★★★ | Medium | **P1** |
 | 5 | Config file (`[tool.data2prompt]`) | ★★★★ | Low | **P1** |
@@ -77,6 +77,17 @@ exactly that.
 stop; the metadata already labels counts as estimates.
 
 ### 2. SQLite / DuckDB parser
+
+> **✅ SQLite implemented and graduated.** `SQLiteParser` (`.db`/`.sqlite`/
+> `.sqlite3`) lives in `src/data2prompt/parsers.py` and is documented in
+> [docs/parsers.md](../docs/parsers.md#sqliteparser); it reuses the generalized
+> multi-sub-section rendering (`TableIR.section_label`) and adds per-table DDL.
+> `--max-tables` caps tables/views; large tables degrade to a head sample; the
+> parser rides the `--budget` tabular ladder (`.db` is in `EXTS_TABULAR`).
+> **DuckDB (`.duckdb`) is still pending** — planned behind an optional
+> `data2prompt[duckdb]` extra (an `ArrowParser`-style import guard). The design
+> below is retained for historical context; `docs/` is the source of truth for
+> actual behavior.
 
 **What:** `.db`, `.sqlite`, `.sqlite3` (and `.duckdb` behind an optional extra)
 currently sit in `CORE_SKIP_EXTS` and vanish. Parse them instead: table list, DDL,

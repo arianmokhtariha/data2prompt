@@ -124,15 +124,25 @@ Cell outputs are displayed in text code blocks when present.
 
 #### Table Rendering
 
-CSV/Excel data is rendered using [`TableIR`](../src/data2prompt/parsers.py#L35) with Markdown table formatting via `pandas.DataFrame.to_markdown()`:
+CSV/Excel/SQLite data is rendered using [`TableIR`](../src/data2prompt/parsers.py#L35) with Markdown table formatting via `pandas.DataFrame.to_markdown()`:
 
 ```markdown
-### Sheet {sheet_number}: {name} - {path}
+### {section_label} {sheet_number}: {name} - {path}
+```sql
+{table.ddl}                       # SQLite only; gated by render_block
+```
+{schema block}                    # gated by render_block
 {table.df.to_markdown(index=False)}
 ---
 ```
 
-Table truncation is handled by [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) when a `Config` object is provided.
+`section_label` is the sub-section word — `"Sheet"` for Excel, `"Table"` for
+SQLite — and drives the XML element tag too (`<sheet>` / `<table>`). The `ddl`
+block (SQLite `CREATE` statements) is emitted only when
+`render_block` (`stats_summary or schema_only`) is true, the same gate as the
+schema block. Table truncation is handled by
+[`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) when a `Config`
+object is provided.
 
 #### Schema / Stats Metadata Block
 
@@ -349,6 +359,8 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 | `<file path={quoteattr} type={quoteattr} status={quoteattr}>` | Individual file; `status` carries the **resolved** index vocabulary so it cross-references `<entry>` exactly |
 | `<cell path={quoteattr} index="" type={quoteattr}>` | Notebook cell encapsulation |
 | `<sheet name={quoteattr} sheet_number="" path={quoteattr}>` | Excel sheet encapsulation |
+| `<table name={quoteattr} table_number="" path={quoteattr}>` | SQLite table/view encapsulation (tag + `{tag}_number` derived from `section_label`) |
+| `<ddl>` | SQLite table's `CREATE`-statement DDL (verbatim; gated by `render_block`) |
 | `<end_of_codebase>` | Terminal recap element, immediately before `</codebase>` |
 
 #### Notebook XML Rendering
@@ -366,10 +378,19 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 
 #### Table XML Rendering
 
+The element tag and its number attribute are derived from `table.section_label`
+(`<sheet sheet_number="">` for Excel, `<table table_number="">` for SQLite). The
+optional `<ddl>` element (SQLite `CREATE` statements) is emitted only when
+`render_block` is true, mirroring the Markdown fenced `sql` block.
+
 ```xml
-<sheet name={quoteattr(table.name)} sheet_number="{table.sheet_number}" path={quoteattr(table.file_path)}>
+<table name={quoteattr(table.name)} table_number="{table.sheet_number}" path={quoteattr(table.file_path)}>
+<ddl>
+{table.ddl}                                    <!-- SQLite only; verbatim, not escaped -->
+</ddl>
+<schema>...</schema>                           <!-- gated by render_block -->
 {table.df.to_markdown(index=False)}            <!-- verbatim, not escaped -->
-</sheet>
+</table>
 ```
 
 ## Intermediate Representations (IR)
@@ -396,9 +417,11 @@ class TableIR:
     df: pd.DataFrame                  # Tabular data
     header_note: Optional[str] = None # Warning/info message
     footer_note: Optional[str] = None # Truncation notice
-    sheet_number: Optional[int] = None # Excel sheet index
+    sheet_number: Optional[int] = None # Excel sheet / SQLite table sub-section index
     file_path: Optional[str] = None   # Source file path
     schema: Optional[TableSchema] = None # Full-df schema/stats metadata
+    section_label: str = "Sheet"      # Sub-section word: "Sheet" (Excel) / "Table" (SQLite)
+    ddl: Optional[str] = None         # SQLite CREATE-statement DDL
 ```
 
 ## Dynamic Wrapping

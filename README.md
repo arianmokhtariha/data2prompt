@@ -15,7 +15,7 @@
 data2prompt is a CLI tool designed to bridge the gap between local data-heavy projects and Large Language Model (LLM) context windows. Unlike generic code-packagers, it provides an intelligent,optimized output for LLM attention mechanism, token-aware representation of a project's structure and content.
 
 ## 📝 Important Note
-**Data2prompt** is purpose-built for **data-heavy projects** (`.csv`, `.sql`, `.xlsx`, `.ipynb`), not large pure-code repositories. It intelligently samples and truncates data files to prevent context window explosion while preserving semantic structure.
+**Data2prompt** is purpose-built for **data-heavy projects** (`.csv`, `.sql`, `.xlsx`, `.ipynb`, `.db`), not large pure-code repositories. It intelligently samples and truncates data files to prevent context window explosion while preserving semantic structure.
 
 
 ## 🎯 Why Data2Prompt?
@@ -30,6 +30,7 @@ Generic code-to-prompt tools choke on data files—they either skip them entirel
 
 *   **Smart Jupyter Parsing**: Intelligently extracts code, markdown, and text outputs from [`.ipynb`](docs/parsers.md) files while stripping heavy Base64 images and raw HTML to preserve context.
 *   **Multi-Format Sampling**: Advanced sampling strategies for [CSV, SQL, and Excel](docs/parsers.md) files to preserve schema and data context which reduces the data size significantly while extracting the needed context for llm.
+*   **SQLite Database Extraction**: Reads `.db`/`.sqlite`/`.sqlite3` databases with the standard library (zero extra dependencies) — one section per table/view with its `CREATE TABLE` DDL (keys, foreign keys, indexes), a schema/stats block, and a sampled preview. Huge tables degrade to a head sample automatically, and the whole thing respects `--budget` and `--schema-only`. Cap tables per database with `--max-tables`.
 *   **Stats-Aware Metadata**: Each table is annotated with a metadata block — column dtypes, missing counts/percentages, and a `describe()` summary — all computed on the *full* dataset (not the sample), so the LLM sees true data quality. Toggle with `--no-stats-summary`.
 *   **Secret-Safe `.env` Handling**: `.env` files are surfaced as variable *names* with redacted values (`KEY=<redacted>`) so the LLM understands the project's configuration without ever leaking secrets. Disable with `--no-env-keys`.
 *   **Direct Clipboard Output**: `--clipboard` copies the generated prompt straight to your system clipboard (no file), using native OS tools with a graceful file fallback.
@@ -140,6 +141,7 @@ data2prompt --output my_analysis --format xml --csv-sample-size 50 --ignore-fold
 | `-f`, `--format` | Output format (`xml` or `markdown`) | `markdown` |
 | `-s`, `--csv-sample-size` | Number of random rows to sample from CSVs | `15` |
 | `--max-lines` | Max lines of text output per notebook cell | `40` |
+| `--max-tables` | Max tables/views to process per SQLite database | `25` |
 | `--max-file-size` | Max file size in KB to read entirely | `70` |
 | `-c`, `--clipboard` | Copy the output to the system clipboard instead of writing a file | `off` |
 | `--schema-only` | Emit only the schema (columns + dtypes) of data files, no rows | `off` |

@@ -20,9 +20,12 @@ from unittest.mock import patch
 import pytest
 
 from data2prompt.budget import (
+    EXTS_TABULAR,
     BudgetAdjustment,
     BudgetReport,
     FileRecord,
+    _select_by_ext,
+    _select_text_group,
     fit_to_budget,
 )
 from data2prompt.cli import Config, setup_cli
@@ -53,6 +56,7 @@ def _config(
         sql_max_lines=50,
         max_lines=50,
         max_sheets=10,
+        max_tables=25,
         line_length_threshold=300,
         truncated_line_length=200,
         table_limit=50_000,
@@ -308,6 +312,29 @@ def test_stats_not_double_counted_across_multiple_ladder_attempts() -> None:
         f"{outcome.stats['csv_count']} — stats must be rebuilt from scratch "
         "each attempt, not accumulated across ladder iterations"
     )
+
+
+# ---------------------------------------------------------------------------
+# Extension classification: a .db must ride the tabular ladder steps
+# (re-sample / stats-off / schema-only), never the text-truncation step —
+# byte-truncating a rendered multi-table database would be meaningless.
+# ---------------------------------------------------------------------------
+
+def test_budget_classifies_sqlite_as_tabular_not_text() -> None:
+    record = FileRecord(
+        absolute_path=Path("data/app.db"),
+        relative_path="data/app.db",
+        result=ParserResult(
+            content=[], tokens=100, type="SQLite (2 tables)", status="Sampled",
+        ),
+    )
+    records = [record]
+
+    assert ".db" in EXTS_TABULAR
+    # Steps 1/6/7 select tabular files (csv-sample-size, stats-summary, schema-only).
+    assert _select_by_ext(records, set(), EXTS_TABULAR) == [record]
+    # Step 8 (text truncation to first N KB) must never touch a database file.
+    assert _select_text_group(records, set(), _config()) == []
 
 
 # ---------------------------------------------------------------------------

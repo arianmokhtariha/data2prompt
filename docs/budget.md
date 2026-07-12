@@ -290,14 +290,21 @@ section, see [ui.md](ui.md)).
 ## Selection Helpers
 
 ```python
-EXTS_TABULAR = frozenset({".csv", ".xlsx", ".xls", ".parquet", ".feather", ".arrow"})
+EXTS_TABULAR = frozenset({".csv", ".xlsx", ".xls", ".parquet", ".feather", ".arrow",
+                          ".db", ".sqlite", ".sqlite3"})
 EXTS_SQL = frozenset({".sql"})
 EXTS_NOTEBOOK = frozenset({".ipynb"})
 ```
 
 - `_select_by_ext(records, omitted, exts)` — included (not-yet-omitted)
   records whose `absolute_path.suffix.lower()` is in `exts`. Used for the
-  tabular, SQL, and notebook ladder steps.
+  tabular, SQL, and notebook ladder steps. SQLite databases (`.db`/`.sqlite`/
+  `.sqlite3`) are in `EXTS_TABULAR`, so they ride the same tabular steps as
+  CSV/Excel/Arrow: step 1 re-samples their tables (`csv_sample_size` halving),
+  step 6 drops their DDL + schema block (`stats_summary → off`), and step 7
+  demotes them to schema-only. Their presence in `EXTS_TABULAR` also keeps them
+  **out** of the text group, so a rendered multi-table database is never
+  byte-truncated as if it were a plain text file.
 - `_select_text_group(records, omitted, config)` — the "text group" the
   `DefaultParser` would handle: included records whose suffix is **not** in
   `EXTS_TABULAR | EXTS_SQL | EXTS_NOTEBOOK`, **not** in `config.skip_exts`

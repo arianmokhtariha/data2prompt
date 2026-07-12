@@ -33,6 +33,7 @@ def get_ui_action(file_name: str, ext: str, skip_exts: Set[str]) -> str:
     elif ext == '.ipynb': return "Cleaning"
     elif ext == '.sql': return "Parsing"
     elif ext in ['.xlsx', '.xls']: return "Extracting"
+    elif ext in ['.db', '.sqlite', '.sqlite3']: return "Querying"
     return "Reading"
 
 def process_target_file(file_path: Path, config: Config) -> ParserResult:
@@ -98,6 +99,8 @@ def _run() -> None:
         "parquet_count": 0,
         "feather_count": 0,
         "arrow_count": 0,
+        "sqlite_count": 0,
+        "db_tables_count": 0,
         "truncated_count": 0,
         "binary_count": 0,
         "excluded_count": 0,

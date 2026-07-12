@@ -158,6 +158,7 @@ The [`get_ui_action()`](../src/data2prompt/main.py#L18) helper determines the pr
 | `.ipynb` | "Cleaning" |
 | `.sql` | "Parsing" |
 | `.xlsx`, `.xls` | "Extracting" |
+| `.db`, `.sqlite`, `.sqlite3` | "Querying" |
 | Other | "Reading" |
 
 #### Phase 3: Output Generation
@@ -315,6 +316,8 @@ element) so the LLM sees the codebase's composition up front.
 | `parquet_count` | Parquet files sampled |
 | `feather_count` | Feather files sampled |
 | `arrow_count` | Arrow IPC files sampled |
+| `sqlite_count` | SQLite databases parsed |
+| `db_tables_count` | Total database tables/views extracted |
 | `truncated_count` | Files/content truncated due to size limits |
 | `binary_count` | Binary files detected and skipped |
 | `excluded_count` | Files excluded via ignore rules |

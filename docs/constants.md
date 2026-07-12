@@ -58,7 +58,9 @@ CORE_IGNORE_FILES = set()
 ```python
 CORE_SKIP_EXTS = {
     # Data & Databases
-    '.pbix', '.db', '.sqlite', '.sqlite3', '.parquet', '.pkl', '.pickle', '.feather', '.h5',
+    # ('.db'/'.sqlite'/'.sqlite3' → SQLiteParser; '.parquet'/'.feather'/'.arrow'
+    #  → ArrowParser — none of those are skipped)
+    '.pbix', '.pkl', '.pickle', '.h5',
     # Compressed & Binary
     '.zip', '.tar', '.gz', '.7z', '.rar', '.exe', '.dll', '.so', '.bin',
     # Media
@@ -96,6 +98,9 @@ All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and 
 | `DEFAULT_SQL_MAX_LINES` | `50` | Non-data lines (comments, setup) cap in SQL files |
 | `DEFAULT_MAX_LINES` | `40` | Max lines of text output per notebook cell |
 | `DEFAULT_MAX_SHEETS` | `10` | Excel sheets processed per workbook |
+| `DEFAULT_MAX_TABLES` | `25` | SQLite tables/views processed per database |
+| `DEFAULT_DB_FULL_SCAN_MAX_ROWS` | `100000` | SQLite tables above this are `LIMIT`-sampled (no full-table scan); at or below, read fully for exact stats |
+| `DEFAULT_DB_COUNT_MAX_BYTES` | `1073741824` | Skip `COUNT(*)` for DB files larger than ~1 GiB (row counts reported `unknown (large)`) |
 | `DEFAULT_SEED` | `42` | Random seed for consistent sampling |
 | `DEFAULT_LINE_LENGTH_THRESHOLD` | `4000` | Characters per line before truncation |
 | `DEFAULT_TRUNCATED_LINE_LENGTH` | `1000` | Characters retained when line is truncated |
@@ -110,7 +115,7 @@ All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and 
 ```python
 DEFAULT_BUDGET: Optional[int] = None   # no budget targeting unless --budget
 BUDGET_TOKEN_MARGIN = 16       # safety margin: placeholder digits shift count
-BUDGET_MIN_CSV_SAMPLE = 5      # csv_sample_size floor (CSV/Excel/Arrow rows)
+BUDGET_MIN_CSV_SAMPLE = 5      # csv_sample_size floor (CSV/Excel/Arrow/SQLite rows)
 BUDGET_MIN_NOTEBOOK_LINES = 10  # max_lines floor before outputs are dropped
 BUDGET_MIN_SQL_SAMPLE = 5      # sql_sample_size floor
 BUDGET_MIN_SQL_MAX_LINES = 20  # sql_max_lines floor
@@ -129,7 +134,7 @@ honest — a 5-row sample still shows structure; 0 rows would not.
 |----------|---------|---------|
 | `DEFAULT_BUDGET` | `None` | No token budget targeting unless `--budget` is passed; `Config.budget` default |
 | `BUDGET_TOKEN_MARGIN` | `16` | Fit-test safety margin: an attempt fits when `tokens <= budget - BUDGET_TOKEN_MARGIN`, covering the digit shift from the later `{{TOTAL_TOKENS}}`/`{{TOKEN_METHOD}}` substitution |
-| `BUDGET_MIN_CSV_SAMPLE` | `5` | Floor for `csv_sample_size` (CSV/Excel/Arrow row sampling) |
+| `BUDGET_MIN_CSV_SAMPLE` | `5` | Floor for `csv_sample_size` (CSV/Excel/Arrow/SQLite row sampling) |
 | `BUDGET_MIN_NOTEBOOK_LINES` | `10` | Floor for `max_lines` before the ladder drops notebook outputs to 0 entirely |
 | `BUDGET_MIN_SQL_SAMPLE` | `5` | Floor for `sql_sample_size` |
 | `BUDGET_MIN_SQL_MAX_LINES` | `20` | Floor for `sql_max_lines` |
@@ -235,9 +240,10 @@ syntax differs) across four parts:
    Index, and is present only when a token budget was requested (see
    [`budget.md`](budget.md)); the remaining items renumber accordingly
    (File Index is 3, Files is 4, End of codebase is 5).
-3. **Reading conventions** — dynamic backtick fencing, notebook cell and Excel
-   sheet labeling, schema blocks (full-dataset stats vs. sampled rows), the
-   `-- [...] --` tool-notice grammar, and env-value redaction.
+3. **Reading conventions** — dynamic backtick fencing, notebook cell / Excel
+   sheet / SQLite table labeling (the latter with `CREATE TABLE` DDL in a
+   fenced `sql` block / `<ddl>` element), schema blocks (full-dataset stats vs.
+   sampled rows), the `-- [...] --` tool-notice grammar, and env-value redaction.
 4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted
    content is not included and must not be invented; samples illustrate
    structure only; the File Index `Status` is authoritative, with the full
@@ -309,7 +315,8 @@ verbatim passthrough, so an unmapped future status can never crash generation.
 STATS_SUMMARY_LABELS: Dict[str, str] = {
     "file_count": "Total files",
     "csv_count": "CSV",
-    # ... notebooks, SQL, Excel, Arrow formats, truncated/binary/excluded/env
+    # ... notebooks, SQL, Excel, Arrow formats, SQLite ("SQLite databases" +
+    #     "Database tables"), truncated/binary/excluded/env
 }
 ```
 

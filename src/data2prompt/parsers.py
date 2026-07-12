@@ -1,5 +1,6 @@
 import json
 import random
+import sqlite3
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,9 @@ from data2prompt.constants import (
     DEFAULT_SQL_MAX_LINES,
     DEFAULT_MAX_LINES,
     DEFAULT_MAX_SHEETS,
+    DEFAULT_MAX_TABLES,
+    DEFAULT_DB_FULL_SCAN_MAX_ROWS,
+    DEFAULT_DB_COUNT_MAX_BYTES,
     DEFAULT_SEED,
     DEFAULT_LINE_LENGTH_THRESHOLD,
     DEFAULT_TRUNCATED_LINE_LENGTH,
@@ -56,7 +60,7 @@ class TableSchema:
 
 @dataclass
 class TableIR:
-    """Intermediate representation for tabular data (CSV, Excel)."""
+    """Intermediate representation for tabular data (CSV, Excel, SQLite)."""
     name: str
     df: pd.DataFrame
     header_note: Optional[str] = None
@@ -64,6 +68,11 @@ class TableIR:
     sheet_number: Optional[int] = None
     file_path: Optional[str] = None
     schema: Optional[TableSchema] = None
+    # Word used for the sub-section heading when ``sheet_number`` is set
+    # ("Sheet" for Excel, "Table" for SQLite). Also drives the XML element tag.
+    section_label: str = "Sheet"
+    # Raw CREATE-statement DDL (SQLite); rendered like the schema block.
+    ddl: Optional[str] = None
 
 # The three shapes a parser can emit: raw text, notebook cells, or tables.
 ParserContent = Union[str, List[NotebookCellIR], List[TableIR]]
@@ -226,9 +235,16 @@ def flatten_ir(
     if isinstance(content[0], TableIR):
         parts = []
         for table in content:
-            # Include sheet metadata in estimation if present
+            # Include sub-section metadata in estimation if present
             if table.sheet_number is not None:
-                parts.append(f"Sheet {table.sheet_number}: {table.name} - {table.file_path}")
+                parts.append(
+                    f"{table.section_label} {table.sheet_number}: "
+                    f"{table.name} - {table.file_path}"
+                )
+
+            # DDL (SQLite CREATE statements) is gated like the schema block.
+            if (stats_summary or schema_only) and table.ddl:
+                parts.append(table.ddl)
 
             if (stats_summary or schema_only) and table.schema is not None:
                 parts.append(render_schema_block(
@@ -1051,6 +1067,340 @@ class EnvParser:
         )
 
 
+# --- SQLite Database Parsing ---
+
+SQLITE_MAGIC = b"SQLite format 3\x00"
+
+
+def _is_sqlite_file(file_path: Path) -> bool:
+    """Return True if the file begins with the SQLite format-3 magic header.
+
+    A ``.db`` file is not guaranteed to be SQLite (it may be some other binary
+    store), so sniff the 16-byte header before opening it as a database.
+    """
+    try:
+        with open(file_path, "rb") as handle:
+            return handle.read(16) == SQLITE_MAGIC
+    except OSError:
+        return False
+
+
+def _quote_identifier(name: str) -> str:
+    """Quote a SQL identifier so table/view names with spaces, keywords, or
+    embedded quotes are used safely (identifiers cannot be parameterized)."""
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _sqlite_table_ddl(
+    connection: sqlite3.Connection,
+    name: str,
+    create_sql: Optional[str],
+) -> Optional[str]:
+    """Return a table's CREATE statement plus its index definitions, if any."""
+    statements: List[str] = []
+    if create_sql:
+        statements.append(create_sql.strip() + ";")
+    try:
+        cursor = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL "
+            "ORDER BY name",
+            (name,),
+        )
+        for (index_sql,) in cursor.fetchall():
+            statements.append(index_sql.strip() + ";")
+    except sqlite3.Error:
+        pass
+    return "\n".join(statements) if statements else None
+
+
+def _sqlite_declared_types(
+    connection: sqlite3.Connection, name: str
+) -> Dict[str, str]:
+    """Map column name -> declared SQLite type via PRAGMA table_info."""
+    types: Dict[str, str] = {}
+    try:
+        cursor = connection.execute(
+            f"PRAGMA table_info({_quote_identifier(name)})"
+        )
+        for row in cursor.fetchall():
+            # row: (cid, name, type, notnull, dflt_value, pk)
+            col_name = str(row[1])
+            col_type = str(row[2] or "").strip()
+            types[col_name] = col_type or "unknown"
+    except sqlite3.Error:
+        pass
+    return types
+
+
+def _sqlite_row_count(
+    connection: sqlite3.Connection, name: str, count_allowed: bool
+) -> Optional[int]:
+    """True row count via COUNT(*), or None when unknown/too large to count."""
+    if not count_allowed:
+        return None
+    try:
+        cursor = connection.execute(
+            f"SELECT COUNT(*) FROM {_quote_identifier(name)}"
+        )
+        return int(cursor.fetchone()[0])
+    except sqlite3.Error:
+        return None
+
+
+def _apply_declared_types(
+    schema: TableSchema, declared_types: Dict[str, str]
+) -> None:
+    """Override pandas-inferred dtypes with declared SQLite column types."""
+    for col in schema.columns:
+        declared = declared_types.get(col.name)
+        if declared:
+            col.dtype = declared
+
+
+def _process_sqlite_table(
+    connection: sqlite3.Connection,
+    name: str,
+    create_sql: Optional[str],
+    display_path: str,
+    index: int,
+    sample_size: int,
+    seed: int,
+    stats_summary: bool,
+    schema_only: bool,
+    count_allowed: bool,
+    full_scan_max_rows: int,
+) -> TableIR:
+    """Build one TableIR for a single SQLite table or view.
+
+    Small tables (row count at or below ``full_scan_max_rows``) are read in
+    full so ``missing``/``describe`` stats are exact and the sample is random —
+    exactly like the CSV path. Larger tables are sampled with ``LIMIT`` and
+    expose structure only through their DDL, so sample-derived stats never
+    masquerade as full-dataset truth.
+    """
+    quoted = _quote_identifier(name)
+    ddl = _sqlite_table_ddl(connection, name, create_sql)
+    declared_types = _sqlite_declared_types(connection, name)
+    row_count = _sqlite_row_count(connection, name, count_allowed)
+    count_str = f"{row_count:,}" if row_count is not None else "unknown (large)"
+    is_large = row_count is None or row_count > full_scan_max_rows
+
+    base = dict(
+        name=name,
+        sheet_number=index,
+        file_path=display_path,
+        section_label="Table",
+        ddl=ddl,
+    )
+
+    # --- Schema-only: no data rows are shown ---
+    if schema_only:
+        if is_large:
+            return TableIR(
+                df=pd.DataFrame(),
+                header_note=f"-- [Schema only: {count_str} rows, data omitted] --",
+                schema=None,
+                **base,
+            )
+        full_df = pd.read_sql_query(f"SELECT * FROM {quoted}", connection)
+        schema = build_table_schema(full_df, include_describe=stats_summary)
+        _apply_declared_types(schema, declared_types)
+        return TableIR(
+            df=pd.DataFrame(),
+            header_note="-- [Schema only: data rows omitted] --",
+            schema=schema,
+            **base,
+        )
+
+    # --- Large table: LIMIT head sample; structure comes from the DDL only ---
+    if is_large:
+        sample_df = pd.read_sql_query(
+            f"SELECT * FROM {quoted} LIMIT {int(sample_size)}", connection
+        )
+        shown = len(sample_df)
+        return TableIR(
+            df=sample_df,
+            header_note=f"-- [Sample: first {shown} of {count_str} rows] --",
+            footer_note=(
+                f"-- [Large table: showing first {shown} rows; "
+                "full-scan stats omitted] --"
+            ),
+            schema=None,
+            **base,
+        )
+
+    # --- Small table: full read, exact stats, random sample ---
+    full_df = pd.read_sql_query(f"SELECT * FROM {quoted}", connection)
+    schema = None
+    if stats_summary:
+        schema = build_table_schema(full_df, include_describe=stats_summary)
+        _apply_declared_types(schema, declared_types)
+
+    total_rows = len(full_df)
+    header_note = None
+    footer_note = None
+    df = full_df
+    if total_rows > sample_size:
+        # sort_index restores natural order so the sample reads coherently.
+        df = full_df.sample(n=sample_size, random_state=seed).sort_index()
+        header_note = f"-- [Sample: random {sample_size} of {total_rows:,} rows] --"
+        footer_note = (
+            f"-- [Table truncated: Showing random {sample_size} of "
+            f"{total_rows:,} rows to save context] --"
+        )
+    return TableIR(
+        df=df,
+        header_note=header_note,
+        footer_note=footer_note,
+        schema=schema,
+        **base,
+    )
+
+
+def process_sqlite(
+    file_path: Union[str, Path],
+    display_path: str = "",
+    sample_size: int = DEFAULT_CSV_SAMPLE_SIZE,
+    max_tables: int = DEFAULT_MAX_TABLES,
+    seed: int = DEFAULT_SEED,
+    stats_summary: bool = True,
+    schema_only: bool = False,
+    full_scan_max_rows: int = DEFAULT_DB_FULL_SCAN_MAX_ROWS,
+) -> List[TableIR]:
+    """Read a SQLite database and return one TableIR per table/view.
+
+    Mirrors the Excel path: each table/view becomes a numbered sub-section
+    carrying its CREATE-statement DDL, a schema/stats block, and a row sample.
+    Tables/views are ordered (tables first, then views, each alphabetical) and
+    capped at ``max_tables``.
+    """
+    fp = Path(file_path)
+
+    # A very large database file could make COUNT(*) itself expensive; gate it
+    # on file size so pathological DBs stay fast (rows then reported as unknown).
+    try:
+        count_allowed = fp.stat().st_size <= DEFAULT_DB_COUNT_MAX_BYTES
+    except OSError:
+        count_allowed = True
+
+    try:
+        connection = sqlite3.connect(f"file:{fp.as_posix()}?mode=ro", uri=True)
+    except sqlite3.Error as e:
+        return [TableIR(
+            name=fp.name,
+            df=pd.DataFrame(),
+            footer_note=f"-- [Error reading DB: {_sanitize_error(e, fp)}] --",
+        )]
+
+    tables_ir: List[TableIR] = []
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        master = connection.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+            "ORDER BY type = 'view', name"
+        ).fetchall()
+
+        if not master:
+            return [TableIR(
+                name=fp.name,
+                df=pd.DataFrame(),
+                footer_note="-- [Note: database contains no user tables] --",
+            )]
+
+        for i, (table_name, create_sql) in enumerate(master, 1):
+            if i > max_tables:
+                if tables_ir:
+                    tables_ir[-1].footer_note = (
+                        (tables_ir[-1].footer_note or "")
+                        + f"\n-- [Database truncated: Only first {max_tables} "
+                        "tables processed] --"
+                    )
+                break
+
+            try:
+                tables_ir.append(_process_sqlite_table(
+                    connection=connection,
+                    name=str(table_name),
+                    create_sql=create_sql,
+                    display_path=display_path,
+                    index=i,
+                    sample_size=sample_size,
+                    seed=seed,
+                    stats_summary=stats_summary,
+                    schema_only=schema_only,
+                    count_allowed=count_allowed,
+                    full_scan_max_rows=full_scan_max_rows,
+                ))
+            except Exception as e:
+                tables_ir.append(TableIR(
+                    name=str(table_name),
+                    df=pd.DataFrame(),
+                    footer_note=(
+                        f"-- [Error reading table data: "
+                        f"{_sanitize_error(e, fp)}] --"
+                    ),
+                    sheet_number=i,
+                    file_path=display_path,
+                    section_label="Table",
+                ))
+    finally:
+        connection.close()
+
+    return tables_ir
+
+
+class SQLiteParser:
+    """Parser for .db/.sqlite/.sqlite3 SQLite databases (stdlib sqlite3)."""
+
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+        # Project-relative, forward-slashed path — must match the File Index and
+        # the per-table sub-section path keys emitted by the output generators.
+        try:
+            display_path = file_path.relative_to(Path.cwd()).as_posix()
+        except ValueError:
+            display_path = file_path.as_posix()
+
+        # A .db file is not necessarily SQLite; sniff the magic header first.
+        if not _is_sqlite_file(file_path):
+            note = (
+                f"-- [Skipped: {file_path.name} is not a SQLite database "
+                "(header check failed)] --\n"
+            )
+            tokens, _ = count_tokens(note)
+            return ParserResult(
+                content=note,
+                tokens=tokens,
+                type="SQLite",
+                status="Skipped (Binary)",
+                stats_update={"binary_count": 1},
+            )
+
+        content = process_sqlite(
+            file_path,
+            display_path,
+            config.csv_sample_size,
+            config.max_tables,
+            config.seed,
+            config.stats_summary,
+            config.schema_only,
+        )
+        table_count = len(content)
+        tokens, _ = count_tokens(flatten_ir(
+            content,
+            schema_only=config.schema_only,
+            stats_summary=config.stats_summary,
+        ))
+        return ParserResult(
+            content=content,
+            tokens=tokens,
+            type=f"SQLite ({table_count} tables)",
+            status="Schema Only" if config.schema_only else "Sampled",
+            stats_update={"sqlite_count": 1, "db_tables_count": table_count},
+        )
+
+
 class ParserRegistry:
     """Handles file-to-parser mapping."""
     def __init__(self) -> None:
@@ -1071,6 +1421,7 @@ registry.register(['.ipynb'], NotebookParser())
 registry.register(['.sql'], SQLParser())
 registry.register(['.xlsx', '.xls'], ExcelParser())
 registry.register(['.parquet', '.feather', '.arrow'], ArrowParser())
+registry.register(['.db', '.sqlite', '.sqlite3'], SQLiteParser())
 
 # Env files are dispatched by name (not extension) in main.process_target_file,
 # because a bare '.env' has no suffix. This shared instance handles all variants.

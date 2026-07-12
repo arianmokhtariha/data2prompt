@@ -12,6 +12,7 @@ graph TD
     Registry -->|get_parser| SQLParser[SQLParser]
     Registry -->|get_parser| ExcelParser[ExcelParser]
     Registry -->|get_parser| ArrowParser[ArrowParser]
+    Registry -->|get_parser| SQLiteParser[SQLiteParser]
     Registry -->|get_parser| DefaultParser[DefaultParser]
     
     CSVParser -->|TableIR| Output[output.py]
@@ -19,6 +20,7 @@ graph TD
     SQLParser -->|str| Output
     ExcelParser -->|TableIR| Output
     ArrowParser -->|TableIR| Output
+    SQLiteParser -->|TableIR| Output
     DefaultParser -->|str| Output
     
     Output -->|Markdown<br/>XML| File[Output File]
@@ -52,6 +54,7 @@ class ParserRegistry:
 | [`SQLParser`](../src/data2prompt/parsers.py#L456) | `.sql` | Parses SQL files, sampling table data while preserving schema |
 | [`ExcelParser`](../src/data2prompt/parsers.py#L478) | `.xlsx`, `.xls` | Extracts data from sheets, detecting visual elements |
 | [`ArrowParser`](../src/data2prompt/parsers.py) | `.parquet`, `.feather`, `.arrow` | Samples rows; uses native pyarrow schema for exact dtypes; requires optional `pyarrow` |
+| [`SQLiteParser`](../src/data2prompt/parsers.py) | `.db`, `.sqlite`, `.sqlite3` | One `TableIR` per table/view: CREATE-statement DDL, schema/stats, and a row sample; stdlib `sqlite3`, no dependency |
 | [`EnvParser`](../src/data2prompt/parsers.py) | `.env` & variants (by name) | Lists variable names with redacted values; never emits a value |
 | [`DefaultParser`](../src/data2prompt/parsers.py#L507) | All others | Fallback for text files with binary detection and size truncation |
 
@@ -106,7 +109,7 @@ Represents a single cell in a Jupyter Notebook, capturing:
 ```python
 @dataclass
 class TableIR:
-    """Intermediate representation for tabular data (CSV, Excel)."""
+    """Intermediate representation for tabular data (CSV, Excel, SQLite)."""
     name: str
     df: pd.DataFrame
     header_note: Optional[str] = None
@@ -114,17 +117,26 @@ class TableIR:
     sheet_number: Optional[int] = None
     file_path: Optional[str] = None
     schema: Optional[TableSchema] = None
+    section_label: str = "Sheet"
+    ddl: Optional[str] = None
 ```
 
-Represents tabular data (CSV, Excel), capturing:
-- **Table name** (filename or sheet name)
+Represents tabular data (CSV, Excel, SQLite), capturing:
+- **Table name** (filename, sheet name, or DB table/view name)
 - **DataFrame** for structured data representation
 - **Header/footer notes** for sampling indicators (visual-element detection in
   Excel is reported through `header_note`; a former `visual_warning` field was
   removed — nothing ever read it)
-- **Sheet metadata** for multi-sheet Excel files
+- **Sheet metadata** for multi-sheet Excel files and multi-table databases:
+  `sheet_number` is the 1-based sub-section ordinal, and `section_label` is the
+  word used in the sub-section heading ("Sheet" for Excel, "Table" for SQLite)
+  and the XML element tag (`<sheet>` / `<table>`). Excel keeps the default, so
+  its output is unchanged.
 - **Schema** — optional [`TableSchema`](#columnschema--tableschema) metadata computed on
   the **full** DataFrame (before sampling)
+- **DDL** — optional raw `CREATE` statement(s) (SQLite only). Rendered in a
+  fenced `sql` block (Markdown) / `<ddl>` element (XML), gated by the same
+  flags as the schema block (`stats_summary or schema_only`).
 
 ### ColumnSchema / TableSchema
 
@@ -445,6 +457,77 @@ keyed by extension).
 (see [Error sanitisation](#error-sanitisation) for how paths and verbose pyarrow chains
 are cleaned before display).
 
+### SQLiteParser
+
+```python
+class SQLiteParser:
+    """Parser for .db/.sqlite/.sqlite3 SQLite databases (stdlib sqlite3)."""
+    def parse(self, file_path: Path, config: 'Config') -> ParserResult:
+```
+
+Reads a SQLite database with the **stdlib `sqlite3`** module (zero new
+dependencies) and returns **one `TableIR` per user table/view** — structurally
+the same multi-sub-section shape as `ExcelParser`, so output rendering, schema
+blocks, table-size capping, canonical paths, File Index status, and the
+`--budget` ladder all apply for free. Backed by
+[`process_sqlite()`](../src/data2prompt/parsers.py).
+
+1. **Magic-byte sniff.** `_is_sqlite_file()` checks the 16-byte
+   `SQLite format 3\0` header first; a `.db` that is some other binary format is
+   returned as `status="Skipped (Binary)"` with a `-- [Skipped: ... is not a
+   SQLite database ...] --` note rather than crashing on open.
+2. **Read-only, query-only connection.** Opens
+   `sqlite3.connect("file:{path}?mode=ro", uri=True)` and sets
+   `PRAGMA query_only = ON`; only `SELECT`/`PRAGMA` are ever executed, and the
+   connection is closed in a `finally`.
+3. **Discovery & ordering.** Reads `sqlite_master` for tables and views
+   (skipping internal `sqlite_%`), ordered tables-first then views, each
+   alphabetical, and capped at `config.max_tables`. When more exist, a
+   `-- [Database truncated: Only first N tables processed] --` note is appended
+   to the last table (the Excel `max_sheets` pattern).
+4. **Per-table rendering** (`_process_sqlite_table()`), with three read paths
+   that keep partial output honest:
+   - **DDL** — the table's `CREATE` statement plus its index `CREATE`s, from
+     `sqlite_master.sql`. Always captured; rendered when
+     `stats_summary or schema_only`.
+   - **Row count** — `SELECT COUNT(*)`, captured **before** sampling, cited in
+     the notice. Skipped (reported as `unknown (large)`) for database files
+     larger than `DEFAULT_DB_COUNT_MAX_BYTES` so a pathological DB never makes
+     `COUNT(*)` itself slow.
+   - **Small table** (count ≤ `DEFAULT_DB_FULL_SCAN_MAX_ROWS`) — read in full,
+     so `missing`/`describe` stats are exact and the sample is a seeded random
+     sample re-sorted to natural order (exactly like `CSVParser`). Declared
+     SQLite column types (from `PRAGMA table_info`) override the
+     pandas-inferred dtypes, the same override hook `ArrowParser` uses.
+   - **Large table** (count above the threshold, or unknown) — read with
+     `LIMIT k` only. `schema` is `None`; structure comes from the DDL, so
+     sample-derived stats never masquerade as full-dataset truth. Flagged with
+     `-- [Sample: first k of N rows] --` and
+     `-- [Large table: showing first k rows; full-scan stats omitted] --`.
+   - **`--schema-only`** drops data rows: small tables still full-read for an
+     exact schema block + DDL; large tables show DDL and a row-count note only.
+5. **Identifier safety.** Table/view/index names cannot be parameterized, so
+   `_quote_identifier()` double-quotes and escapes every identifier before it is
+   interpolated into a query — hostile names (spaces, keywords, embedded quotes)
+   are handled safely.
+6. Per-table failures are caught individually (Excel per-sheet pattern) and
+   produce an error-note `TableIR`, so one bad table never fails the whole file.
+
+`SQLiteParser.parse()` computes each table's `file_path` (`display_path`) as the
+cwd-relative forward-slashed path (`Path.as_posix()`), and returns
+`type=f"SQLite ({n} tables)"`, `status="Schema Only"` under `--schema-only` else
+`"Sampled"`, and `stats_update={"sqlite_count": 1, "db_tables_count": n}`.
+
+> **DuckDB** (`.duckdb`) is a planned follow-up behind an optional
+> `data2prompt[duckdb]` extra (an `ArrowParser`-style import guard); it is not
+> registered yet.
+
+**Error handling:**
+- Non-SQLite `.db` → `Skipped (Binary)` with an actionable note.
+- Connection open failure → single `TableIR` with `-- [Error reading DB: ...] --`.
+- Database with no user tables → `-- [Note: database contains no user tables] --`.
+- Per-table read error → error-note `TableIR` for that table only.
+
 ### DefaultParser
 
 ```python
@@ -572,9 +655,14 @@ Current notices:
 
 | Notice (representative form) | Emitted by |
 |---|---|
-| `-- [Sample: random 15 of 1,234,567 rows] --` | CSV / Excel / Arrow sampling (header) |
-| `-- [CSV truncated: Showing random 15 of 1,234,567 rows to save context] --` | `process_csv` (footer; `Sheet`/`PARQUET`/`FEATHER`/`ARROW` variants likewise) |
-| `-- [Schema only: data rows omitted] --` | CSV / Excel / Arrow under `--schema-only` |
+| `-- [Sample: random 15 of 1,234,567 rows] --` | CSV / Excel / Arrow / SQLite sampling (header); SQLite large tables use `first 15` instead of `random 15` |
+| `-- [CSV truncated: Showing random 15 of 1,234,567 rows to save context] --` | `process_csv` (footer; `Sheet`/`Table`/`PARQUET`/`FEATHER`/`ARROW` variants likewise) |
+| `-- [Schema only: data rows omitted] --` | CSV / Excel / Arrow / SQLite under `--schema-only` |
+| `-- [Schema only: 1,234 rows, data omitted] --` | `process_sqlite` large table under `--schema-only` (row count kept, no data) |
+| `-- [Large table: showing first 15 rows; full-scan stats omitted] --` | `process_sqlite` tables above `DEFAULT_DB_FULL_SCAN_MAX_ROWS` (footer) |
+| `-- [Database truncated: Only first 25 tables processed] --` | `process_sqlite` `max_tables` cap |
+| `-- [Skipped: file.db is not a SQLite database (header check failed)] --` | `SQLiteParser` magic-byte sniff |
+| `-- [Note: database contains no user tables] --` | `process_sqlite` empty database |
 | `-- [N data row(s) omitted: schema-only] --` | `process_sql` under `--schema-only` |
 | `-- [Table data truncated: Showing random 15 of 200 buffered rows to save context] --` | `process_sql` sampling |
 | `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --` | `process_sql` line cap |
@@ -600,6 +688,9 @@ The parsers module imports configuration constants from [`constants.py`](../src/
 | `DEFAULT_SQL_MAX_LINES` | 50 | Max non-data lines in SQL |
 | `DEFAULT_MAX_LINES` | 40 | Max output lines per notebook cell |
 | `DEFAULT_MAX_SHEETS` | 10 | Max Excel sheets to process |
+| `DEFAULT_MAX_TABLES` | 25 | Max tables/views to process per SQLite database |
+| `DEFAULT_DB_FULL_SCAN_MAX_ROWS` | 100000 | Tables above this row count are LIMIT-sampled (no full-table scan) |
+| `DEFAULT_DB_COUNT_MAX_BYTES` | 1073741824 | Skip `COUNT(*)` for DB files larger than ~1 GiB (rows reported `unknown`) |
 | `DEFAULT_SEED` | 42 | Random seed for reproducibility |
 | `DEFAULT_LINE_LENGTH_THRESHOLD` | 4000 | Characters before line truncation |
 | `DEFAULT_TRUNCATED_LINE_LENGTH` | 1000 | Characters to keep when truncating |
@@ -652,6 +743,8 @@ Each parser returns a `stats_update` dictionary that is aggregated by the main o
 | ArrowParser (`.feather`) | `{"feather_count": 1}` |
 | ArrowParser (`.arrow`) | `{"arrow_count": 1}` |
 | ArrowParser (pyarrow missing) | `{}` — no count incremented |
+| SQLiteParser | `{"sqlite_count": 1, "db_tables_count": table_count}` |
+| SQLiteParser (non-SQLite `.db`) | `{"binary_count": 1}` |
 | EnvParser | `{"env_count": 1}` |
 | DefaultParser | `{"binary_count": 1}` or `{"truncated_count": 1}` |
 

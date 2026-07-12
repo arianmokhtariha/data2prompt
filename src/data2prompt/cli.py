@@ -12,6 +12,7 @@ from data2prompt.constants import (
     DEFAULT_SQL_MAX_LINES,
     DEFAULT_MAX_LINES,
     DEFAULT_MAX_SHEETS,
+    DEFAULT_MAX_TABLES,
     DEFAULT_SEED,
     DEFAULT_LINE_LENGTH_THRESHOLD,
     DEFAULT_TRUNCATED_LINE_LENGTH,
@@ -83,6 +84,7 @@ class Config:
     sql_max_lines: int
     max_lines: int
     max_sheets: int
+    max_tables: int
     line_length_threshold: int
     truncated_line_length: int
     table_limit: int
@@ -146,6 +148,10 @@ def setup_cli() -> Config:
     # Excel settings
     parser.add_argument('--max-sheets', type=_non_negative_int, default=DEFAULT_MAX_SHEETS,
                         help=f'Max number of sheets to process in Excel files (default: {DEFAULT_MAX_SHEETS})')
+
+    # SQLite settings
+    parser.add_argument('--max-tables', type=_non_negative_int, default=DEFAULT_MAX_TABLES,
+                        help=f'Max number of tables/views to process per SQLite database (default: {DEFAULT_MAX_TABLES})')
 
     # Line Truncation settings
     parser.add_argument('--line-length-threshold', type=_positive_int, default=DEFAULT_LINE_LENGTH_THRESHOLD,
@@ -215,6 +221,7 @@ def setup_cli() -> Config:
         sql_max_lines=args.sql_max_lines,
         max_lines=args.max_lines,
         max_sheets=args.max_sheets,
+        max_tables=args.max_tables,
         line_length_threshold=args.line_length_threshold,
         truncated_line_length=args.truncated_line_length,
         table_limit=args.table_limit,
