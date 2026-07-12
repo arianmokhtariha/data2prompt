@@ -1,183 +1,233 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Data2Prompt Banner" width="800">
+  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/banner.svg" alt="data2prompt — animated terminal banner" width="960">
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/data2prompt/"><img src="https://img.shields.io/pypi/v/data2prompt.svg" alt="PyPI version"></a>
-  <a href="https://github.com/arianmokhtariha/data2prompt/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
-  <a href="https://github.com/arianmokhtariha/data2prompt"><img src="https://img.shields.io/badge/status-active-brightgreen.svg" alt="Status"></a>
+  <a href="https://pypi.org/project/data2prompt/"><img src="https://img.shields.io/pypi/v/data2prompt.svg?color=ff3b57&label=PyPI" alt="PyPI version"></a>
+  <a href="https://github.com/arianmokhtariha/data2prompt/actions/workflows/tests.yml"><img src="https://github.com/arianmokhtariha/data2prompt/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
+  <a href="https://github.com/arianmokhtariha/data2prompt/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
-
-
-> **High-performance codebase-to-prompt orchestration for Data Science workflows and data-heavy projects.**
-
-data2prompt is a CLI tool designed to bridge the gap between local data-heavy projects and Large Language Model (LLM) context windows. Unlike generic code-packagers, it provides an intelligent,optimized output for LLM attention mechanism, token-aware representation of a project's structure and content.
-
-## 📝 Important Note
-**Data2prompt** is purpose-built for **data-heavy projects** (`.csv`, `.sql`, `.xlsx`/`.xlsm`, `.ipynb`, `.db`, `.parquet`), not large pure-code repositories. It intelligently samples and truncates data files to prevent context window explosion while preserving semantic structure.
-
-
-## 🎯 Why Data2Prompt?
-Generic code-to-prompt tools choke on data files—they either skip them entirely or dump raw CSVs that waste 90% of your context window. Data2Prompt solves this with intelligent sampling, schema extraction, and LLM-optimized formatting specifically designed for data science workflows.
 
 <p align="center">
-  <img src="assets/data2prompt-fair-comparison.png" alt="Data2Prompt Comparison" width="1200">
+  <b>Token-aware codebase packing for data-heavy projects.</b><br>
+  One command turns a project full of CSVs, notebooks, Excel workbooks and SQLite
+  databases into a single, structured, LLM-ready document — sampled, profiled,
+  redacted, and fitted to your context window.
 </p>
 
+---
 
-## ✨ Core Features
+Generic repo-to-prompt tools choke on data projects: they either skip your data
+files or dump them raw, burning 90% of the context window on rows the model never
+needed. **data2prompt** understands the *shape* of data work — it samples tables,
+extracts schemas and per-column statistics, cleans notebooks, queries databases,
+and discloses every intervention to the model in a uniform notice grammar, so the
+LLM knows exactly what it is looking at and what was left out.
 
-*   **Token Budget Targeting**: `--budget 100k` states the *outcome* you want instead of the knobs to get there — data2prompt automatically tightens sampling, drops notebook outputs, switches to schema-only, and (as a last resort) omits the heaviest remaining files until the generated document fits, re-verifying the real rendered token count at every step. A [Budget Report](docs/budget.md) in the output states exactly what was adjusted.
-*   **Smart Jupyter Parsing**: Intelligently extracts code, markdown, and text outputs from [`.ipynb`](docs/parsers.md) files while stripping heavy Base64 images and raw HTML to preserve context.
-*   **Multi-Format Sampling**: Advanced sampling strategies for [CSV, SQL, and Excel](docs/parsers.md) files to preserve schema and data context which reduces the data size significantly while extracting the needed context for llm.
-*   **SQLite Database Extraction**: Reads `.db`/`.sqlite`/`.sqlite3` databases with the standard library (zero extra dependencies) — one section per table/view with its `CREATE TABLE` DDL (keys, foreign keys, indexes), a schema/stats block, and a sampled preview. Huge tables degrade to a head sample automatically, and the whole thing respects `--budget` and `--schema-only`. Cap tables per database with `--max-tables`.
-*   **Stats-Aware Metadata**: Each table is annotated with a metadata block — column dtypes, missing counts/percentages, and a `describe()` summary — all computed on the *full* dataset (not the sample), so the LLM sees true data quality. Toggle with `--no-stats-summary`.
-*   **Secret-Safe `.env` Handling**: `.env` files are surfaced as variable *names* with redacted values (`KEY=<redacted>`) so the LLM understands the project's configuration without ever leaking secrets. Disable with `--no-env-keys`.
-*   **Direct Clipboard Output**: `--clipboard` copies the generated prompt straight to your system clipboard (no file), using native OS tools with a graceful file fallback.
-*   **Aggressive truncations**: To preserve context, long lines are truncated to neutralize line injections and avoid exploding the context windows, if a tabular data was still to large after sampling it will get truncated to a certain amount, also if a raw text file of unhandled type was too large it will get truncated to a certain amount. 
-*   **Defensive Processing**: Automatic binary detection (Null-byte checks), Checks if a file is binary by looking for a Null byte in the first 1024 bytes.
-*   **Optimized LLM attention**: The default output format is markdown with well structured schema and another option is xml output with xml style tags to enhance LLM anchoring for complex analysis and large context windows
-*   **Token-Aware Output**: Real-time token estimation using `tiktoken` (`o200k_base`) to ensure prompts fit target LLMs (Claude 3.5, GPT-4o, Gemini 1.5) and advanced offline token counting via `regex`.
-*   **Professional TUI**: A high-fidelity terminal interface built with `Rich` in a monochrome-and-crimson "BLACKSITE" theme — an animated banner reveal, a live progress bar with file counts and elapsed time, and a compact, stamped final report that reads at a glance: a token gauge against a 200K context window, a per-type composition bar chart, attention badges, and the heaviest/flagged files each with a token-share bar. Identical on every platform; animations auto-disable on non-interactive output.
-*   **Dynamic Markdown Wrapping**: Uses intelligent backtick depth to ensure robust nesting of code blocks in the final output.
-*   **Gitignore aware**: Respects the .gitignore rules by default and you can turn this feature off with cli argument(--no-gitignore) if needed.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/report.svg" alt="The data2prompt final report: token gauge, budget adjustments, per-type composition chart, attention badges, and the heaviest files" width="960">
+</p>
 
-## 🏗️ Architecture
+## Why
 
-The codebase is organized into small, single-responsibility modules — parsing, output
-generation, scanning, and UI are kept separate so each can be tested and extended on
-its own:
+The same data-heavy project, packed by three tools with default settings:
 
-*   **Registry & Strategy Patterns**: A `ParserRegistry` handles extensible file
-    parsing and an `OutputGenerator` strategy supports multiple output formats
-    (Markdown, XML).
-*   **Centralized Configuration**: Core logic, magic numbers, and default ignore
-    lists live in one place: [`src/data2prompt/constants.py`](src/data2prompt/constants.py).
-*   **Strict Type Hinting**: Fully typed function signatures (PEP 484) across all
-    modules.
-*   **UI Encapsulation**: Terminal feedback is handled by a dedicated `UIHandler`,
-    keeping presentation separate from logic.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/comparison.svg" alt="Output size comparison — repomix 22,085 KB, code2prompt 9,304 KB, data2prompt 241 KB; data2prompt is 80–85% more token-efficient" width="960">
+</p>
 
-For a deep dive into the module layout and data flow, see the
-[Architecture Documentation](docs/architecture.md).
+That gap is 80–85% fewer tokens spent on the same project — and the reduction
+is *representation*, not truncation. Every table still contributes its full
+schema, per-column statistics computed on the complete dataset, and a seeded
+random sample of real rows. The model loses row noise, not information.
 
-## 🚀 Quick Start
+## Quick Start
 
-### Installation
-
-Ensure you have Python 3.10+ installed.
-
-**Recommended — using pipx (installs as a global CLI tool):**
-
-Don't have pipx? Install it first:
 ```bash
-pip install pipx
-pipx ensurepath
-```
-
-Then install data2prompt:
-```bash
+# Recommended: install as a global CLI tool
 pipx install data2prompt
-```
 
-**Alternative — using pip (requires an active virtual environment):**
-```bash
+# Or into an active virtual environment
 pip install data2prompt
 ```
 
-**Update to the latest version:**
-```bash
-# with pipx
-pipx upgrade data2prompt
+Run it from your project root:
 
-# with pip
-pip install --upgrade data2prompt
+```bash
+data2prompt                    # → PROMPT.md (markdown, default settings)
+data2prompt -b 100k -c        # fit the output into 100k tokens, copy to clipboard
+data2prompt -f xml --schema-only   # XML format, schemas only, zero data rows
 ```
 
-### Install from the source
+<details>
+<summary><b>Parquet / Feather / Arrow support</b> (optional extra)</summary>
+
+Columnar formats need [pyarrow](https://arrow.apache.org/docs/python/), which is
+not bundled by default:
 
 ```bash
-# Clone the repository
+pipx install "data2prompt[parquet]"     # fresh install
+pipx inject data2prompt pyarrow          # already installed via pipx
+pip install "data2prompt[parquet]"      # pip equivalent
+```
+
+Without pyarrow these files still appear in the output with an inline note
+explaining why they were skipped.
+</details>
+
+<details>
+<summary><b>Install from source</b></summary>
+
+```bash
 git clone https://github.com/arianmokhtariha/data2prompt.git
 cd data2prompt
-
-# Install normally
-pip install .
-
-# Or Install in editable mode
 pip install -e .
 ```
+</details>
 
-### Optional: Parquet, Feather, and Arrow support
+## What Happens to Your Files
 
-Support for `.parquet`, `.feather`, and `.arrow` files requires [pyarrow](https://arrow.apache.org/docs/python/), which is not bundled by default. Choose the command that matches how you installed data2prompt:
+Every file type gets a strategy, not a dump:
 
-| Scenario | Command |
-| :--- | :--- |
-| pip — fresh install | `pip install data2prompt[parquet]` |
-| pip — already installed | `pip install pyarrow` |
-| pipx — fresh install | `pipx install data2prompt[parquet]` |
-| pipx — already installed | `pipx inject data2prompt pyarrow` |
+| File type | Strategy | What the LLM sees |
+| :--- | :--- | :--- |
+| `.csv` | Seeded random sampling | Column schema, full-dataset stats, N sampled rows |
+| `.parquet` `.feather` `.arrow` | Same, via pyarrow | Schema + stats + sample — identical treatment to CSV |
+| `.xlsx` `.xls` `.xlsm` | Per-sheet extraction | Each sheet as its own schema + stats + sample section |
+| `.db` `.sqlite` `.sqlite3` | Read-only stdlib `sqlite3` | Per-table `CREATE TABLE` DDL (keys, FKs, indexes) + stats + sampled rows |
+| `.sql` | Statement-aware parsing | Schema statements kept intact, `INSERT` floods capped |
+| `.ipynb` | Cell-level cleaning | Code, markdown and text outputs — base64 images and HTML dumps stripped |
+| `.env` | Name-only redaction | `KEY=<redacted>` — variable names, never values |
+| Binary files | Null-byte detection | Skipped, listed in the file index |
+| Everything else | Size-aware reading | Full text, or first 10 KB past `--max-file-size` |
 
-If pyarrow is not installed, these files still appear in the output with a short inline note explaining why they were skipped.
+Two details make the samples trustworthy:
 
-### Usage
+- **Statistics are computed on the full dataset, not the sample.** Dtypes,
+  missing counts/percentages, and a `describe()` summary are extracted before
+  sampling, so the model sees true data quality even from 15 rows.
+- **Every intervention is disclosed.** Sampling, truncation, redaction, and
+  skips all surface as uniform `-- [...] --` notices inside the document — the
+  model is never left guessing why content looks incomplete.
 
-Run `data2prompt` in your project root to generate a structured prompt:
+## Fit Any Context Window: `--budget`
+
+State the outcome you want instead of tuning knobs:
 
 ```bash
-# Basic usage (defaults to markdown output)
-data2prompt
-
-# Custom output with xml format and specific sampling
-data2prompt --output my_analysis --format xml --csv-sample-size 50 --ignore-folders venv .pytest_cache
+data2prompt --budget 100k
 ```
 
-### CLI Arguments
+`--budget` runs a **de-escalation ladder** — halve CSV/SQL sample sizes, trim
+notebook outputs, drop the stats blocks, switch to schema-only, and, as a last
+resort, omit the heaviest remaining files — re-rendering and re-counting the
+*actual* document after every step until it fits. No estimates: the number that
+is checked is the number you ship.
 
-| Argument | Description | Default |
+- Accepts `50000`, `100k`, `1.5m` — commas and underscores welcome.
+- A **budget report** is embedded in the document and shown in the terminal
+  report: every parameter change and every omitted file, stated explicitly.
+- If the budget is infeasible even at the ladder's floor, **nothing is written**
+  and the process exits non-zero with the minimum achievable count — you will
+  never silently receive an over-budget file.
+
+## Features
+
+- **Offline, exact token counting** — a bundled `o200k_base` BPE (tiktoken)
+  counts the fully rendered document, scaffolding included. No network call,
+  ever; a pure-regex fallback keeps counts flowing where the encoding cannot load.
+- **Two output formats, one contract** — `markdown` (default) and `xml` for
+  stronger structural anchoring in long contexts. Both formats are logically
+  identical and governed by a written [output contract](docs/output-contract.md).
+- **Context-aware system preamble** — the generated document opens with reading
+  instructions for the LLM that adapt to the run: notebook conventions are only
+  explained if notebooks were actually scanned, and likewise for Excel, SQLite,
+  tabular schemas, and env files.
+- **Secret-safe by design** — `.env` values never reach the output; long lines
+  are truncated to neutralize prompt-injection padding; binary content is
+  detected and excluded.
+- **Scan hygiene** — respects `.gitignore` and `.data2promptignore`, ships
+  hardened core ignore lists (`.git`, `node_modules`, caches), and skips its own
+  previously generated outputs automatically.
+- **Straight to clipboard** — `--clipboard` pipes the result to your OS
+  clipboard via native tools (`clip`/`pbcopy`/`xclip`/`wl-copy`) with a file
+  fallback.
+- **A terminal UI that earns its place** — an animated glitch-sweep banner, a
+  transient progress bar, and a final report with a token gauge against a 200K
+  context window, a per-type composition chart, attention badges, and the
+  heaviest files each with a token-share bar. Animations disable themselves on
+  non-interactive output, and every quantity in the report doubles as a
+  proportional bar.
+
+## CLI Reference
+
+The flags you will actually reach for:
+
+| Flag | Default | Purpose |
 | :--- | :--- | :--- |
-| `-o`, `--output` | Base name of the generated file | `PROMPT` |
-| `-f`, `--format` | Output format (`xml` or `markdown`) | `markdown` |
-| `-b`, `--budget` | Target token budget (e.g. `50000`, `100k`, `1.5m`); auto-tightens sampling until the output fits | off |
-| `-s`, `--csv-sample-size` | Number of random rows to sample from CSVs | `15` |
-| `--max-lines` | Max lines of text output per notebook cell | `40` |
-| `--max-tables` | Max tables/views to process per SQLite database | `25` |
-| `--max-file-size` | Max file size in KB to read entirely | `70` |
-| `-c`, `--clipboard` | Copy the output to the system clipboard instead of writing a file | `off` |
-| `--schema-only` | Emit only the schema (columns + dtypes) of data files, no rows | `off` |
-| `--no-stats-summary` | Disable the per-table stats block (dtypes, missing %, `describe()`) | `on` |
-| `--no-env-keys` | Skip `.env` files entirely instead of listing redacted variable names | `on` |
+| `-o`, `--output` | `PROMPT` | Base name of the generated file |
+| `-f`, `--format` | `markdown` | Output format: `markdown` or `xml` |
+| `-b`, `--budget` | off | Target token budget (`50000`, `100k`, `1.5m`) |
+| `-c`, `--clipboard` | off | Copy to clipboard instead of writing a file |
+| `-s`, `--csv-sample-size` | `15` | Rows sampled per tabular file |
+| `--seed` | `42` | Sampling seed — identical output across runs |
+| `--schema-only` | off | Schemas and dtypes only, zero data rows |
+| `--max-lines` | `40` | Output lines kept per notebook cell |
+| `--max-sheets` | `10` | Sheets processed per Excel workbook |
+| `--max-tables` | `25` | Tables processed per SQLite database |
+| `--max-file-size` | `70` | KB threshold before plain files are head-truncated |
+| `--no-stats-summary` | stats on | Drop the per-table stats block |
+| `--no-env-keys` | redact | Skip `.env` files entirely instead of redacting |
+| `--no-gitignore` | respect | Ignore `.gitignore` rules while scanning |
+| `--ignore-folders` / `--ignore-files` / `--skip-exts` | — | Additional exclusions, merged with the core ignore sets |
 
-See the [CLI Reference](docs/cli.md) for a full list of arguments.
+Full reference with validation rules and edge cases: [docs/cli.md](docs/cli.md)
 
-## 📚 Documentation
+## Architecture
 
-Explore the detailed documentation for more information:
+Small, single-responsibility modules under an orchestration layer — parsing,
+output generation, scanning, token budgeting, and UI never bleed into each other:
 
-*   [**Architecture**](docs/architecture.md): MFO pattern and module flow.
-*   [**CLI Reference**](docs/cli.md): Detailed argument descriptions and usage.
-*   [**Parsers**](docs/parsers.md): How different file types are handled.
-*   [**Output Formats**](docs/output.md): Details on Markdown and XML generation.
-*   [**User Interface**](docs/ui.md): Features of the high-tech TUI.
-*   [**Installation**](docs/installation.md): Comprehensive setup guide.
+```mermaid
+graph LR
+    CLI[cli.py] --> Main[main.py]
+    Main -->|Registry| Parsers[parsers.py]
+    Main -->|Strategy| Output[output.py]
+    Main -->|Scan + tokens| Utils[utils.py]
+    Main -->|Feedback| UI[ui.py]
+    Main -->|--budget| Budget[budget.py]
+    Budget --> Output
+```
 
-## 🛠️ Developer Setup
+- A **parser registry** maps extensions to specialized parsers; new file types
+  plug in without touching the pipeline.
+- An **output strategy** keeps markdown and XML generation interchangeable and
+  contract-bound.
+- Fully typed (PEP 484), stdlib-first, with per-file error containment — one
+  corrupt file degrades to an inline error note, never a crashed run.
 
-To contribute or run tests:
+Every module has a matching deep-dive document:
+
+| | |
+| :--- | :--- |
+| [Architecture](docs/architecture.md) | Module layout, data flow, design patterns |
+| [Parsers](docs/parsers.md) | Per-format strategies and the tool-notice grammar |
+| [Budget](docs/budget.md) | The `--budget` de-escalation ladder, end to end |
+| [Output](docs/output.md) · [Output Contract](docs/output-contract.md) | Document structure and the markdown/XML parity rules |
+| [CLI](docs/cli.md) · [UI](docs/ui.md) · [Installation](docs/installation.md) | Flags, the terminal interface, setup |
+
+## Development
 
 ```bash
 pip install -e .[dev]
 pytest
 ```
 
-## 🌟 Show Your Support
-
-If Data2Prompt saves you token costs or speeds up your workflow, consider:
-- ⭐ Starring the repo
-- 🐛 Reporting issues or suggesting features
-- 🔀 Contributing parsers for new file types
+Contributions are welcome — new file-type parsers are the highest-leverage place
+to start (the registry makes them self-contained). Open an issue first for
+anything that changes the generated document, and read
+[docs/output-contract.md](docs/output-contract.md) before touching output code.
 
 ## Star History
 
@@ -190,4 +240,5 @@ If Data2Prompt saves you token costs or speeds up your workflow, consider:
 </a>
 
 ---
-*Built for the modern AI-assisted development workflow.*
+
+<p align="center"><i>If data2prompt saves you tokens, a ⭐ helps other data people find it.</i></p>
