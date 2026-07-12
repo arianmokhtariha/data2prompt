@@ -4,9 +4,16 @@
 
 <p align="center">
   <a href="https://pypi.org/project/data2prompt/"><img src="https://img.shields.io/pypi/v/data2prompt.svg?color=ff3b57&label=PyPI" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/data2prompt/"><img src="https://img.shields.io/pypi/dm/data2prompt.svg?color=informational&label=downloads" alt="PyPI downloads"></a>
   <a href="https://github.com/arianmokhtariha/data2prompt/actions/workflows/tests.yml"><img src="https://github.com/arianmokhtariha/data2prompt/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
   <a href="https://github.com/arianmokhtariha/data2prompt/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/arianmokhtariha/data2prompt/stargazers"><img src="https://img.shields.io/github/stars/arianmokhtariha/data2prompt?color=eda100&label=stars" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <sub><b>Native parsers, not just kept-as-text:</b></sub><br>
+  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/filetypes.svg" alt="Supported file types: .csv; .xlsx .xls .xlsm; .db .sqlite .sqlite3; .parquet .feather .arrow; .sql; .ipynb; .env" width="820">
 </p>
 
 <p align="center">
@@ -29,7 +36,7 @@ LLM knows exactly what it is looking at and what was left out.
   <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/report.svg" alt="The data2prompt final report: token gauge, budget adjustments, per-type composition chart, attention badges, and the heaviest files" width="960">
 </p>
 
-## Why
+## 📉 Why
 
 The same data-heavy project, packed by three tools with default settings:
 
@@ -42,7 +49,7 @@ is *representation*, not truncation. Every table still contributes its full
 schema, per-column statistics computed on the complete dataset, and a seeded
 random sample of real rows. The model loses row noise, not information.
 
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
 # Recommended: install as a global CLI tool
@@ -86,7 +93,7 @@ pip install -e .
 ```
 </details>
 
-## What Happens to Your Files
+## 🔍 What Happens to Your Files
 
 Every file type gets a strategy, not a dump:
 
@@ -111,7 +118,7 @@ Two details make the samples trustworthy:
   skips all surface as uniform `-- [...] --` notices inside the document — the
   model is never left guessing why content looks incomplete.
 
-## Fit Any Context Window: `--budget`
+## 🎛️ Fit Any Context Window: `--budget`
 
 State the outcome you want instead of tuning knobs:
 
@@ -132,7 +139,15 @@ is checked is the number you ship.
   and the process exits non-zero with the minimum achievable count — you will
   never silently receive an over-budget file.
 
-## Features
+## ✨ Features
+
+What sets data2prompt apart from a generic repo-to-text dumper isn't any one
+flag — it's that the whole pipeline is built around two rules: **never
+silently lie about what the model is seeing**, and **never guess when the
+real number can be measured**. Those two rules are why `--budget` re-renders
+and re-counts instead of estimating, why every reduction gets a `-- [...] --`
+notice instead of vanishing quietly, and why the same command on the same
+project produces byte-identical output a year later.
 
 - **Offline, exact token counting** — a bundled `o200k_base` BPE (tiktoken)
   counts the fully rendered document, scaffolding included. No network call,
@@ -144,6 +159,13 @@ is checked is the number you ship.
   instructions for the LLM that adapt to the run: notebook conventions are only
   explained if notebooks were actually scanned, and likewise for Excel, SQLite,
   tabular schemas, and env files.
+- **Deterministic by default** — `--seed 42` means the exact same rows get
+  sampled on every run. Regenerate a prompt for a diff, a reproducible eval,
+  or a bug report and get the identical document back, not a new random draw.
+- **Fails loud, never truncates silently** — if `--budget` is infeasible even
+  at the ladder's floor, **nothing is written**. You get a non-zero exit and
+  the minimum achievable token count — never a file that quietly blew past
+  what you asked for.
 - **Secret-safe by design** — `.env` values never reach the output; long lines
   are truncated to neutralize prompt-injection padding; binary content is
   detected and excluded.
@@ -160,7 +182,7 @@ is checked is the number you ship.
   non-interactive output, and every quantity in the report doubles as a
   proportional bar.
 
-## CLI Reference
+## ⌨️ CLI Reference
 
 The flags you will actually reach for:
 
@@ -184,7 +206,7 @@ The flags you will actually reach for:
 
 Full reference with validation rules and edge cases: [docs/cli.md](docs/cli.md)
 
-## Architecture
+## 🏗️ Architecture
 
 Small, single-responsibility modules under an orchestration layer — parsing,
 output generation, scanning, token budgeting, and UI never bleed into each other:
@@ -217,7 +239,7 @@ Every module has a matching deep-dive document:
 | [Output](docs/output.md) · [Output Contract](docs/output-contract.md) | Document structure and the markdown/XML parity rules |
 | [CLI](docs/cli.md) · [UI](docs/ui.md) · [Installation](docs/installation.md) | Flags, the terminal interface, setup |
 
-## Development
+## 🛠️ Development
 
 ```bash
 pip install -e .[dev]
@@ -229,16 +251,6 @@ to start (the registry makes them self-contained). Open an issue first for
 anything that changes the generated document, and read
 [docs/output-contract.md](docs/output-contract.md) before touching output code.
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=arianmokhtariha%2Fdata2prompt&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=arianmokhtariha/data2prompt&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=arianmokhtariha/data2prompt&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=arianmokhtariha/data2prompt&type=date&legend=top-left" />
- </picture>
-</a>
-
 ---
 
-<p align="center"><i>If data2prompt saves you tokens, a ⭐ helps other data people find it.</i></p>
+<p align="center"><i>If data2prompt saved you time and tokens, a ⭐ helps other data people find it.</i></p>

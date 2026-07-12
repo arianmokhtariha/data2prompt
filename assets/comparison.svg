@@ -1,1 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" width="960" height="400" role="img" aria-label="Output size comparison: repomix 22,085 KB, code2prompt 9,304 KB, data2prompt 241 KB. data2prompt is 80 to 85 percent more token-efficient."><title>Packed output size: same project, three tools</title><style>text{font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;}</style><rect x="0.5" y="0.5" width="959" height="399" rx="10" fill="#ffffff" stroke="#e2e5ea"/><text x="40" y="52" font-size="19" font-weight="600" fill="#1f2430">Packed output size &#8212; same project, three tools</text><text x="40" y="78" font-size="13.5" fill="#667085">a data-heavy analytics project, packed with each tool&#8217;s default settings &#183; lower is better</text><line x1="190.0" y1="114.0" x2="190.0" y2="286.0" stroke="#d5d9df" stroke-width="1"/><text x="190.0" y="306.0" font-size="11.5" fill="#667085" text-anchor="middle">0</text><line x1="362.5" y1="114.0" x2="362.5" y2="286.0" stroke="#eef0f3" stroke-width="1"/><text x="362.5" y="306.0" font-size="11.5" fill="#667085" text-anchor="middle">6,000</text><line x1="535.0" y1="114.0" x2="535.0" y2="286.0" stroke="#eef0f3" stroke-width="1"/><text x="535.0" y="306.0" font-size="11.5" fill="#667085" text-anchor="middle">12,000</text><line x1="707.5" y1="114.0" x2="707.5" y2="286.0" stroke="#eef0f3" stroke-width="1"/><text x="707.5" y="306.0" font-size="11.5" fill="#667085" text-anchor="middle">18,000</text><line x1="880.0" y1="114.0" x2="880.0" y2="286.0" stroke="#eef0f3" stroke-width="1"/><text x="880.0" y="306.0" font-size="11.5" fill="#667085" text-anchor="middle">24,000</text><text x="535.0" y="330.0" font-size="12" fill="#667085" text-anchor="middle">output size (KB)</text><text x="176.0" y="147.5" font-size="14" font-weight="400" fill="#1f2430" text-anchor="end">repomix</text><path d="M 190.0 128.0 h 630.9 q 4.0 0 4.0 4.0 v 22.0 q 0 4.0 -4.0 4.0 h -630.9 Z" fill="#7f8894"/><text x="834.9" y="147.5" font-size="13.5" font-weight="600" fill="#1f2430">22,085 KB</text><text x="176.0" y="205.5" font-size="14" font-weight="400" fill="#1f2430" text-anchor="end">code2prompt</text><path d="M 190.0 186.0 h 263.5 q 4.0 0 4.0 4.0 v 22.0 q 0 4.0 -4.0 4.0 h -263.5 Z" fill="#7f8894"/><text x="467.5" y="205.5" font-size="13.5" font-weight="600" fill="#1f2430">9,304 KB</text><text x="176.0" y="263.5" font-size="14" font-weight="600" fill="#1f2430" text-anchor="end">data2prompt</text><path d="M 190.0 244.0 h 3.5 q 3.5 0 3.5 3.5 v 23.1 q 0 3.5 -3.5 3.5 h -3.5 Z" fill="#2a78d6"/><text x="206.9" y="263.5" font-size="13.5" font-weight="600" fill="#1f2430">241 KB</text><text x="282.9" y="263.5" font-size="12.5" fill="#667085">&#8212;&#160; 80&#8211;85% more token-efficient, with schema, column stats and row samples intact</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" role="img" aria-label="Output size comparison: repomix 22,085 KB, code2prompt 9,304 KB, data2prompt 241 KB. data2prompt is 80 to 85 percent more token-efficient."><title>Packed output size: same project, three tools</title><style>
+  .viz {
+    --surface: #fcfcfb; --ink: #0b0b0b; --muted: #52514e;
+    --grid: #e1e0d9; --axis: #898781; --border: rgba(11,11,11,0.10);
+    --neutral: #7f8894; --accent: #2a78d6;
+    --accent-soft: #2a78d633; --badge-bg: #2a78d61a;
+    --row-band: #00000005;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz {
+      --surface: #1a1a19; --ink: #ffffff; --muted: #c3c2b7;
+      --grid: #2c2c2a; --axis: #898781; --border: rgba(255,255,255,0.10);
+      --neutral: #7c8591; --accent: #3987e5;
+      --accent-soft: #3987e53d; --badge-bg: #3987e526;
+      --row-band: #ffffff06;
+    }
+  }
+  text { font-family: -apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif; fill: var(--ink); }
+  .muted { fill: var(--muted); }
+  .card { fill: var(--surface); stroke: var(--border); }
+  .grid { stroke: var(--grid); }
+  .axis { stroke: var(--axis); }
+  .neutral-bar { fill: var(--neutral); }
+  .badge-bg { fill: var(--badge-bg); }
+  .badge-text { fill: var(--accent); font-weight: 600; }
+</style>
+<defs>
+  <linearGradient id="accentFill" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#2a78d6" class="grad0"/>
+    <stop offset="1" stop-color="#2a78d6" class="grad1"/>
+  </linearGradient>
+  <filter id="barShadow" x="-20%" y="-60%" width="140%" height="240%">
+    <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#2a78d6" flood-opacity="0.35"/>
+  </filter>
+</defs>
+<style>
+  #accentFill .grad0 { stop-color: #2a78d6; }
+  #accentFill .grad1 { stop-color: #2a78d6cc; }
+  #barShadow feDropShadow { flood-color: #2a78d6; }
+  @media (prefers-color-scheme: dark) {
+    #accentFill .grad0 { stop-color: #3987e5; }
+    #accentFill .grad1 { stop-color: #3987e5cc; }
+    #barShadow feDropShadow { flood-color: #3987e5; flood-opacity: 0.55; }
+  }
+</style>
+<g class="viz">
+<rect x="0.5" y="0.5" width="959" height="419" rx="14" class="card"/>
+<text x="40" y="46" font-size="11.5" font-weight="700" letter-spacing="0.14em" class="muted">OUTPUT SIZE</text><text x="40" y="76" font-size="21" font-weight="600">Same project, three tools, one command each</text><text x="40" y="102" font-size="13.5" class="muted">a data-heavy analytics project &#183; each tool&#8217;s default settings &#183; lower is better</text><line x1="190.0" y1="128.0" x2="190.0" y2="320.0" class="axis" stroke-width="1"/><text x="190.0" y="342.0" font-size="11.5" class="muted" text-anchor="middle">0</text><line x1="362.5" y1="128.0" x2="362.5" y2="320.0" class="grid" stroke-width="1"/><text x="362.5" y="342.0" font-size="11.5" class="muted" text-anchor="middle">6,000</text><line x1="535.0" y1="128.0" x2="535.0" y2="320.0" class="grid" stroke-width="1"/><text x="535.0" y="342.0" font-size="11.5" class="muted" text-anchor="middle">12,000</text><line x1="707.5" y1="128.0" x2="707.5" y2="320.0" class="grid" stroke-width="1"/><text x="707.5" y="342.0" font-size="11.5" class="muted" text-anchor="middle">18,000</text><line x1="880.0" y1="128.0" x2="880.0" y2="320.0" class="grid" stroke-width="1"/><text x="880.0" y="342.0" font-size="11.5" class="muted" text-anchor="middle">24,000</text><text x="535.0" y="366.0" font-size="12" class="muted" text-anchor="middle">output size (KB)</text><rect x="176.0" y="134.0" width="766.0" height="62.0" fill="var(--row-band)"/><rect x="176.0" y="196.0" width="766.0" height="62.0" fill="var(--row-band)"/><rect x="176.0" y="258.0" width="766.0" height="62.0" fill="var(--row-band)"/><rect x="26" y="160.0" width="10" height="10" rx="3" fill="var(--neutral)"/><text x="176.0" y="169.5" font-size="14.5" font-weight="400" text-anchor="end">repomix</text><path d="M 190.0 148.0 h 629.9 q 5.0 0 5.0 5.0 v 24.0 q 0 5.0 -5.0 5.0 h -629.9 Z"  class="neutral-bar"/><text x="834.9" y="169.5" font-size="14" font-weight="700">22,085 <tspan font-size="11.5" font-weight="500" class="muted">KB</tspan></text><rect x="26" y="222.0" width="10" height="10" rx="3" fill="var(--neutral)"/><text x="176.0" y="231.5" font-size="14.5" font-weight="400" text-anchor="end">code2prompt</text><path d="M 190.0 210.0 h 262.5 q 5.0 0 5.0 5.0 v 24.0 q 0 5.0 -5.0 5.0 h -262.5 Z"  class="neutral-bar"/><text x="467.5" y="231.5" font-size="14" font-weight="700">9,304 <tspan font-size="11.5" font-weight="500" class="muted">KB</tspan></text><rect x="26" y="284.0" width="10" height="10" rx="3" fill="url(#accentFill)"/><text x="176.0" y="293.5" font-size="14.5" font-weight="600" text-anchor="end">data2prompt</text><path d="M 190.0 272.0 h 3.5 q 3.5 0 3.5 3.5 v 27.1 q 0 3.5 -3.5 3.5 h -3.5 Z" fill="url(#accentFill)" filter="url(#barShadow)"/><text x="206.9" y="293.5" font-size="14" font-weight="700">241 <tspan font-size="11.5" font-weight="500" class="muted">KB</tspan></text><rect x="284.9" y="277.0" width="528.5" height="24" rx="12" class="badge-bg"/><text x="298.9" y="293.5" font-size="12.5" class="badge-text">80–85% more token-efficient — schema, column stats and row samples all intact</text></g></svg>

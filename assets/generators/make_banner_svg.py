@@ -9,9 +9,15 @@ end-state fallback: if SMIL is unsupported the settled wordmark shows.
 """
 from __future__ import annotations
 
+import argparse
+import math
 import random
+import sys
 from pathlib import Path
 from typing import List, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from shared import PROJECT_ROOT, read_version  # noqa: E402
 
 # The real wordmark from src/data2prompt/constants.py (BANNER).
 BANNER: List[str] = [
@@ -22,6 +28,16 @@ BANNER: List[str] = [
 GRADIENT = ("#ff6b7f", "#ff3b57", "#c9203c")   # UI_BANNER_GRADIENT
 CIPHER_GLYPHS = "░▒▓▌▐▄▀"                       # UI_CIPHER_GLYPHS
 
+# The teletype run-info line, kept as one editable constant instead of being
+# buried inside type_line() — this is the one thing a re-run most likely
+# wants to change (demo target/format/output/file-count).
+DEMO_RUN_INFO: List[Tuple[str, str]] = [
+    ("TARGET", "customer-churn"),
+    ("FORMAT", "markdown"),
+    ("OUT", "PROMPT.md"),
+    ("FILES", "52"),
+]
+
 # Geometry
 CW, CH = 12.0, 21.0                 # char cell
 COLS = len(BANNER[0])
@@ -31,11 +47,19 @@ X0 = (SVG_W - MARK_W) / 2.0
 Y0 = 42.0
 BLEED = 0.55                         # overdraw to kill antialiasing seams
 
-# Timeline (seconds within a DUR-second loop)
+# Timeline (seconds within a DUR-second run). The whole sweep plays ONCE per
+# page load (repeatCount="1" fill="freeze" below) — only the terminal
+# cursor's own blink loops indefinitely afterward, like a live prompt.
 DUR = 12.0
 T_SWEEP_START, T_SWEEP_END = 1.2, 3.0
 T_FLASH_A, T_FLASH_B, T_FLASH_C = 3.0, 3.07, 3.38
 T_TYPE_START, T_TYPE_END = 3.6, 5.2
+CURSOR_BLINK_DUR = 1.1               # seconds; loops forever, by design
+
+# SMIL attrs for the once-through timeline animations vs. the one loop that
+# is intentionally allowed to keep repeating (the cursor blink).
+PLAY_ONCE = 'repeatCount="1" fill="freeze"'
+LOOP_FOREVER = 'repeatCount="indefinite"'
 
 
 def kt(t: float) -> str:
@@ -113,15 +137,22 @@ def churn_variant(seed: int) -> str:
 
 
 def churn_layers() -> str:
-    """Three churn frames cycling via discrete opacity animation."""
+    """Three churn frames cycling via discrete opacity animation.
+
+    The cipher static is only ever visible through the ``#cipher`` clip,
+    which fully closes at T_SWEEP_END — so the flicker only needs to cover
+    ``0..T_SWEEP_END``, not loop forever. Bounded + frozen like every other
+    part of the once-through timeline.
+    """
     frames = []
     cycles = [("1;0;0", 1), ("0;1;0", 0), ("0;0;1", 0)]
+    repeats = math.ceil(T_SWEEP_END / 0.5) + 1
     for i, (values, base) in enumerate(cycles):
         frames.append(
             f'<g opacity="{base}">'
             f'<animate attributeName="opacity" calcMode="discrete" '
             f'values="{values}" keyTimes="0;0.34;0.67" dur="0.5s" '
-            f'repeatCount="indefinite"/>'
+            f'repeatCount="{repeats}" fill="freeze"/>'
             + churn_variant(101 + i * 37)
             + "</g>"
         )
@@ -136,8 +167,7 @@ def type_line() -> Tuple[str, float, float, float]:
     gap_item = 3.2 * adv
     tick_w, tick_h, tick_gap = 9.0, 9.5, 7.0
 
-    items = [("TARGET", "customer-churn"), ("FORMAT", "markdown"),
-             ("OUT", "PROMPT.md"), ("FILES", "52")]
+    items = DEMO_RUN_INFO
     total = 0.0
     for label, value in items:
         total += tick_w + tick_gap + (len(label) + 1 + len(value)) * adv
@@ -170,7 +200,7 @@ def type_line() -> Tuple[str, float, float, float]:
     return "".join(parts), x_start, x, y
 
 
-def build() -> str:
+def build(version: str) -> str:
     reveal_times = f"0;{kt(T_SWEEP_START)};{kt(T_SWEEP_END)};1"
     edge_x0, edge_x1 = X0, X0 + MARK_W
 
@@ -190,17 +220,17 @@ def build() -> str:
 <defs>
   <clipPath id="reveal">
     <rect x="{X0:.1f}" y="{Y0 - 4:.1f}" width="{MARK_W:.1f}" height="{MARK_H + 8:.1f}">
-      <animate attributeName="width" values="0;0;{MARK_W:.1f};{MARK_W:.1f}" keyTimes="{reveal_times}" dur="{DUR:.0f}s" repeatCount="indefinite"/>
+      <animate attributeName="width" values="0;0;{MARK_W:.1f};{MARK_W:.1f}" keyTimes="{reveal_times}" dur="{DUR:.0f}s" {PLAY_ONCE}/>
     </rect>
   </clipPath>
   <clipPath id="cipher">
     <rect x="{edge_x1:.1f}" y="{Y0 - 4:.1f}" width="{MARK_W:.1f}" height="{MARK_H + 8:.1f}">
-      <animate attributeName="x" values="{edge_x0:.1f};{edge_x0:.1f};{edge_x1:.1f};{edge_x1:.1f}" keyTimes="{reveal_times}" dur="{DUR:.0f}s" repeatCount="indefinite"/>
+      <animate attributeName="x" values="{edge_x0:.1f};{edge_x0:.1f};{edge_x1:.1f};{edge_x1:.1f}" keyTimes="{reveal_times}" dur="{DUR:.0f}s" {PLAY_ONCE}/>
     </rect>
   </clipPath>
   <clipPath id="typeclip">
     <rect x="{tx0 - 4:.1f}" y="{ty - 16:.1f}" width="{tx1 - tx0 + 12:.1f}" height="24">
-      <animate attributeName="width" values="0;0;{tx1 - tx0 + 12:.1f};{tx1 - tx0 + 12:.1f}" keyTimes="{type_times}" dur="{DUR:.0f}s" repeatCount="indefinite"/>
+      <animate attributeName="width" values="0;0;{tx1 - tx0 + 12:.1f};{tx1 - tx0 + 12:.1f}" keyTimes="{type_times}" dur="{DUR:.0f}s" {PLAY_ONCE}/>
     </rect>
   </clipPath>
   <linearGradient id="edgeglow" x1="0" y1="0" x2="1" y2="0">
@@ -229,25 +259,27 @@ def build() -> str:
 
 <!-- resolve edge -->
 <g opacity="0">
-  <animate attributeName="opacity" calcMode="discrete" values="0;1;0" keyTimes="0;{kt(T_SWEEP_START)};{kt(T_SWEEP_END + 0.04)}" dur="{DUR:.0f}s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" calcMode="discrete" values="0;1;0" keyTimes="0;{kt(T_SWEEP_START)};{kt(T_SWEEP_END + 0.04)}" dur="{DUR:.0f}s" {PLAY_ONCE}/>
   <rect x="-30" y="{Y0 - 6:.1f}" width="30" height="{MARK_H + 12:.1f}" fill="url(#edgeglow)">
-    <animateTransform attributeName="transform" type="translate" values="{edge_x0:.1f} 0;{edge_x0:.1f} 0;{edge_x1 + 30:.1f} 0;{edge_x1 + 30:.1f} 0" keyTimes="{reveal_times}" dur="{DUR:.0f}s" repeatCount="indefinite"/>
+    <animateTransform attributeName="transform" type="translate" values="{edge_x0:.1f} 0;{edge_x0:.1f} 0;{edge_x1 + 30:.1f} 0;{edge_x1 + 30:.1f} 0" keyTimes="{reveal_times}" dur="{DUR:.0f}s" {PLAY_ONCE}/>
   </rect>
 </g>
 
 <!-- white flash on settle -->
-{mark_layer(("#ffffff", "#ffffff", "#ffffff"), ' opacity="0"')[:-4]}<animate attributeName="opacity" values="0;0;1;0;0" keyTimes="0;{kt(T_FLASH_A)};{kt(T_FLASH_B)};{kt(T_FLASH_C)};1" dur="{DUR:.0f}s" repeatCount="indefinite"/></g>
+{mark_layer(("#ffffff", "#ffffff", "#ffffff"), ' opacity="0"')[:-4]}<animate attributeName="opacity" values="0;0;1;0;0" keyTimes="0;{kt(T_FLASH_A)};{kt(T_FLASH_B)};{kt(T_FLASH_C)};1" dur="{DUR:.0f}s" {PLAY_ONCE}/></g>
 
 <!-- version line -->
-<text x="{SVG_W / 2:.0f}" y="{version_y:.1f}" text-anchor="middle" class="mono ver">v0.5.0</text>
+<text x="{SVG_W / 2:.0f}" y="{version_y:.1f}" text-anchor="middle" class="mono ver">v{version}</text>
 
 <!-- teletype run line -->
 <g clip-path="url(#typeclip)">{type_svg}</g>
 <g opacity="0">
-  <animate attributeName="opacity" calcMode="discrete" values="0;1" keyTimes="0;{kt(T_TYPE_START)}" dur="{DUR:.0f}s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" calcMode="discrete" values="0;1" keyTimes="0;{kt(T_TYPE_START)}" dur="{DUR:.0f}s" {PLAY_ONCE}/>
   <rect x="0" y="{ty - 12:.1f}" width="8" height="15" fill="#ff3b57">
-    <animate attributeName="x" values="{tx0:.1f};{tx0:.1f};{tx1 + 5:.1f};{tx1 + 5:.1f}" keyTimes="{type_times}" dur="{DUR:.0f}s" repeatCount="indefinite"/>
-    <animate attributeName="opacity" calcMode="discrete" values="1;0" keyTimes="0;0.55" dur="1.1s" repeatCount="indefinite"/>
+    <animate attributeName="x" values="{tx0:.1f};{tx0:.1f};{tx1 + 5:.1f};{tx1 + 5:.1f}" keyTimes="{type_times}" dur="{DUR:.0f}s" {PLAY_ONCE}/>
+    <!-- cursor blink: intentionally the one animation allowed to loop
+         forever, like a live prompt sitting after the typed line -->
+    <animate attributeName="opacity" calcMode="discrete" values="1;0" keyTimes="0;0.55" dur="{CURSOR_BLINK_DUR}s" {LOOP_FOREVER}/>
   </rect>
 </g>
 
@@ -256,13 +288,28 @@ def build() -> str:
     return svg
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--out", type=Path, default=PROJECT_ROOT / "assets" / "banner.svg",
+        help="output path for the generated SVG",
+    )
+    parser.add_argument(
+        "--version", dest="version", default=None,
+        help="override the version shown in the run-info line "
+             "(default: read live from pyproject.toml)",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     for line in BANNER:
         assert len(line) == COLS, f"row width {len(line)} != {COLS}"
-    out = Path(__file__).resolve().parents[1] / "banner.svg"
-    svg = build()
-    out.write_text(svg, encoding="utf-8")
-    print(f"wrote {out} ({len(svg):,} chars)")
+    args = parse_args()
+    version = args.version or read_version()
+    svg = build(version)
+    args.out.write_text(svg, encoding="utf-8")
+    print(f"wrote {args.out} ({len(svg):,} chars)")
 
 
 if __name__ == "__main__":
