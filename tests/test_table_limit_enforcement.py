@@ -33,6 +33,7 @@ def test_output_layer_still_enforces_table_limit() -> None:
         table_truncate=500,
         stats_summary=False,
         schema_only=False,
+        env_keys=True,
     )
     files_data = [
         {

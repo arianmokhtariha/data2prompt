@@ -303,7 +303,12 @@ The [`_run()`](../src/data2prompt/main.py) function maintains comprehensive
 statistics. Beyond the UI report, the `stats` dict is now also consumed by the
 output generators: [`summarize_stats()`](../src/data2prompt/output.py) renders
 it as the document-level content summary (`> Contents:` line / `<stats/>`
-element) so the LLM sees the codebase's composition up front.
+element) so the LLM sees the codebase's composition up front. The same
+`stats` dict also drives [`_active_preamble_triggers()`](output.md#system-instructions-preamble-pruning),
+which decides which file-type-specific reading-convention bullets belong in
+the system-instructions preamble this run — so `stats` now shapes both what
+the document says about itself (the preamble) and what it reports about its
+own contents (the stats summary).
 
 | Stat Key | Purpose |
 |----------|---------|

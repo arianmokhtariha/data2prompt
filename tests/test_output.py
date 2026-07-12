@@ -22,6 +22,11 @@ from data2prompt.output import (
 )
 from data2prompt.utils import count_tokens
 from data2prompt.parsers import NotebookCellIR, TableIR, build_table_schema
+from data2prompt.constants import (
+    PREAMBLE_OPTIONAL_SEGMENTS,
+    SYSTEM_INSTRUCTIONS_MARKDOWN,
+    SYSTEM_INSTRUCTIONS_XML,
+)
 
 # main.py builds each file dict with these keys; only path/content are read by
 # the generators for plain-string content, but we mirror the full shape.
@@ -203,6 +208,7 @@ def _table_files(
         table_truncate=20_000,
         stats_summary=stats_summary,
         schema_only=schema_only,
+        env_keys=True,
     )
     return files, cfg
 
@@ -274,7 +280,7 @@ def test_xml_sheet_name_with_quotes_and_angle_brackets_is_quoted() -> None:
     files = [{"path": "book.xlsx", "content": [table], "type": "Excel", "tokens": 0, "status": "Extracted"}]
     cfg = SimpleNamespace(
         table_limit=50_000, table_truncate=20_000,
-        stats_summary=False, schema_only=False,
+        stats_summary=False, schema_only=False, env_keys=True,
     )
 
     output = XMLGenerator().generate(
@@ -472,3 +478,141 @@ def test_get_generator_rejects_unknown_format() -> None:
     """An unknown format must fail loudly, not silently fall back to XML."""
     with pytest.raises(ValueError, match="Unsupported output format"):
         get_generator("pdf")
+
+
+# ---------------------------------------------------------------------------
+# Context-aware preamble pruning — PREAMBLE_OPTIONAL_SEGMENTS
+# ---------------------------------------------------------------------------
+
+# stat keys that light up every optional trigger at once (used to prove
+# nothing changes when every file type is present).
+_ALL_TRIGGERS_STATS = {
+    "notebook_count": 1,
+    "excel_count": 1,
+    "sqlite_count": 1,
+    "csv_count": 1,
+    "parquet_count": 1,
+    "feather_count": 1,
+    "arrow_count": 1,
+    "env_count": 1,
+}
+
+_ENV_KEYS_CFG = SimpleNamespace(
+    table_limit=50_000, table_truncate=20_000,
+    stats_summary=False, schema_only=False, env_keys=True,
+)
+
+
+def test_preamble_segments_are_exact_substrings_of_base_preambles() -> None:
+    """Every registered fragment must exist verbatim (and only once) inside
+    the preamble it targets — catches transcription drift immediately if a
+    preamble is ever hand-edited without updating the segment table."""
+    for trigger, md_frag, xml_frag in PREAMBLE_OPTIONAL_SEGMENTS:
+        assert SYSTEM_INSTRUCTIONS_MARKDOWN.count(md_frag) == 1, trigger
+        assert SYSTEM_INSTRUCTIONS_XML.count(xml_frag) == 1, trigger
+
+
+def test_markdown_preamble_omits_gated_bullets_without_matching_files() -> None:
+    """With nothing scanned (stats={}), every file-type-specific reading
+    convention is absent, but the generic ones and Files-section content
+    survive — and no double-blank-line/leftover fragment is introduced."""
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats={},
+    )
+    assert "Notebooks (.ipynb) are split into cells" not in output
+    assert "Excel workbooks are split into sheets" not in output
+    assert "SQLite databases are split into tables" not in output
+    assert "Tabular data files" not in output
+    assert "very large database table" not in output
+    assert "Env files list variable names" not in output
+    # Generic, cross-cutting bullets are never gated.
+    assert "File content sits in fenced code blocks" in output
+    assert "-- [...] --` are notices" in output
+    assert "The File Index Status column is authoritative" in output
+    # Pruning must never leave a blank-line gap inside the bullet lists.
+    assert "\n\n\n" not in output
+
+
+def test_xml_preamble_omits_gated_bullets_without_matching_files() -> None:
+    """Mirrors the Markdown case for XMLGenerator (format parity)."""
+    output = XMLGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats={},
+    )
+    assert "Notebooks (.ipynb) are split into" not in output
+    assert "Excel workbooks are split into" not in output
+    assert "SQLite databases are split into" not in output
+    assert "Tabular data files" not in output
+    assert "very large database table" not in output
+    assert "Env files list variable names" not in output
+    assert "Element content is embedded VERBATIM" in output
+    assert "\n\n\n" not in output
+
+
+def test_markdown_preamble_tabular_without_sqlite_keeps_general_sentence_only() -> None:
+    """CSV present but no SQLite: the general tabular-schema sentences stay,
+    but the SQLite-specific 'large table' tail sentence must not appear."""
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats={"csv_count": 1},
+    )
+    assert "Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite)" in output
+    assert "very large database table" not in output
+    assert "SQLite databases are split into tables" not in output
+
+
+def test_markdown_preamble_includes_sqlite_bullets_when_sqlite_scanned() -> None:
+    """A scanned .db file must surface both the SQLite table-splitting bullet
+    and the large-table tail sentence."""
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats={"sqlite_count": 1},
+    )
+    assert "SQLite databases are split into tables" in output
+    assert "very large database table" in output
+
+
+def test_markdown_preamble_env_bullet_omitted_with_no_env_keys() -> None:
+    """.env files were scanned (env_count > 0) but --no-env-keys was passed:
+    content is skip-notice-only, not 'names with redacted values', so the
+    bullet describing redaction must not appear despite the nonzero count."""
+    cfg = SimpleNamespace(
+        table_limit=50_000, table_truncate=20_000,
+        stats_summary=False, schema_only=False, env_keys=False,
+    )
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats={"env_count": 1}, config=cfg,
+    )
+    assert "Env files list variable names" not in output
+
+
+def test_markdown_preamble_env_bullet_present_with_env_keys_enabled() -> None:
+    """.env files scanned with the default env_keys=True: the redaction
+    reading convention must appear."""
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats={"env_count": 1}, config=_ENV_KEYS_CFG,
+    )
+    assert "Env files list variable names" in output
+
+
+def test_markdown_preamble_matches_base_constant_when_all_types_scanned() -> None:
+    """With every file type present, pruning must be a no-op: the rendered
+    preamble is byte-identical to SYSTEM_INSTRUCTIONS_MARKDOWN — proving the
+    wording itself was never touched, only conditional inclusion."""
+    output = MarkdownGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
+    )
+    assert SYSTEM_INSTRUCTIONS_MARKDOWN in output
+
+
+def test_xml_preamble_matches_base_constant_when_all_types_scanned() -> None:
+    """XML mirror of the byte-identical-when-everything-present regression."""
+    output = XMLGenerator().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
+    )
+    assert SYSTEM_INSTRUCTIONS_XML in output

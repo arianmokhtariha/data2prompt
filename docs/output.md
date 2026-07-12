@@ -96,7 +96,7 @@ The [`MarkdownGenerator`](../src/data2prompt/output.py) produces structured Mark
 |---------|-------------|
 | Generation Flag | `<!-- DATA2PROMPT_GENERATED_CONTENT -->` marker for recursive scanning prevention (always line 1) |
 | Header | `# codebase: {project_name}` |
-| System Instructions | LLM reading contract from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) — document layout, structural conventions, tool-notice grammar, and anti-hallucination accuracy rules |
+| System Instructions | LLM reading contract from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) — document layout, structural conventions, tool-notice grammar, and anti-hallucination accuracy rules. **Dynamically pruned per run** — see [System Instructions: Preamble Pruning](#system-instructions-preamble-pruning) below |
 | Metadata | `> Generated on:`, `> Tokens:` (via [`o200k_base`](../src/data2prompt/utils.py)), and `> Contents:` — a content summary built from the `stats` dict (see [Stats Summary](#document-level-stats-summary)) |
 | Budget Report | `# Budget Report` — present only when `--budget` was requested (see [Budget Report](#budget-report)) |
 | File Index | `# File Index` — a `\| Path \| Type \| Status \|` table, one row per file (see [File Index](#file-index)) |
@@ -108,6 +108,86 @@ All paths in the output (index rows, `## File:` headers, cell/sheet labels) use
 path key, so an LLM can cross-reference the index, headers, and tree by literal
 match. Backslashes were dropped because they collide with escape sequences in
 code contexts and tokenize worse.
+
+#### System Instructions: Preamble Pruning
+
+The preamble is **context-aware**: a reading-convention bullet that describes
+one specific file type (Notebooks, Excel, SQLite, the tabular schema block,
+Env files) only renders when that file type was actually scanned this run.
+`SYSTEM_INSTRUCTIONS_MARKDOWN` / `SYSTEM_INSTRUCTIONS_XML` in `constants.py`
+remain the full, canonical text — untouched — and a separate constant,
+[`PREAMBLE_OPTIONAL_SEGMENTS`](constants.md#preamble_optional_segments--context-aware-preamble-pruning-table),
+lists the exact substrings that may be trimmed out of a *copy* of that text.
+
+Two module-level helpers in `output.py` implement the mechanism, called once
+per `generate()` invocation on each generator:
+
+```python
+def _active_preamble_triggers(
+    stats: Dict[str, int], env_keys_enabled: bool
+) -> Set[str]:
+    """Which optional segments apply, based on this run's `stats`."""
+
+def _prune_preamble(base: str, active: Set[str], xml: bool) -> str:
+    """Delete every inactive segment's exact fragment from `base`."""
+```
+
+`_active_preamble_triggers()` derives five trigger keys from the `stats` dict
+already threaded into `generate()`:
+
+| Trigger | Condition |
+|---|---|
+| `notebooks` | `stats["notebook_count"] > 0` |
+| `excel` | `stats["excel_count"] > 0` |
+| `sqlite` | `stats["sqlite_count"] > 0` |
+| `tabular` | any of `csv_count`/`excel_count`/`parquet_count`/`feather_count`/`arrow_count`/`sqlite_count` > 0 |
+| `env` | `stats["env_count"] > 0` **and** `env_keys_enabled` |
+
+`env` needs the extra `env_keys_enabled` condition (`config.env_keys`,
+defaulting to enabled when `config` is `None`) because `EnvParser` increments
+`env_count` even when `--no-env-keys` is passed — in that case every `.env`
+file is skipped with a notice, not redacted-and-listed, so the "variable
+names, redacted values" bullet would misdescribe the actual output if shown.
+
+`_prune_preamble()` then removes, from a working copy of the base preamble,
+the fragment of every segment whose trigger is *not* active — **longest
+fragment first**. This matters for one specific overlap: the whole
+"Tabular data files... may include a schema block" bullet (trigger
+`tabular`) textually contains the SQLite "large table" tail sentence
+(trigger `sqlite`) as its final clause. Three states are reachable in
+practice (SQLite is always a subset of "tabular"):
+
+| `tabular` active | `sqlite` active | Result |
+|:---:|:---:|---|
+| yes | yes | full bullet, unchanged |
+| yes | no | bullet minus the SQLite tail sentence |
+| no | no (implied) | whole bullet removed |
+
+Removing longest-first means the whole-bullet fragment (used when `tabular`
+is inactive) is deleted before the tail-only fragment is even attempted —
+so in the "no/no" row the tail fragment's `.replace()` call is a safe no-op
+against text that's already gone, instead of leaving a dangling
+sentence-fragment with no bullet marker. This is a correctness property of
+`_prune_preamble()` itself (sorted by `len()`, descending), not an ordering
+requirement on `PREAMBLE_OPTIONAL_SEGMENTS`'s declaration order.
+
+Because every fragment is an exact, verified substring of the base constant
+(`tests/test_output.py` asserts `frag in SYSTEM_INSTRUCTIONS_*` and
+`.count(frag) == 1` for all seven entries) and deletion never rewrites
+surrounding text, **a run where every trigger is active reproduces the base
+preamble byte-for-byte** — pruning only ever subtracts, never rewords. This
+also composes transparently with `--budget`: `fit_to_budget()` rebuilds
+`stats` from scratch on every ladder attempt (see [budget.md](budget.md)), so
+if an attempt omits the only SQLite/notebook/env file in the project to fit
+the budget, the next `generate()` call's preamble correctly drops that
+bullet too — no extra integration was needed.
+
+Deliberately **not** part of this mechanism (see
+[output-contract.md](output-contract.md) Invariant 2 for the full rationale):
+the closed status-vocabulary bullet (protected by Invariant 6), the generic
+cross-cutting bullets (fenced-code convention, `-- [...] --` notice grammar),
+and the numbered Document-layout list's Budget-report line (self-qualifying
+wording already, and pruning it would require dynamic renumbering).
 
 #### Notebook Rendering
 
@@ -529,6 +609,8 @@ All shared by both generators (single source of truth for the scaffolding):
 | `IndexEntry` (frozen dataclass) | One File Index row: `path`, `type`, `status` |
 | `_display_path(rel_path) -> str` | Canonical forward-slash path key (`rel_path.replace("\\", "/")`) |
 | `resolve_inclusion_status(status) -> str` | Raw parser status → index vocabulary; `Skipped (...)` prefix fallback, then verbatim passthrough — never raises |
+| `_active_preamble_triggers(stats, env_keys_enabled) -> Set[str]` | Which optional preamble segments apply this run (see [System Instructions: Preamble Pruning](#system-instructions-preamble-pruning)) |
+| `_prune_preamble(base, active, xml) -> str` | Deletes every inactive `PREAMBLE_OPTIONAL_SEGMENTS` fragment from a preamble constant, longest-first |
 | `build_file_index(tree_text, files_data) -> List[IndexEntry]` | Rendered files in document order + tree-only leftovers as `Omitted` |
 | `summarize_stats(stats, file_total) -> List[Tuple[str, int]]` | Ordered (label, count) pairs; `Total files` always present, zero counts dropped |
 | `_end_recap(project_name, indexed_count) -> str` | Shared closing recap sentence |
@@ -541,8 +623,9 @@ All shared by both generators (single source of truth for the scaffolding):
 | Constant | Value | Description |
 |----------|-------|-------------|
 | [`GENERATION_FLAG`](../src/data2prompt/constants.py) | `"DATA2PROMPT_GENERATED_CONTENT"` | Recursive scanning prevention marker |
-| [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) | Multi-line string | LLM reading contract for Markdown format |
-| [`SYSTEM_INSTRUCTIONS_XML`](../src/data2prompt/constants.py) | Multi-line string | LLM reading contract for XML format |
+| [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) | Multi-line string | LLM reading contract for Markdown format (canonical, unpruned) |
+| [`SYSTEM_INSTRUCTIONS_XML`](../src/data2prompt/constants.py) | Multi-line string | LLM reading contract for XML format (canonical, unpruned) |
+| [`PREAMBLE_OPTIONAL_SEGMENTS`](../src/data2prompt/constants.py) | `List[Tuple[str, str, str]]` | File-type-specific preamble fragments, each gated by a trigger key — see [Preamble Pruning](#system-instructions-preamble-pruning) |
 | [`TAG_FILES`](../src/data2prompt/constants.py) | `"files"` | XML tag name |
 | [`TAG_FILE`](../src/data2prompt/constants.py) | `"file"` | XML tag name |
 | [`TAG_CONTENT`](../src/data2prompt/constants.py) | `"content"` | XML tag for notebook cells |

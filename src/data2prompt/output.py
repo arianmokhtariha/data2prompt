@@ -1,7 +1,7 @@
 import pandas as pd
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Type, TYPE_CHECKING
+from typing import Dict, List, Optional, Set, Tuple, Type, TYPE_CHECKING
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
@@ -25,6 +25,7 @@ from data2prompt.constants import (
     STATS_SUMMARY_LABELS,
     SYSTEM_INSTRUCTIONS_MARKDOWN,
     SYSTEM_INSTRUCTIONS_XML,
+    PREAMBLE_OPTIONAL_SEGMENTS,
     GENERATION_FLAG
 )
 from data2prompt.utils import get_dynamic_wrapper
@@ -72,6 +73,60 @@ def resolve_inclusion_status(status: str) -> str:
     if status.startswith("Skipped"):
         return "Skipped"
     return status
+
+
+def _active_preamble_triggers(
+    stats: Dict[str, int], env_keys_enabled: bool
+) -> Set[str]:
+    """Which optional preamble segments apply to this run's scanned content.
+
+    A trigger is active when at least one file of that kind was scanned
+    (per ``stats``), so the preamble only teaches reading conventions for
+    file types actually present in the document. ``env`` additionally
+    requires ``env_keys_enabled``: with ``--no-env-keys`` every ``.env``
+    file is skipped-not-redacted, so the "variable names, redacted values"
+    bullet would misdescribe the real output.
+    """
+    active: Set[str] = set()
+    if stats.get("notebook_count", 0) > 0:
+        active.add("notebooks")
+    if stats.get("excel_count", 0) > 0:
+        active.add("excel")
+    if stats.get("sqlite_count", 0) > 0:
+        active.add("sqlite")
+    tabular_keys = (
+        "csv_count", "excel_count", "parquet_count",
+        "feather_count", "arrow_count", "sqlite_count",
+    )
+    if any(stats.get(key, 0) > 0 for key in tabular_keys):
+        active.add("tabular")
+    if stats.get("env_count", 0) > 0 and env_keys_enabled:
+        active.add("env")
+    return active
+
+
+def _prune_preamble(base: str, active: Set[str], xml: bool) -> str:
+    """Delete inactive optional segments from a rendered preamble.
+
+    ``base`` is the untouched preamble constant; ``xml`` selects which
+    fragment of each ``PREAMBLE_OPTIONAL_SEGMENTS`` entry to match. A
+    trigger absent from ``active`` means that file type was not scanned
+    this run, so its fragment is deleted. Fragments are removed
+    longest-first: the whole tabular-schema bullet (trigger "tabular") is
+    a superset of the SQLite-only tail sentence inside it (trigger
+    "sqlite") — removing the superset first leaves the subset's removal a
+    safe no-op instead of a stray partial-bullet fragment when both are
+    inactive at once.
+    """
+    text = base
+    to_remove = [
+        xml_frag if xml else md_frag
+        for trigger, md_frag, xml_frag in PREAMBLE_OPTIONAL_SEGMENTS
+        if trigger not in active
+    ]
+    for frag in sorted(to_remove, key=len, reverse=True):
+        text = text.replace(frag, "", 1)
+    return text
 
 
 def build_file_index(
@@ -254,6 +309,15 @@ class MarkdownGenerator(OutputGenerator):
         render_block = stats_summary or schema_only
         render_data = not schema_only
 
+        # Preamble is pruned to the file types actually scanned this run, so
+        # the LLM is never taught a reading convention for content that
+        # never appears in the document (see PREAMBLE_OPTIONAL_SEGMENTS).
+        env_keys_enabled = bool(config and config.env_keys)
+        active_triggers = _active_preamble_triggers(stats, env_keys_enabled)
+        preamble = _prune_preamble(
+            SYSTEM_INSTRUCTIONS_MARKDOWN, active_triggers, xml=False
+        )
+
         index_entries = build_file_index(tree_text, files_data)
         stat_pairs = summarize_stats(stats, len(files_data))
         contents_line = " | ".join(f"{label}: {count}" for label, count in stat_pairs)
@@ -263,7 +327,7 @@ class MarkdownGenerator(OutputGenerator):
             "",
             f"# codebase: {project_name}",
             "",
-            SYSTEM_INSTRUCTIONS_MARKDOWN,
+            preamble,
             "",
             f"> Generated on: {timestamp}",
             # Placeholders substituted by main.py once the full output is counted.
@@ -401,6 +465,15 @@ class XMLGenerator(OutputGenerator):
         render_block = stats_summary or schema_only
         render_data = not schema_only
 
+        # Preamble is pruned to the file types actually scanned this run, so
+        # the LLM is never taught a reading convention for content that
+        # never appears in the document (see PREAMBLE_OPTIONAL_SEGMENTS).
+        env_keys_enabled = bool(config and config.env_keys)
+        active_triggers = _active_preamble_triggers(stats, env_keys_enabled)
+        preamble = _prune_preamble(
+            SYSTEM_INSTRUCTIONS_XML, active_triggers, xml=True
+        )
+
         index_entries = build_file_index(tree_text, files_data)
         stat_pairs = summarize_stats(stats, len(files_data))
         stats_attrs = " ".join(
@@ -413,7 +486,7 @@ class XMLGenerator(OutputGenerator):
             "",
             f'<codebase name={quoteattr(project_name)}>',
             "",
-            SYSTEM_INSTRUCTIONS_XML,
+            preamble,
             "",
             "<metadata>",
             f"    <generated_on>{timestamp}</generated_on>",

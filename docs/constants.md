@@ -253,7 +253,48 @@ The XML variant additionally states that element content is embedded verbatim
 (not XML-escaped) and tags are structural markers, not strict XML.
 
 **Consumed by:**
-- [`output.py`](../src/data2prompt/output.py) — injected into both outputs
+- [`output.py`](../src/data2prompt/output.py) — spliced into both outputs
+  after being run through [`_prune_preamble()`](output.md#system-instructions-preamble-pruning)
+  (see below); the constants themselves are never edited at render time.
+
+#### `PREAMBLE_OPTIONAL_SEGMENTS` — Context-Aware Preamble Pruning Table
+
+```python
+PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
+    ("notebooks", <exact Markdown substring>, <exact XML substring>),
+    ("excel", ...),
+    ("sqlite", ...),      # "SQLite databases are split into tables..." bullet
+    ("tabular", ...),     # whole "Tabular data files..." schema-block bullet
+    ("sqlite", ...),      # SQLite "large table" tail sentence, tail-only
+    ("env", ...),
+    ("tabular", ...),     # accuracy-rules "Use the schema block..." bullet
+]
+```
+
+**Type:** `List[Tuple[str, str, str]]` — each tuple is `(trigger, markdown_
+fragment, xml_fragment)`.
+
+**Purpose:** Makes the preambles context-aware without ever rewording them.
+`SYSTEM_INSTRUCTIONS_MARKDOWN` / `SYSTEM_INSTRUCTIONS_XML` stay the
+byte-for-byte canonical text; this table names the exact substrings inside
+them that describe one specific file type's reading convention (Notebooks,
+Excel, SQLite, the tabular schema block, Env files). At `generate()` time,
+[`output.py`](../src/data2prompt/output.py)'s `_active_preamble_triggers()`
+computes which triggers apply to the current run (from the `stats` dict, plus
+`config.env_keys` for the `env` trigger), and `_prune_preamble()` deletes
+every inactive entry's fragment from a working copy of the preamble before
+it's spliced into the document — so a codebase with no `.ipynb`/`.xlsx`/`.db`/
+`.env` files never sees those bullets. Full design rationale, the deliberately
+un-gated bullets (status vocabulary, generic notice grammar, the Budget
+report layout line), and the checklist for adding a new segment all live in
+[output-contract.md](output-contract.md) (Invariant 2 and "Editing the
+preambles"). Implementation detail (the two `tabular`/`sqlite` entries
+overlap — one is a substring of the other — and why that's safe) is in
+[output.md](output.md#system-instructions-preamble-pruning).
+
+**Consumed by:**
+- [`output.py`](../src/data2prompt/output.py) — `_active_preamble_triggers()`
+  / `_prune_preamble()`
 
 #### XML Tag Constants
 

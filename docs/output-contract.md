@@ -44,6 +44,43 @@ degrades the product.
    there — in both preambles, kept logically identical, source lines ≤ 88
    characters.
 
+   **The preamble is context-aware: it only teaches conventions for content
+   that is actually in the document.** `SYSTEM_INSTRUCTIONS_MARKDOWN` /
+   `SYSTEM_INSTRUCTIONS_XML` still hold the full, canonical wording — that
+   text is never edited by this mechanism, only conditionally trimmed.
+   `PREAMBLE_OPTIONAL_SEGMENTS` in `constants.py` lists the reading-convention
+   bullets that describe one specific file type (Notebooks, Excel, SQLite,
+   the tabular schema block, Env files), each tagged with a `trigger` key.
+   At `generate()` time, `output.py`'s `_active_preamble_triggers(stats,
+   env_keys_enabled)` inspects the run's `stats` dict (plus `config.env_keys`
+   for the env case, since `--no-env-keys` changes what actually happens to
+   `.env` files without changing `env_count`) and `_prune_preamble()` deletes
+   every *inactive* segment's exact substring from a working copy of the
+   preamble before it's spliced into the document. A codebase with zero
+   `.ipynb`/`.xlsx`/`.db`/`.env` files therefore never sees those bullets —
+   the LLM isn't handed reading instructions for content that doesn't exist,
+   which both saves tokens and removes a source of confusion. When every
+   file type is present the pruning is a no-op and the spliced preamble is
+   byte-identical to the base constant (regression-tested in
+   `tests/test_output.py`). See [`output.md`](output.md#system-instructions-preamble-pruning)
+   for the mechanism's implementation details.
+
+   **Deliberately left un-gated** (always present, even when not strictly
+   applicable this run):
+   - The closed status-vocabulary bullet ("Full, Sampled, Cleaned,
+     Truncated, Schema Only, Redacted, Excluded, Binary Skipped, Skipped,
+     Error, Omitted") — per Invariant 6 below, this list is a fixed contract
+     that must always equal the full set `resolve_inclusion_status()` *can*
+     emit, not a per-run description of what happened to appear. Gating it
+     would violate that invariant.
+   - The generic bullets (fenced-code-block convention, the `-- [...] --`
+     notice grammar, "content marked sampled/truncated/omitted...") — these
+     are cross-cutting and not tied to one file type.
+   - The "Budget report" line in the numbered Document-layout list — its own
+     wording already self-qualifies ("present only when a token budget was
+     requested"), and pruning it would require dynamically renumbering a
+     numbered list for marginal benefit, since it isn't file-extension-based.
+
 3. **Nothing partial may ever look complete.** This is the anti-hallucination
    core. Any sampling, truncation, or omission must (a) carry a `-- [...] --`
    notice at the point of reduction, (b) cite the full-dataset count, captured
@@ -111,7 +148,13 @@ degrades the product.
 6. **Structure:** if the type renders as multiple sub-sections (like notebook
    cells, Excel sheets, or SQLite tables), define the marker in both generators
    (Markdown heading form + XML element with `quoteattr`-escaped attributes)
-   and document the convention in *both* preambles' reading conventions.
+   and document the convention in *both* preambles' reading conventions. If
+   that new reading-convention text describes the new type specifically
+   (rather than being generic), register it as a new entry in
+   `PREAMBLE_OPTIONAL_SEGMENTS` with a new `trigger` key and wire a matching
+   condition into `_active_preamble_triggers()` — otherwise the preamble will
+   always describe the new type even on a run that never scanned one, which
+   is exactly the redundancy this mechanism exists to prevent.
 7. **Paths:** any path the parser displays goes through `.as_posix()`,
    project-relative (see `ExcelParser.parse` for the pattern).
 8. **Docs:** update `parsers.md` (including its Tool-Notice Grammar table),
@@ -180,6 +223,16 @@ explicitly if it deserves its own LLM-facing term.
 5. **Collision awareness:** any literal marker you quote in a preamble (e.g.
    `**Outputs:**`, `<schema>`) becomes a whole-document substring — see the
    test rule below.
+6. **If the new/edited text is file-type-specific**, decide whether it
+   belongs in `PREAMBLE_OPTIONAL_SEGMENTS` (see Invariant 2 above). If it
+   does: add matching MD/XML entries with the same `trigger`, verify each
+   fragment is an exact, unique substring of its base constant (`frag in
+   SYSTEM_INSTRUCTIONS_MARKDOWN` / `_XML` and `.count(frag) == 1`), and add a
+   presence/absence test pair in `tests/test_output.py`. If a segment's
+   fragment sits *inside* another segment's fragment (like the SQLite
+   "large table" tail sentence inside the tabular-schema bullet),
+   `_prune_preamble()`'s longest-first removal order already handles the
+   overlap correctly — no ordering care is needed in the segment list itself.
 
 ## The Preamble-Collision Test Rule
 
@@ -206,6 +259,10 @@ A change is complete only when all of these hold:
 - [ ] Both preambles updated if any reading convention or vocabulary changed.
 - [ ] `INCLUSION_STATUS_MAP` / `STATS_SUMMARY_LABELS` and the preamble
       vocabulary lists are in sync.
+- [ ] Any new file-type-specific preamble text is registered in
+      `PREAMBLE_OPTIONAL_SEGMENTS` with a trigger wired into
+      `_active_preamble_triggers()`, unless it's a deliberate exception
+      (see Invariant 2).
 - [ ] Every new partial rendering carries a grounded `-- [...] --` notice.
 - [ ] All displayed paths are project-relative, forward-slashed, and
       identical across index, headers/attributes, and notices.

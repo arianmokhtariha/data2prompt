@@ -1,6 +1,6 @@
 # --- Core Defaults & Constants ---
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Folders matching these names are excluded from both the project tree and content processing.
 CORE_IGNORES = {
@@ -193,6 +193,98 @@ Accuracy rules:
   Truncated, Schema Only, Redacted, Excluded, Binary Skipped, Skipped,
   Error, or Omitted (listed but not rendered).
 </purpose>"""
+
+# --- Optional / conditional preamble segments ---
+# Each entry names a `trigger` key plus the exact verbatim Markdown/XML
+# substring inside SYSTEM_INSTRUCTIONS_MARKDOWN / SYSTEM_INSTRUCTIONS_XML
+# that documents one specific file type's reading convention. output.py's
+# _prune_preamble() deletes an entry's fragment when `trigger` is absent
+# from the current run's active triggers (that file type was not scanned),
+# so the LLM is never taught a reading convention for content that never
+# appears in the document. The base SYSTEM_INSTRUCTIONS_* strings above stay
+# byte-for-byte unchanged; only inclusion/omission of these exact chunks
+# varies per run. See the "Editing the preambles" checklist in
+# output-contract.md before touching any fragment below -- wording must
+# match the source constants exactly, including line wrapping. The two
+# "tabular" entries below are deliberately ordered so the whole-bullet
+# fragment (which contains the SQLite tail sentence) precedes the
+# SQLite-only tail fragment; _prune_preamble() removes longest-first so
+# this ordering is a documentation aid, not a correctness requirement.
+PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
+    (
+        'notebooks',
+        """- Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
+  each with a fenced source block and an optional **Outputs:** block.
+""",
+        """- Notebooks (.ipynb) are split into <cell path="..." index="..."
+  type="..."> elements holding <content> and optional <outputs>.
+""",
+    ),
+    (
+        'excel',
+        """- Excel workbooks are split into sheets: `### Sheet {n}: {name} - {path}`,
+  each closed by a `---` line.
+""",
+        """- Excel workbooks are split into <sheet name="..." sheet_number="..."
+  path="..."> elements.
+""",
+    ),
+    (
+        'sqlite',
+        """- SQLite databases are split into tables: `### Table {n}: {name} - {path}`,
+  each closed by a `---` line. A table's `CREATE TABLE` DDL, when shown,
+  appears in a fenced sql code block before its schema block.
+""",
+        """- SQLite databases are split into <table name="..." table_number="..."
+  path="..."> elements. A table's CREATE TABLE DDL, when shown, appears in a
+  <ddl> element before its <schema> block.
+""",
+    ),
+    (
+        'tabular',
+        """- Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
+  schema block (row/column counts, dtypes, missing values, describe() stats).
+  Schema statistics are computed on the FULL dataset; the data rows shown
+  are only a small random sample. A very large database table instead shows
+  only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
+  notice.
+""",
+        """- Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
+  <schema> block (row/column counts, dtypes, missing values, describe()
+  stats). Schema statistics are computed on the FULL dataset; the data rows
+  shown are only a small random sample. A very large database table instead
+  shows only its DDL and a small head sample, flagged by a
+  -- [Large table: ...] -- notice.
+""",
+    ),
+    (
+        'sqlite',
+        """ A very large database table instead shows
+  only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
+  notice.""",
+        """ A very large database table instead
+  shows only its DDL and a small head sample, flagged by a
+  -- [Large table: ...] -- notice.""",
+    ),
+    (
+        'env',
+        """- Env files list variable names only; every value is replaced with
+  `<redacted>`.
+""",
+        """- Env files list variable names only; every value is replaced with
+  <redacted>.
+""",
+    ),
+    (
+        'tabular',
+        """- Sampled rows illustrate structure only — never treat them as the complete
+  dataset. Use the schema block for full-dataset facts.
+""",
+        """- Sampled rows illustrate structure only — never treat them as the complete
+  dataset. Use the <schema> block for full-dataset facts.
+""",
+    ),
+]
 
 # Structural tag names shared by the XML generator.
 TAG_FILES = "files"
