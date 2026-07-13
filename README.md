@@ -11,8 +11,7 @@
 </p>
 
 <p align="center">
-  <sub><b>Native parsers, not just kept-as-text:</b></sub><br>
-  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/filetypes.svg" alt="Supported file types: .csv; .xlsx .xls .xlsm; .db .sqlite .sqlite3; .parquet .feather .arrow; .sql; .ipynb; .env" width="820">
+  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/filetypes.svg" alt="Native parsers: .csv, .xlsx, .xls, .xlsm, .db, .sqlite, .sqlite3, .parquet, .feather, .arrow, .sql, .ipynb, .env" width="960">
 </p>
 
 <p align="center">
