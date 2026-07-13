@@ -36,9 +36,9 @@ FONT = "-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
 Chip = Tuple[str, str, str]  # (label, tooltip, icon_kind)
 CHIPS: List[Chip] = [
     (".csv", "CSV — seeded random sampling", "grid"),
-    (".xlsx  ·  .xls  ·  .xlsm", "Excel — per-sheet extraction", "grid_fold"),
-    (".db  ·  .sqlite  ·  .sqlite3", "SQLite — read-only DDL + sampled rows", "cylinder"),
-    (".parquet  ·  .feather  ·  .arrow", "Columnar — schema + stats + sample", "layers"),
+    (".xlsx     .xls     .xlsm", "Excel — per-sheet extraction", "grid_fold"),
+    (".db     .sqlite     .sqlite3", "SQLite — read-only DDL + sampled rows", "cylinder"),
+    (".parquet     .feather     .arrow", "Columnar — schema + stats + sample", "layers"),
     (".sql", "Statement-aware parsing", "query"),
     (".ipynb", "Cell-level cleaning", "brackets"),
     (".env", "Name-only redaction", "lock"),
