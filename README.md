@@ -1,3 +1,5 @@
+
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/banner.svg" alt="data2prompt — animated terminal banner" width="960">
 </p>
@@ -124,7 +126,7 @@ Every file type gets a strategy, not a dump:
 | `.ipynb` | Cell-level cleaning | Code, markdown and text outputs — base64 images and HTML dumps stripped |
 | `.env` | Name-only redaction | `KEY=<redacted>` — variable names, never values |
 | Binary files | Null-byte detection | Skipped, listed in the file index |
-| Everything else | Size-aware reading | Full text, or first 10 KB past `--max-file-size` |
+| Everything else | Size-aware reading | Full text, or head-truncated at `--max-file-size` (default 70 KB) |
 
 Two details make the samples trustworthy:
 
