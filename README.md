@@ -127,7 +127,7 @@ Every file type gets a strategy, not a dump:
 | `.ipynb` | Cell-level cleaning | Code, markdown and text outputs, with base64 images and HTML dumps stripped |
 | `.env` | Name-only redaction | `KEY=<redacted>`, so variable names but never values |
 | Binary files | Null-byte detection | Skipped, listed in the file index |
-| Everything else | Size-aware reading | Full text, or the first 10 KB past `--max-file-size` |
+| Everything else | Size-aware reading | Full text, or just the first 10 KB once it passes `--max-file-size` (default 70 KB) |
 
 Two things make the samples trustworthy. Statistics are computed on the full
 dataset before any sampling happens, so dtypes, missing counts and the
