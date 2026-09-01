@@ -49,10 +49,9 @@ The same data-heavy project, packed by three tools on default settings:
 </p>
 
 Read that as feasibility rather than savings. A 22 MB dump is millions of
-tokens, several times larger than the biggest context window on the market at
-any price. On a real data project a generic packer doesn't produce an expensive
+tokens, no llm model can read that at once. On a real data project a generic packer doesn't produce an expensive
 prompt, it produces an impossible one. Of the three outputs, only the 241 KB one
-can be handed to a model at all.
+can be handed to a model at all, thats the main point of the data2prompt.
 
 The reduction comes from representation, not truncation. Each table still
 contributes its full schema, statistics computed over every row, and a seeded
