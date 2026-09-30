@@ -550,12 +550,20 @@ def test_enforce_table_limit_at_exact_limit_unchanged() -> None:
     assert enforce_table_limit(text, limit=1000, truncate_to=500) == text
 
 
-def test_enforce_table_limit_truncates_and_appends_warning() -> None:
-    text = "X" * 2000
-    result = enforce_table_limit(text, limit=1000, truncate_to=500)
-    assert result.startswith("X" * 500)
-    assert "Table truncated" in result
-    assert "1000 characters" in result
+def test_enforce_table_limit_keeps_markdown_header_and_whole_rows() -> None:
+    """header_lines protects a Markdown table's header and separator; only
+    whole data rows are kept after them."""
+    rows = [f"| {i} | {'y' * 40} |" for i in range(60)]
+    text = "\n".join(["| id | text |", "|---|---|", *rows])
+
+    result = enforce_table_limit(text, limit=1_000, truncate_to=500, header_lines=2)
+
+    *kept, notice = result.split("\n")
+    assert kept[:2] == ["| id | text |", "|---|---|"]
+    assert kept[2:] == rows[:len(kept) - 2]
+    assert notice.startswith(
+        f"-- [Table truncated: showing first {len(kept) - 2} of 60 rows"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +582,8 @@ def test_process_csv_samples_when_over_limit() -> None:
         table = tables[0]
         assert len(table.df) == 10
         assert table.header_note is not None and "Sample" in table.header_note
-        assert table.footer_note is not None and "CSV truncated" in table.footer_note
+        # The header note alone carries the sampling fact; no duplicate footer.
+        assert table.footer_note is None
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -592,7 +601,6 @@ def test_process_csv_sample_notes_include_total_rows() -> None:
         tables = process_csv(path, sample_size=10, seed=42)
         table = tables[0]
         assert table.header_note == "-- [Sample: random 10 of 100 rows] --"
-        assert table.footer_note is not None and "10 of 100 rows" in table.footer_note
     finally:
         if os.path.exists(path):
             os.remove(path)

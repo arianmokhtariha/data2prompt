@@ -97,11 +97,11 @@ The [`MarkdownGenerator`](../src/data2prompt/output.py) produces structured Mark
 | Generation Flag | `<!-- DATA2PROMPT_GENERATED_CONTENT -->` marker for recursive scanning prevention (always line 1) |
 | Header | `# codebase: {project_name}` |
 | System Instructions | LLM reading contract from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) — document layout, structural conventions, tool-notice grammar, and anti-hallucination accuracy rules. **Dynamically pruned per run** — see [System Instructions: Preamble Pruning](#system-instructions-preamble-pruning) below |
-| Metadata | `> Generated on:`, `> Tokens:` (via [`o200k_base`](../src/data2prompt/utils.py)), and `> Contents:` — a content summary built from the `stats` dict (see [Stats Summary](#document-level-stats-summary)) |
+| Metadata | `> Tokens:` (via [`o200k_base`](../src/data2prompt/utils.py)) and `> Contents:` — a content summary built from the `stats` dict (see [Stats Summary](#document-level-stats-summary)). The generation timestamp is **not** here; it lives in the end anchor (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
 | Budget Report | `# Budget Report` — present only when `--budget` was requested (see [Budget Report](#budget-report)) |
 | File Index | `# File Index` — a `\| Path \| Type \| Status \|` table, one row per file (see [File Index](#file-index)) |
 | Files | Individual files with `## File: {path}` headers, in File Index order |
-| End Anchor | `# End of codebase: {project_name}` + one-sentence recap (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
+| End Anchor | `# End of codebase: {project_name}`, `> Generated on: {timestamp}`, and a one-sentence recap (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
 
 All paths in the output (index rows, `## File:` headers, cell/sheet labels) use
 **forward slashes on every platform** — they are one exact string, the canonical
@@ -204,7 +204,8 @@ Cell outputs are displayed in text code blocks when present.
 
 #### Table Rendering
 
-CSV/Excel/SQLite data is rendered using [`TableIR`](../src/data2prompt/parsers.py#L35) with Markdown table formatting via `pandas.DataFrame.to_markdown()`:
+CSV/Excel/Parquet/Feather/Arrow/SQLite data arrives as a list of
+[`TableIR`](../src/data2prompt/parsers.py) objects:
 
 ```markdown
 ### {section_label} {sheet_number}: {name} - {path}
@@ -212,7 +213,7 @@ CSV/Excel/SQLite data is rendered using [`TableIR`](../src/data2prompt/parsers.p
 {table.ddl}                       # SQLite only; gated by render_block
 ```
 {schema block}                    # gated by render_block
-{table.df.to_markdown(index=False)}
+{render_table_text(table, ...)}   # header note, sample rows, footer note
 ---
 ```
 
@@ -220,9 +221,30 @@ CSV/Excel/SQLite data is rendered using [`TableIR`](../src/data2prompt/parsers.p
 SQLite — and drives the XML element tag too (`<sheet>` / `<table>`). The `ddl`
 block (SQLite `CREATE` statements) is emitted only when
 `render_block` (`stats_summary or schema_only`) is true, the same gate as the
-schema block. Table truncation is handled by
-[`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) when a `Config`
-object is provided.
+schema block.
+
+The text under the headings (notes + sample rows) comes from
+[`render_table_text()`](parsers.md#table-text-helpers) in `parsers.py`, the
+single source of truth shared by **both** generators and by `flatten_ir()`
+(per-file token estimates), so the two formats are identical by construction
+and the estimate counts the real text. Sample rows are a compact Markdown
+table with no alignment padding:
+
+```markdown
+-- [Sample: random 15 of 2,040 rows] --
+| id | note | score |
+|---|---|---|
+| 1 | a \| b | 102479.81746 |
+| 2 | line1↵line2 |  |
+```
+
+`|` inside a value is escaped as `\|`, a line break inside a value becomes
+`↵` (`TABLE_CELL_NEWLINE_MARKER`), a missing value is an empty cell, and values
+are never rounded. The tabular preamble bullet teaches the empty-cell and `↵`
+conventions. When a `Config` is given, `config.table_limit` /
+`config.table_truncate` cap the **rows only**, cut at a row boundary; the
+header and footer notes are always kept (see
+[Configuration Integration](#configuration-integration)).
 
 #### Schema / Stats Metadata Block
 
@@ -240,7 +262,8 @@ render_data   = not schema_only                         # render the data rows?
   [`render_schema_block()`](parsers.md) with `show_missing=stats_summary,
   show_describe=stats_summary`. In Markdown the block is emitted above the table; in XML
   it is wrapped in a `<schema>…</schema>` element (content verbatim, like all content).
-- The data table (`to_markdown`) is only emitted when `render_data` is true.
+- The sample rows are only emitted when `render_data` is true (passed to
+  `render_table_text()` as `include_rows`).
 
 Resulting behavior (all metadata is computed on the **full** DataFrame):
 
@@ -390,13 +413,23 @@ Both formats close with an explicit terminal section built by
 [`_end_recap()`](../src/data2prompt/output.py) — a recency anchor telling the
 model the document is complete and restating the core accuracy rule:
 
-- Markdown: `# End of codebase: {project_name}` followed by the recap sentence.
-- XML: `<end_of_codebase>` + recap + `</end_of_codebase>`, immediately before
-  `</codebase>`.
+- Markdown: `# End of codebase: {project_name}`, then
+  `> Generated on: YYYY-MM-DD HH:MM`, then the recap sentence.
+- XML: `<end_of_codebase>` + `<generated_on>YYYY-MM-DD HH:MM</generated_on>` +
+  recap + `</end_of_codebase>`, immediately before `</codebase>`.
 
 The recap: *"This concludes the data2prompt snapshot of {name}. The File Index
 above lists all {N} files; content marked sampled, truncated, or omitted is not
 fully included in this document."*
+
+**Why the timestamp is here, not in the metadata.** It is the only part of the
+document that changes on every run. Placed after the preamble (as it used to
+be), it capped the byte-stable prefix at ~550 tokens, below the ~1,024-token
+minimum most providers need for prompt caching, so a regenerated prompt for an
+unchanged project never got a cache hit. At the end, everything before the end
+anchor (preamble, metadata, File Index, unchanged file sections) is identical
+across runs of an unchanged project and can be served from the cache. The
+recap sentence stays the last line, so the recency anchor is unchanged.
 
 #### Scope of `--no-stats-summary`
 
@@ -432,7 +465,7 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 |-----|-------------|
 | `<codebase name={quoteattr}>` | Root element |
 | `<purpose>` | System instructions ([`SYSTEM_INSTRUCTIONS_XML`](constants.md)) |
-| `<metadata>` | Generation timestamp, token count, and `<stats/>` content summary |
+| `<metadata>` | Token count and `<stats/>` content summary (no timestamp; see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
 | `<budget_report requested_tokens="...">` | Present only when `--budget` was requested (see [Budget Report](#budget-report)) |
 | `<file_index>` | One `<entry path type status/>` per file (see [File Index](#file-index)) |
 | `<files>` | Container for file entries (no prose inside — the former stray "This section contains..." line was removed) |
@@ -441,7 +474,7 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 | `<sheet name={quoteattr} sheet_number="" path={quoteattr}>` | Excel sheet encapsulation |
 | `<table name={quoteattr} table_number="" path={quoteattr}>` | SQLite table/view encapsulation (tag + `{tag}_number` derived from `section_label`) |
 | `<ddl>` | SQLite table's `CREATE`-statement DDL (verbatim; gated by `render_block`) |
-| `<end_of_codebase>` | Terminal recap element, immediately before `</codebase>` |
+| `<end_of_codebase>` | Terminal element holding `<generated_on>` and the recap, immediately before `</codebase>` |
 
 #### Notebook XML Rendering
 
@@ -469,7 +502,7 @@ optional `<ddl>` element (SQLite `CREATE` statements) is emitted only when
 {table.ddl}                                    <!-- SQLite only; verbatim, not escaped -->
 </ddl>
 <schema>...</schema>                           <!-- gated by render_block -->
-{table.df.to_markdown(index=False)}            <!-- verbatim, not escaped -->
+{render_table_text(table, ...)}                <!-- same text as Markdown; verbatim -->
 </table>
 ```
 
@@ -495,8 +528,8 @@ class NotebookCellIR:
 class TableIR:
     name: str                          # Table/sheet name
     df: pd.DataFrame                  # Tabular data
-    header_note: Optional[str] = None # Warning/info message
-    footer_note: Optional[str] = None # Truncation notice
+    header_note: Optional[str] = None # Notices above the rows (sampling, visuals, schema-only)
+    footer_note: Optional[str] = None # Notices below the rows (empty/error, caps, large table)
     sheet_number: Optional[int] = None # Excel sheet / SQLite table sub-section index
     file_path: Optional[str] = None   # Source file path
     schema: Optional[TableSchema] = None # Full-df schema/stats metadata
@@ -572,11 +605,14 @@ Output generators accept an optional [`Config`](../src/data2prompt/cli.py) param
 def generate(self, ..., config: Optional['Config'] = None) -> str:
 ```
 
-When `config` is provided (it is `Optional['Config']`, defaulting to `None`), table
-content is truncated via [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97)
-using:
-- `config.table_limit`: Maximum characters allowed
-- `config.table_truncate`: Characters to retain when truncated
+When `config` is provided (it is `Optional['Config']`, defaulting to `None`), the
+generators pass these to [`render_table_text()`](parsers.md#table-text-helpers),
+which caps each table's rendered **sample rows** (never its notes) via
+[`enforce_table_limit()`](parsers.md#table-size-enforcement):
+- `config.table_limit`: Maximum characters allowed for the rendered rows
+- `config.table_truncate`: Characters of whole rows to keep when over the limit
+
+Without a `config`, no cap is applied.
 
 `generate()` also accepts the optional `budget_report` parameter described
 above — see [Budget Report](#budget-report).

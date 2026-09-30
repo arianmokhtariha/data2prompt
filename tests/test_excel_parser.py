@@ -94,7 +94,8 @@ def test_process_excel_sampling_preserves_sheet_order(tmp_path: Path) -> None:
     ids = df["id"].tolist()
     assert ids == sorted(ids), "sampled rows are not in original sheet order"
     assert tables[0].header_note is not None and "Sample" in tables[0].header_note
-    assert tables[0].footer_note is not None and "Sheet truncated" in tables[0].footer_note
+    # The header note alone carries the sampling fact; no duplicate footer.
+    assert tables[0].footer_note is None
 
 
 def test_process_excel_max_sheets_truncation_note(tmp_path: Path) -> None:
@@ -182,6 +183,24 @@ def test_xlsx_has_visuals_on_non_zip_returns_false(tmp_path: Path) -> None:
     path = tmp_path / "corrupt.xlsx"
     path.write_bytes(b"this is not a zip archive")
     assert _xlsx_has_visuals(path) is False
+
+
+def test_process_excel_stacks_visual_and_sample_notes_on_separate_lines(
+    tmp_path: Path,
+) -> None:
+    """A sampled first sheet of a workbook with visuals carries two header
+    notices; each must be a whole `-- [...] --` line, not glued together."""
+    path = tmp_path / "dashboard.xlsx"
+    _write_workbook(path, {"Data": [["col"]] + [[i] for i in range(30)]})
+    _inject_fake_image(path)
+
+    tables = process_excel(path, max_rows=10)
+
+    notices = (tables[0].header_note or "").split("\n")
+    assert len(notices) == 2
+    assert "visual elements" in notices[0]
+    assert "random 10 of 30 rows" in notices[1]
+    assert all(n.startswith("-- [") and n.endswith("] --") for n in notices)
 
 
 def test_process_excel_emits_visual_note_once_on_first_sheet(tmp_path: Path) -> None:

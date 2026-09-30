@@ -27,6 +27,7 @@ from data2prompt.constants import (
     DEFAULT_TABLE_TRUNCATED_SIZE,
     ENV_VALUE_PLACEHOLDER,
     GENERATION_FLAG,
+    TABLE_CELL_NEWLINE_MARKER,
 )
 from data2prompt.utils import count_tokens, is_binary
 
@@ -149,6 +150,17 @@ def build_table_schema(df: pd.DataFrame, include_describe: bool) -> TableSchema:
     )
 
 
+def _escape_table_cell(text: str) -> str:
+    """Make ``text`` safe for one Markdown table cell.
+
+    Line breaks become ``TABLE_CELL_NEWLINE_MARKER`` so the value stays on its
+    row, and ``|`` is escaped so it cannot open a fake column.
+    """
+    single_line = text.replace("\r\n", "\n").replace("\r", "\n")
+    single_line = single_line.replace("\n", TABLE_CELL_NEWLINE_MARKER)
+    return single_line.replace("|", "\\|")
+
+
 def render_schema_block(
     schema: TableSchema,
     *,
@@ -185,14 +197,14 @@ def render_schema_block(
         # returns every matching row instead of the one that lines up with
         # this column, and pd.isna() on that multi-row result raises.
         for i, col in enumerate(schema.columns):
-            row: List[str] = [col.name, col.dtype]
+            row: List[str] = [_escape_table_cell(col.name), col.dtype]
             if show_missing:
                 row += [str(col.missing), str(col.missing_pct)]
             if i < len(desc.index):
                 stats_row = desc.iloc[i]
                 for stat in stat_cols:
                     val = stats_row[stat]
-                    row.append("" if pd.isna(val) else str(val))
+                    row.append("" if pd.isna(val) else _escape_table_cell(str(val)))
             else:
                 row += [""] * len(stat_cols)
             lines.append("| " + " | ".join(row) + " |")
@@ -206,14 +218,85 @@ def render_schema_block(
             lines.append("|---|---|")
 
         for col in schema.columns:
+            name = _escape_table_cell(col.name)
             if show_missing:
                 lines.append(
-                    f"| {col.name} | {col.dtype} | {col.missing} | {col.missing_pct} |"
+                    f"| {name} | {col.dtype} | {col.missing} | {col.missing_pct} |"
                 )
             else:
-                lines.append(f"| {col.name} | {col.dtype} |")
+                lines.append(f"| {name} | {col.dtype} |")
 
     return "\n".join(lines)
+
+
+# A rendered sample table opens with a header row and a separator row.
+_SAMPLE_TABLE_HEADER_LINES = 2
+
+
+def _format_sample_cell(value: object) -> str:
+    """Render one sample value faithfully: missing values as an empty cell.
+
+    ``str()`` gives a float's shortest round-trip form, so sample data is
+    never rounded.
+    """
+    if pd.api.types.is_scalar(value) and pd.isna(value):
+        return ""
+    return _escape_table_cell(str(value))
+
+
+def render_sample_table(df: pd.DataFrame) -> str:
+    """Render sample rows as a compact Markdown table, one line per row.
+
+    No alignment padding: it costs tokens and tells a model nothing. Cell
+    conventions (empty = missing, the newline marker) are taught in the
+    tabular preamble bullet.
+    """
+    header = [_escape_table_cell(str(name)) for name in df.columns]
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join(["---"] * len(header)) + "|",
+    ]
+    # Iterate each column's own array, not itertuples(): itertuples widens
+    # float32 to a Python float, so 0.1 would print as 0.10000000149011612.
+    # Positional access keeps duplicate column labels apart.
+    columns = [df.iloc[:, i].array for i in range(df.shape[1])]
+    for row in zip(*columns):
+        cells = [_format_sample_cell(value) for value in row]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def render_table_text(
+    table: TableIR,
+    *,
+    include_rows: bool,
+    table_limit: Optional[int] = None,
+    table_truncate: Optional[int] = None,
+) -> str:
+    """Render a table's notes and sample rows: header note, rows, footer note.
+
+    Single source of truth used both for token estimation (``flatten_ir``)
+    and by the output generators. ``include_rows`` is False under
+    ``--schema-only``. When ``table_limit`` and ``table_truncate`` are given,
+    the character cap applies to the sample rows alone and cuts at a row
+    boundary, so neither note can be cut off.
+    """
+    parts: List[str] = []
+    if table.header_note:
+        parts.append(table.header_note)
+    if include_rows and not table.df.empty:
+        rows_text = render_sample_table(table.df)
+        if table_limit is not None and table_truncate is not None:
+            rows_text = enforce_table_limit(
+                rows_text,
+                table_limit,
+                table_truncate,
+                header_lines=_SAMPLE_TABLE_HEADER_LINES,
+            )
+        parts.append(rows_text)
+    if table.footer_note:
+        parts.append(table.footer_note)
+    return "\n".join(parts)
 
 
 def flatten_ir(
@@ -265,13 +348,10 @@ def flatten_ir(
                     show_describe=stats_summary,
                 ))
 
-            # Use a simple string representation for token estimation
-            if table.header_note:
-                parts.append(table.header_note)
-            if not schema_only and not table.df.empty:
-                parts.append(table.df.to_string(index=False))
-            if table.footer_note:
-                parts.append(table.footer_note)
+            # The same notes + rows text the generators emit.
+            table_text = render_table_text(table, include_rows=not schema_only)
+            if table_text:
+                parts.append(table_text)
         return "\n".join(parts)
 
     return ""
@@ -281,25 +361,39 @@ class BaseParser(Protocol):
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
         ...
 
-def enforce_table_limit(text: str, limit: int, truncate_to: int) -> str:
-    """
-    Checks if a table's string representation exceeds a character limit.
-    If it does, truncates it and appends a warning.
+def enforce_table_limit(
+    text: str,
+    limit: int,
+    truncate_to: int,
+    *,
+    header_lines: int = 0,
+) -> str:
+    """Cap an oversized block of table rows at the last row that fits.
 
-    Args:
-        text: The table string (markdown or SQL).
-        limit: Max characters allowed.
-        truncate_to: Characters to keep if limit is exceeded.
-
-    Returns:
-        str: The potentially truncated string.
+    Rows are lines (Markdown table rows, or raw SQL data lines), so no row is
+    ever cut in half. When ``text`` exceeds ``limit`` characters, the first
+    ``header_lines`` lines (a Markdown header and separator) are always kept,
+    then whole rows while the kept text stays within ``truncate_to``
+    characters, then a notice citing kept and total rows.
     """
     if len(text) <= limit:
         return text
 
-    truncated = text[:truncate_to]
-    warning = f"\n\n-- [Table truncated: Total size exceeded {limit} characters. Showing first {truncate_to} characters to save context] --"
-    return truncated + warning
+    lines = text.rstrip("\n").split("\n")
+    header, rows = lines[:header_lines], lines[header_lines:]
+    kept_length = len("\n".join(header))
+    kept_count = 0
+    for row in rows:
+        kept_length += len(row) + 1  # +1 for the joining newline
+        if kept_length > truncate_to:
+            break
+        kept_count += 1
+
+    notice = (
+        f"-- [Table truncated: showing first {kept_count} of {len(rows)} rows; "
+        f"the table exceeded {limit:,} characters] --"
+    )
+    return "\n".join(header + rows[:kept_count] + [notice])
 
 
 def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
@@ -368,23 +462,17 @@ def process_csv(
             )]
 
         header_note = None
-        footer_note = None
         total_rows = len(df)
 
         if total_rows > sample_size:
             # sort_index restores file order so the sample reads naturally.
             df = df.sample(sample_size, random_state=seed).sort_index()
             header_note = f"-- [Sample: random {sample_size} of {total_rows:,} rows] --"
-            footer_note = (
-                f"-- [CSV truncated: Showing random {sample_size} of "
-                f"{total_rows:,} rows to save context] --"
-            )
 
         return [TableIR(
             name=Path(file_path).name,
             df=df,
             header_note=header_note,
-            footer_note=footer_note,
             schema=schema
         )]
     except pd.errors.EmptyDataError:
@@ -689,13 +777,14 @@ def process_excel(
 
             try:
                 df = excel_file.parse(sheet_name)
-                header_note = None
+                # Each header notice is its own line, joined below.
+                header_notes: List[str] = []
                 footer_note = None
 
                 # Drawings are stored at workbook level in the archive, so the
                 # note is emitted once, on the first sheet.
                 if has_visuals and i == 1:
-                    header_note = (
+                    header_notes.append(
                         "-- [Note: Workbook contains visual elements "
                         "(images/charts); they are not extracted] --"
                     )
@@ -706,11 +795,11 @@ def process_excel(
                     schema = build_table_schema(df, include_describe=stats_summary)
 
                 if schema_only:
-                    header_note = (header_note or "") + "-- [Schema only: data rows omitted] --"
+                    header_notes.append("-- [Schema only: data rows omitted] --")
                     tables_ir.append(TableIR(
                         name=str(sheet_name),
                         df=pd.DataFrame(),
-                        header_note=header_note,
+                        header_note="\n".join(header_notes),
                         sheet_number=i,
                         file_path=display_path,
                         schema=schema
@@ -724,18 +813,14 @@ def process_excel(
                     total_rows = len(df)
                     if total_rows > max_rows:
                         df = df.sample(n=max_rows, random_state=seed).sort_index()
-                        footer_note = (footer_note or "") + (
-                            f"-- [Sheet truncated: Showing random {max_rows} of "
-                            f"{total_rows:,} rows to save context] --"
-                        )
-                        header_note = (header_note or "") + (
+                        header_notes.append(
                             f"-- [Sample: random {max_rows} of {total_rows:,} rows] --"
                         )
 
                 tables_ir.append(TableIR(
                     name=str(sheet_name),
                     df=df,
-                    header_note=header_note,
+                    header_note="\n".join(header_notes) or None,
                     footer_note=footer_note,
                     sheet_number=i,
                     file_path=display_path,
@@ -902,23 +987,17 @@ def process_arrow_file(
             )]
 
         header_note = None
-        footer_note = None
         total_rows = len(df)
 
         if total_rows > sample_size:
             # sort_index restores file order so the sample reads naturally.
             df = df.sample(sample_size, random_state=seed).sort_index()
             header_note = f"-- [Sample: random {sample_size} of {total_rows:,} rows] --"
-            footer_note = (
-                f"-- [{ext[1:].upper()} truncated: Showing random {sample_size} "
-                f"of {total_rows:,} rows to save context] --"
-            )
 
         return [TableIR(
             name=fp.name,
             df=df,
             header_note=header_note,
-            footer_note=footer_note,
             schema=schema,
         )]
 
@@ -1268,10 +1347,7 @@ def _process_sqlite_table(
         return TableIR(
             df=sample_df,
             header_note=f"-- [Sample: first {shown} of {count_str} rows] --",
-            footer_note=(
-                f"-- [Large table: showing first {shown} rows; "
-                "full-scan stats omitted] --"
-            ),
+            footer_note="-- [Large table: full-scan stats omitted] --",
             schema=None,
             **base,
         )
@@ -1285,20 +1361,14 @@ def _process_sqlite_table(
 
     total_rows = len(full_df)
     header_note = None
-    footer_note = None
     df = full_df
     if total_rows > sample_size:
         # sort_index restores natural order so the sample reads coherently.
         df = full_df.sample(n=sample_size, random_state=seed).sort_index()
         header_note = f"-- [Sample: random {sample_size} of {total_rows:,} rows] --"
-        footer_note = (
-            f"-- [Table truncated: Showing random {sample_size} of "
-            f"{total_rows:,} rows to save context] --"
-        )
     return TableIR(
         df=df,
         header_note=header_note,
-        footer_note=footer_note,
         schema=schema,
         **base,
     )

@@ -4,7 +4,8 @@ Table-limit enforcement tests.
 ``process_csv`` and ``process_excel`` no longer accept ``table_limit`` /
 ``table_truncate``. Those parameters were threaded in from the parser classes but
 never used: the character-limit truncation for CSV/Excel tables happens in the
-output layer (``enforce_table_limit`` inside the generators), not in the parser.
+output layer (the generators pass the limits to ``render_table_text``, which
+calls ``enforce_table_limit``), not in the parser.
 
 These tests prove both halves of that claim:
 1. the output layer still truncates an oversized table, and
@@ -53,7 +54,7 @@ def test_output_layer_still_enforces_table_limit() -> None:
         config=cfg,
     )
 
-    assert "[Table truncated: Total size exceeded 1000 characters" in result
+    assert "-- [Table truncated: showing first " in result
 
 
 def test_process_csv_dropped_table_params() -> None:

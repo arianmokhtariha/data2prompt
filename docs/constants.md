@@ -265,11 +265,17 @@ syntax differs) across four parts:
    items: the Budget report is item 2, inserted between Metadata and the File
    Index, and is present only when a token budget was requested (see
    [`budget.md`](budget.md)); the remaining items renumber accordingly
-   (File Index is 3, Files is 4, End of codebase is 5).
+   (File Index is 3, Files is 4, End of codebase is 5). Metadata is described
+   as token estimate + content summary; the generation timestamp is described
+   under End of codebase, where it now renders (it was moved there so the
+   document prefix stays byte-stable for provider prompt caching, see
+   [output.md](output.md#end-of-codebase-anchor)).
 3. **Reading conventions** — dynamic backtick fencing, notebook cell / Excel
    sheet / SQLite table labeling (the latter with `CREATE TABLE` DDL in a
    fenced `sql` block / `<ddl>` element), schema blocks (full-dataset stats vs.
-   sampled rows), the `-- [...] --` tool-notice grammar, and env-value redaction.
+   sampled rows), sample-row cell conventions (an empty cell is a missing
+   value; `↵` marks a line break inside a value), the `-- [...] --`
+   tool-notice grammar, and env-value redaction.
 4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted
    content is not included and must not be invented; samples illustrate
    structure only; the File Index `Status` is authoritative, with the full
@@ -292,6 +298,7 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
     ("sqlite", ...),      # "SQLite databases are split into tables..." bullet
     ("tabular", ...),     # whole "Tabular data files..." schema-block bullet
     ("sqlite", ...),      # SQLite "large table" tail sentence, tail-only
+    ("tabular", ...),     # sample-row cell conventions (empty cell, ↵) bullet
     ("env", ...),
     ("tabular", ...),     # accuracy-rules "Use the schema block..." bullet
 ]
@@ -321,6 +328,27 @@ overlap — one is a substring of the other — and why that's safe) is in
 **Consumed by:**
 - [`output.py`](../src/data2prompt/output.py) — `_active_preamble_triggers()`
   / `_prune_preamble()`
+
+#### `TABLE_CELL_NEWLINE_MARKER` — Line Break Inside a Sample Cell
+
+```python
+TABLE_CELL_NEWLINE_MARKER = "↵"
+```
+
+**Type:** `str`
+
+**Purpose:** Replaces every line break (`\r\n`, `\r`, `\n`) inside a
+sample-table value so the value stays on its table row. `↵` was chosen over a
+literal `\n` or `<br>` because real data often contains those strings, while
+`↵` almost never appears; it costs ~2 tokens. The `tabular` preamble bullet
+teaches it literally, so changing the marker means editing both preambles and
+their `PREAMBLE_OPTIONAL_SEGMENTS` fragments too (a test in
+`tests/test_output.py` checks the rendered preamble names this constant).
+
+**Consumed by:**
+- [`parsers.py`](../src/data2prompt/parsers.py) — `_escape_table_cell()`, used
+  by `render_sample_table()` and `render_schema_block()` (see
+  [parsers.md](parsers.md#table-text-helpers))
 
 #### XML Tag Constants
 

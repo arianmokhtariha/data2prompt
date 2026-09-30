@@ -114,7 +114,6 @@ Core dependencies, all declared in `pyproject.toml`:
 | :--- | :--- | :--- |
 | `pandas` | 2.0.0 | Tabular parsing, profiling, and sampling |
 | `openpyxl` | 3.1.0 | Excel workbook reading |
-| `tabulate` | 0.9.0 | Rendering schema and sample tables |
 | `rich` | 13.0.0 | Terminal UI, progress bar, and final report |
 | `tiktoken` | 0.7.0 | BPE tokenization for token counting |
 | `regex` | 2024.0.0 | Pattern support, and the fallback token counter |

@@ -112,7 +112,8 @@ def test_process_sqlite_counts_full_rows_before_sampling(tmp_path: Path) -> None
     assert len(customers.df) == 15
     assert customers.schema.row_count == 50               # full count, not sample
     assert "random 15 of 50 rows" in (customers.header_note or "")
-    assert "Table truncated" in (customers.footer_note or "")
+    # The header note alone carries the sampling fact; no duplicate footer.
+    assert customers.footer_note is None
     # sort_index restores insertion order so the sample reads coherently
     ids = customers.df["id"].tolist()
     assert ids == sorted(ids)
@@ -133,7 +134,8 @@ def test_process_sqlite_large_table_degrades_to_head_sample(tmp_path: Path) -> N
     assert customers.schema is None                       # no misleading stats block
     assert customers.ddl is not None                      # structure still available
     assert "first 5 of 50 rows" in (customers.header_note or "")
-    assert "full-scan stats omitted" in (customers.footer_note or "")
+    # The footer adds only what the header lacks: no repeated row count.
+    assert customers.footer_note == "-- [Large table: full-scan stats omitted] --"
 
 
 # ---------------------------------------------------------------------------

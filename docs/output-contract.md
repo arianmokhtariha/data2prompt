@@ -33,7 +33,11 @@ degrades the product.
 1. **Format parity.** Markdown and XML are logically identical: same
    information, same section order, same vocabulary — only the syntax differs.
    Every addition lands in *both* generators and *both* preambles, or in
-   neither. There is no Markdown-only or XML-only feature.
+   neither. There is no Markdown-only or XML-only feature. Content both
+   formats render identically has one shared renderer in `parsers.py`
+   (`render_schema_block()` for schema blocks, `render_table_text()` for a
+   table's notes and sample rows), also used by `flatten_ir()` so per-file
+   token estimates count the same text; never re-implement it per generator.
 
 2. **The document teaches the LLM how to read itself.** The preambles
    (`SYSTEM_INSTRUCTIONS_MARKDOWN` / `SYSTEM_INSTRUCTIONS_XML` in
@@ -124,7 +128,11 @@ degrades the product.
    (the `DefaultParser` reads only the first 100 characters to detect
    previously generated output — nothing may precede it). The preamble sits
    at the top, the File Index before all content, and the end-of-codebase
-   recap is the final section — nothing renders after it. The token
+   recap is the final section — nothing renders after it. Run-varying
+   content (today only the generation timestamp) lives inside the end anchor,
+   never before it: everything above the anchor must be byte-identical across
+   runs of an unchanged project, so the document prefix can hit a provider
+   prompt cache. The token
    placeholders `{{TOTAL_TOKENS}}` / `{{TOKEN_METHOD}}` are substituted by
    `main.py` *after* generation; new sections must be fully known at
    `generate()` time and must never emit those literal placeholder strings.
@@ -178,8 +186,11 @@ degrades the product.
    (rare).
 5. Tests: assert the notice starts with `-- [` and carries its counts. Keep
    existing marker substrings intact — several tests grep for phrases like
-   `"CSV truncated"`, `"Sheet truncated"`, `"Table data truncated"`,
+   `"Table truncated"`, `"Workbook truncated"`, `"Table data truncated"`,
    `"Malformed"`; grep `tests/` before rewording any existing notice.
+6. One fact, one notice: don't add a notice that repeats one already attached
+   to the same content (e.g. a footer restating the `Sample:` header's row
+   counts). A sampled table carries exactly one sampling notice.
 
 ### Adding a new inclusion status
 

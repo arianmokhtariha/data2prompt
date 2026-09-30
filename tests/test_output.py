@@ -23,6 +23,7 @@ from data2prompt.output import (
 from data2prompt.utils import count_tokens
 from data2prompt.parsers import NotebookCellIR, TableIR, build_table_schema
 from data2prompt.constants import (
+    TABLE_CELL_NEWLINE_MARKER,
     PREAMBLE_OPTIONAL_SEGMENTS,
     SYSTEM_INSTRUCTIONS_MARKDOWN,
     SYSTEM_INSTRUCTIONS_XML,
@@ -525,6 +526,7 @@ def test_markdown_preamble_omits_gated_bullets_without_matching_files() -> None:
     assert "SQLite databases are split into tables" not in output
     assert "Tabular data files" not in output
     assert "very large database table" not in output
+    assert "sample-row tables an empty cell" not in output
     assert "Env files list variable names" not in output
     # Generic, cross-cutting bullets are never gated.
     assert "File content sits in fenced code blocks" in output
@@ -558,6 +560,11 @@ def test_markdown_preamble_tabular_without_sqlite_keeps_general_sentence_only() 
         files_data=_sample_files(), stats={"csv_count": 1},
     )
     assert "Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite)" in output
+    # The sample-cell conventions are taught with the marker actually used.
+    assert (
+        "an empty cell is a missing value (null/NaN) and "
+        f"`{TABLE_CELL_NEWLINE_MARKER}`"
+    ) in output
     assert "very large database table" not in output
     assert "SQLite databases are split into tables" not in output
 

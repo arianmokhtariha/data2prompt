@@ -103,7 +103,7 @@ Model. Nothing in it was written by hand.
 
 ## Document layout
 
-1. Metadata — generation timestamp, token estimate, and a content summary.
+1. Metadata — token estimate and a content summary.
 2. Budget report — present only when a token budget was requested; states
    the budget and every data-reduction adjustment applied to fit it,
    including files omitted entirely (they appear in the File Index with
@@ -113,7 +113,8 @@ Model. Nothing in it was written by hand.
    strings used in the `## File:` headers below.
 4. Files — one section per file, introduced by `## File: {path}`, in the
    same order as the File Index.
-5. End of codebase — closing marker; nothing follows it.
+5. End of codebase — closing marker and generation timestamp; nothing
+   follows it.
 
 ## Reading conventions
 
@@ -133,6 +134,8 @@ Model. Nothing in it was written by hand.
   are only a small random sample. A very large database table instead shows
   only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
   notice.
+- In sample-row tables an empty cell is a missing value (null/NaN) and `↵`
+  marks a line break inside the value.
 - Lines of the form `-- [...] --` are notices inserted by the tool
   (sampling, truncation, omission, errors). They are NOT part of the
   original file content.
@@ -157,8 +160,7 @@ files, produced by the data2prompt tool for consumption by a Large Language
 Model. Nothing in it was written by hand.
 
 Document layout, in order:
-1. <metadata> — generation timestamp, token estimate, and a <stats/>
-   content summary.
+1. <metadata> — token estimate and a <stats/> content summary.
 2. <budget_report> — present only when a token budget was requested; its
    entries state the budget and every data-reduction adjustment applied to
    fit it, including files omitted entirely (status Omitted in the index).
@@ -167,7 +169,8 @@ Document layout, in order:
    match the path attribute of the corresponding <file> element.
 4. <files> — one <file path="..." type="..." status="..."> element per
    file, in the same order as the file index.
-5. <end_of_codebase> — closing marker; nothing follows it.
+5. <end_of_codebase> — closing marker and generation timestamp; nothing
+   follows it.
 
 Reading conventions:
 - Element content is embedded VERBATIM — it is not XML-escaped. Treat the
@@ -186,6 +189,8 @@ Reading conventions:
   shown are only a small random sample. A very large database table instead
   shows only its DDL and a small head sample, flagged by a
   -- [Large table: ...] -- notice.
+- In sample-row tables an empty cell is a missing value (null/NaN) and ↵
+  marks a line break inside the value.
 - Lines of the form -- [...] -- are notices inserted by the tool (sampling,
   truncation, omission, errors). They are NOT part of the original file.
 - Env files list variable names only; every value is replaced with
@@ -276,6 +281,15 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
   -- [Large table: ...] -- notice.""",
     ),
     (
+        'tabular',
+        """- In sample-row tables an empty cell is a missing value (null/NaN) and `↵`
+  marks a line break inside the value.
+""",
+        """- In sample-row tables an empty cell is a missing value (null/NaN) and ↵
+  marks a line break inside the value.
+""",
+    ),
+    (
         'env',
         """- Env files list variable names only; every value is replaced with
   `<redacted>`.
@@ -294,6 +308,12 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
 """,
     ),
 ]
+
+# Stands in for a line break inside a sample-table cell, so a multi-line value
+# stays on its table row. A symbol real data almost never contains (unlike a
+# literal "\n" or "<br>"), costing ~2 tokens. The tabular preamble bullet above
+# teaches it literally; keep that text in sync if this ever changes.
+TABLE_CELL_NEWLINE_MARKER = "↵"
 
 # Structural tag names shared by the XML generator.
 TAG_FILES = "files"

@@ -124,9 +124,12 @@ class TableIR:
 Represents tabular data (CSV, Excel, SQLite), capturing:
 - **Table name** (filename, sheet name, or DB table/view name)
 - **DataFrame** for structured data representation
-- **Header/footer notes** for sampling indicators (visual-element detection in
-  Excel is reported through `header_note`; a former `visual_warning` field was
-  removed — nothing ever read it)
+- **Header/footer notes**: `-- [...] --` notices rendered above/below the
+  sample rows. The header holds the sampling notice (and, in Excel, the
+  visual-elements and schema-only notices, one per line); the footer holds
+  empty/error notes, cap notes (`Workbook truncated`, `Database truncated`)
+  and the SQLite large-table note. A former `visual_warning` field was removed
+  — nothing ever read it
 - **Sheet metadata** for multi-sheet Excel files and multi-table databases:
   `sheet_number` is the 1-based sub-section ordinal, and `section_label` is the
   word used in the sub-section heading ("Sheet" for Excel, "Table" for SQLite)
@@ -238,13 +241,19 @@ def flatten_ir(
 
 - **String content**: Returned as-is
 - **NotebookCellIR list**: Concatenates source and outputs
-- **TableIR list**: Converts DataFrames to string representation with metadata
+- **TableIR list**: Sub-section label, DDL and schema block (when gated in),
+  then the notes and sample rows from [`render_table_text()`](#table-text-helpers),
+  the same text the generators emit
 
 The keyword-only `schema_only` and `stats_summary` flags mirror the rendering decisions
 in [`output.py`](output.md) so the token estimate tracks the real output: the schema
 block is included when either flag is set, and data rows are dropped under `schema_only`.
 Defaults are `False`, keeping legacy callers unaffected; the parser classes and `main.py`
 pass the real `Config` flags.
+
+`flatten_ir()` does **not** apply the `table_limit` cap (it receives no limits),
+so for a table over `config.table_limit` characters the per-file estimate counts
+all sample rows while the document shows only the rows that fit.
 
 ### Schema Helpers
 
@@ -278,8 +287,61 @@ def render_schema_block(schema, *, show_missing: bool, show_describe: bool) -> s
   lookup would ambiguously return every matching row instead of the one row that
   actually lines up with this column.
   When `show_describe=False`, only `column | dtype [| missing | missing %]` are shown.
+  Column names and `describe()` values pass through the same cell escaping as
+  sample rows (`_escape_table_cell()`, below), so a `|` or line break in a
+  name or a `top` value cannot break the table.
   It is the **single source of truth** for schema rendering, used by both `flatten_ir()`
   (token estimate) and the output generators in [`output.py`](output.md).
+
+### Table Text Helpers
+
+The text under a table's headings (notes + sample rows) has one renderer,
+following the `render_schema_block()` pattern: used by both output generators
+(so Markdown and XML are identical by construction) and by `flatten_ir()` (so
+per-file token counts measure the real text).
+
+```python
+def render_table_text(
+    table: TableIR,
+    *,
+    include_rows: bool,
+    table_limit: Optional[int] = None,
+    table_truncate: Optional[int] = None,
+) -> str: ...
+def render_sample_table(df: pd.DataFrame) -> str: ...
+```
+
+- `render_table_text()` joins, one per line: `header_note`, the sample rows
+  (only when `include_rows` and the df is non-empty), `footer_note`. When both
+  limits are given it caps the **rows alone** with
+  [`enforce_table_limit(..., header_lines=2)`](#table-size-enforcement), so a
+  cut lands on a row boundary and both notes always survive. The generators
+  pass `config.table_limit` / `config.table_truncate`; `flatten_ir()` passes none.
+- `render_sample_table()` writes a compact Markdown table, one line per row,
+  with **no alignment padding** (padding costs tokens and tells a model
+  nothing). It replaced `DataFrame.to_markdown()` (tabulate), which had four
+  defects: a `|` in a value added fake columns, an embedded newline split one
+  row into two, a missing value printed as `nan` (indistinguishable from the
+  string "nan"), and the default `floatfmt="g"` rounded real data to 6
+  significant digits (`102479.81746` → `102480`).
+- Cell rules (`_format_sample_cell()` / `_escape_table_cell()`):
+  - missing (`None`, `NaN`, `NaT`, `pd.NA`) → empty cell;
+  - any other value → `str(value)`, which for floats is the shortest
+    round-trip form, so sample values are never rounded (rounding belongs to
+    computed stats only). Values are read from each column's own array
+    (`df.iloc[:, i].array`, positional so duplicate labels stay apart), not
+    via `itertuples()`, which widens `float32` to a Python float and would
+    print `0.1` as `0.10000000149011612`;
+  - `\r\n`, `\r` and `\n` → `TABLE_CELL_NEWLINE_MARKER` (`↵`). Chosen over a
+    literal `\n` or `<br>` because real data often contains those strings
+    (regexes, Windows paths, HTML), while `↵` almost never appears; it costs
+    ~2 tokens and only appears where a value really had a line break;
+  - `|` → `\|` (standard GFM escape). Backslashes are not escaped, to keep
+    Windows paths cheap.
+- The empty-cell and `↵` conventions are taught by a `tabular`-triggered
+  preamble bullet (see [constants.md](constants.md)). An empty string and a
+  missing value render the same; CSV/Excel reads already turn empty fields into
+  `NaN`, so this only matters for SQLite `''` values.
 
 ## Parser Implementations
 
@@ -298,10 +360,12 @@ Uses [`process_csv()`](../src/data2prompt/parsers.py#L149) to:
 4. Otherwise sample `config.csv_sample_size` rows using `config.seed` for
    reproducibility, then `sort_index()` so the sampled rows appear in **original
    file order** (time series stay chronological, ids stay ascending)
-5. Add header/footer notes indicating sampling; attach the schema. The notes
-   ground the sample in the full-dataset size —
+5. Add one header note indicating sampling; attach the schema. The note
+   grounds the sample in the full-dataset size —
    `-- [Sample: random 15 of 1,234,567 rows] --` — captured via `len(df)`
-   **before** sampling, so an LLM can never mistake the sample for the data
+   **before** sampling, so an LLM can never mistake the sample for the data.
+   There is deliberately no footer note repeating it (see
+   [One sampling notice per table](#one-sampling-notice-per-table))
 6. Return a single-element `TableIR` list (status `"Schema Only"` when `schema_only`)
 
 **Error Handling:**
@@ -356,7 +420,7 @@ Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
 2. Detect `CREATE TABLE` and `BEGIN TABLE` blocks
 3. Buffer `INSERT INTO` statements and data rows
 4. Sample `config.sql_sample_size` rows per table using seeded random selection
-5. Apply secondary truncation via [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) if sampled block exceeds `config.table_limit`
+5. Apply secondary truncation via [`enforce_table_limit()`](#table-size-enforcement) if the data block exceeds `config.table_limit`: whole lines are kept up to `config.table_truncate` characters, never a line cut in half
 6. Preserve schema keywords (`ALTER`, `CONSTRAINT`, `VIEW`, `DROP`, `INDEX`, `TABLE`)
 7. Cap total non-data lines at `config.sql_max_lines`; when non-blank lines are
    dropped by the cap, a trailing
@@ -404,8 +468,11 @@ Uses [`process_excel()`](../src/data2prompt/parsers.py) to:
    - Under `schema_only`: append a schema-only `TableIR` (empty df) and skip rows
    - Otherwise sample `config.csv_sample_size` rows if exceeding limit, then
      `sort_index()` so the sample keeps original sheet order
-   - Add sampling notes carrying the full sheet's row count (captured before
-     sampling), e.g. `-- [Sample: random 15 of 8,200 rows] --`
+   - Add one sampling header note carrying the full sheet's row count
+     (captured before sampling), e.g. `-- [Sample: random 15 of 8,200 rows] --`.
+     Header notices are collected in a list and joined with newlines, so the
+     first sheet of a workbook with visuals gets the visuals note and the
+     sampling (or schema-only) note as two separate `-- [...] --` lines
 5. Return list of `TableIR` objects (one per sheet)
 
 `ExcelParser.parse()` computes each sheet's `file_path` (`display_path`) as the
@@ -488,8 +555,8 @@ Handles columnar binary formats via [`process_arrow_file()`](../src/data2prompt/
    before sampling, so row counts and missing percentages reflect the entire file.
 5. **Sampling**: mirrors `CSVParser` — if the row count exceeds `config.csv_sample_size`,
    a seeded random sample is taken, then re-sorted to original file order. The
-   sampling notes carry the full row count (`-- [Sample: random 15 of 50,000
-   rows] --`), captured before sampling.
+   sampling header note carries the full row count (`-- [Sample: random 15 of
+   50,000 rows] --`), captured before sampling.
 6. **schema_only mode**: returns an empty-df `TableIR` carrying only the schema.
 
 **Statistics updated**: `parquet_count`, `feather_count`, or `arrow_count` (one per file,
@@ -558,8 +625,9 @@ blocks, table-size capping, canonical paths, File Index status, and the
    - **Large table** (count above the threshold, or unknown) — read with
      `LIMIT k` only. `schema` is `None`; structure comes from the DDL, so
      sample-derived stats never masquerade as full-dataset truth. Flagged with
-     `-- [Sample: first k of N rows] --` and
-     `-- [Large table: showing first k rows; full-scan stats omitted] --`.
+     `-- [Sample: first k of N rows] --` (header) and
+     `-- [Large table: full-scan stats omitted] --` (footer; it adds only what
+     the header lacks, never a repeated row count).
    - **`--schema-only`** drops data rows: small tables still full-read for an
      exact schema block + DDL; large tables show DDL and a row-count note only.
 5. **Identifier safety.** Table/view/index names cannot be parameterized, so
@@ -694,15 +762,33 @@ def truncate_long_lines(text: str, threshold: int, truncate_to: int) -> str:
 
 ### Table Size Enforcement
 
-The [`enforce_table_limit()`](../src/data2prompt/parsers.py#L97) function provides secondary protection against oversized table representations:
+The [`enforce_table_limit()`](../src/data2prompt/parsers.py) function provides secondary protection against oversized table representations:
 
 ```python
-def enforce_table_limit(text: str, limit: int, truncate_to: int) -> str:
-    """
-    Checks if a table's string representation exceeds a character limit.
-    If it does, truncates it and appends a warning.
-    """
+def enforce_table_limit(
+    text: str,
+    limit: int,
+    truncate_to: int,
+    *,
+    header_lines: int = 0,
+) -> str:
+    """Cap an oversized block of table rows at the last row that fits."""
 ```
+
+- Text of at most `limit` characters is returned unchanged.
+- Otherwise it works in **whole lines** (each line is one row): the first
+  `header_lines` lines are always kept, then rows while the kept text stays
+  within `truncate_to` characters, then one notice:
+  `-- [Table truncated: showing first 4 of 15 rows; the table exceeded 50,000 characters] --`.
+  A row is never cut in half, and the notice cites kept and total rows
+  (output-contract invariant 3).
+- Two callers: [`render_table_text()`](#table-text-helpers) passes
+  `header_lines=2` so a Markdown table keeps its header and separator row;
+  `process_sql()` passes raw SQL data lines with the default `0`.
+- The cap is applied to the rows **only**, never to the notes around them.
+  Formerly the generators sliced header note + table + footer note together at
+  a character offset, which left a half row and cut the footer note (and with
+  it the true row count) off the end.
 
 ### Error Recovery
 
@@ -754,11 +840,10 @@ Current notices:
 
 | Notice (representative form) | Emitted by |
 |---|---|
-| `-- [Sample: random 15 of 1,234,567 rows] --` | CSV / Excel / Arrow / SQLite sampling (header); SQLite large tables use `first 15` instead of `random 15` |
-| `-- [CSV truncated: Showing random 15 of 1,234,567 rows to save context] --` | `process_csv` (footer; `Sheet`/`Table`/`PARQUET`/`FEATHER`/`ARROW` variants likewise) |
+| `-- [Sample: random 15 of 1,234,567 rows] --` | CSV / Excel / Arrow / SQLite sampling (header; the only sampling notice, see below); SQLite large tables use `first 15` instead of `random 15` |
 | `-- [Schema only: data rows omitted] --` | CSV / Excel / Arrow / SQLite under `--schema-only` |
 | `-- [Schema only: 1,234 rows, data omitted] --` | `process_sqlite` large table under `--schema-only` (row count kept, no data) |
-| `-- [Large table: showing first 15 rows; full-scan stats omitted] --` | `process_sqlite` tables above `DEFAULT_DB_FULL_SCAN_MAX_ROWS` (footer) |
+| `-- [Large table: full-scan stats omitted] --` | `process_sqlite` tables above `DEFAULT_DB_FULL_SCAN_MAX_ROWS` (footer) |
 | `-- [Database truncated: Only first 25 tables processed] --` | `process_sqlite` `max_tables` cap |
 | `-- [Skipped: file.db is not a SQLite database (header check failed)] --` | `SQLiteParser` magic-byte sniff |
 | `-- [Note: database contains no user tables] --` | `process_sqlite` empty database |
@@ -767,7 +852,7 @@ Current notices:
 | `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --` | `process_sql` line cap |
 | `-- [Output truncated: Showing first 40 lines] --` | notebook outputs |
 | `-- [Line truncated: showing first 1000 characters] --` | `truncate_long_lines` |
-| `-- [Table truncated: Total size exceeded N characters. ...] --` | `enforce_table_limit` |
+| `-- [Table truncated: showing first 4 of 15 rows; the table exceeded 50,000 characters] --` | `enforce_table_limit` (rendered sample rows and SQL data blocks) |
 | `-- [File truncated: Showing first 10KB ...] --` | `DefaultParser` size cap |
 | `-- [Binary content detected (.bin): content not included] --` | `DefaultParser` |
 | `-- [Content skipped: (.png) files are excluded by exclusion rules] --` | `process_target_file` (main.py) |
@@ -776,6 +861,23 @@ Current notices:
 | `-- [Error: Malformed Jupyter Notebook (Invalid JSON)] --` | `process_notebook` |
 | `-- [Note: notebook contains no cells] --` | `process_notebook` on a valid, genuinely empty `"cells": []` notebook |
 | `-- [Error reading CSV/SQL/Excel/DB/...: message] --` | error paths (sanitized); `DB` covers both a connection-open failure and a database that passes the magic-byte sniff but fails on the discovery query |
+
+### One sampling notice per table
+
+A sampled table carries exactly one sampling notice, the `Sample:` header note.
+CSV, Excel, Arrow and SQLite used to add a footer note saying the same thing
+(`-- [CSV truncated: Showing random 15 of 2,040 rows to save context] --`, with
+`Sheet` / `PARQUET` / `Table` variants). The header one was kept because:
+
+- it uses `Sample`, the category word that names what happened; `truncated` is
+  reserved for real cuts (`Table truncated`, `Workbook truncated`, ...), so the
+  two stay distinguishable;
+- it sits above the rows, so the model reads them already knowing they are a
+  sample, and a table-limit cut can never remove it;
+- it is shorter (no "to save context" filler).
+
+The SQLite large-table footer stays because it adds a fact the header lacks
+(stats were not computed); it no longer repeats the row count.
 
 ## Constants Used
 
@@ -797,6 +899,7 @@ The parsers module imports configuration constants from [`constants.py`](../src/
 | `DEFAULT_TABLE_CHAR_LIMIT` | 50000 | Max characters per table representation |
 | `DEFAULT_TABLE_TRUNCATED_SIZE` | 20000 | Characters to keep when table is truncated |
 | `GENERATION_FLAG` | `"DATA2PROMPT_GENERATED_CONTENT"` | Skip marker for generated files |
+| `TABLE_CELL_NEWLINE_MARKER` | `"↵"` | Replaces a line break inside a sample-table cell |
 
 ## Integration Points
 
@@ -815,7 +918,7 @@ The output generators in [`output.py`](../src/data2prompt/output.py) receive `Pa
 - **MarkdownGenerator**: Formats `NotebookCellIR` and `TableIR` into markdown code blocks
 - **XMLGenerator**: Formats IR into XML tags with attributes
 
-The [`flatten_ir()`](../src/data2prompt/parsers.py#L56) function converts IR to strings for **per-file** token estimation during parsing (the `tokens` field on each `ParserResult`). The headline output total is counted separately by `main.py` on the fully rendered string, not via `flatten_ir()`.
+The [`flatten_ir()`](../src/data2prompt/parsers.py) function converts IR to strings for **per-file** token estimation during parsing (the `tokens` field on each `ParserResult`). The headline output total is counted separately by `main.py` on the fully rendered string, not via `flatten_ir()`.
 
 ### With utils.py
 

@@ -33,8 +33,8 @@ from data2prompt.parsers import (
     NotebookCellIR,
     TableIR,
     FileData,
-    enforce_table_limit,
     render_schema_block,
+    render_table_text,
 )
 
 
@@ -308,6 +308,8 @@ class MarkdownGenerator(OutputGenerator):
         schema_only = bool(config and config.schema_only)
         render_block = stats_summary or schema_only
         render_data = not schema_only
+        table_limit = config.table_limit if config else None
+        table_truncate = config.table_truncate if config else None
 
         # Preamble is pruned to the file types actually scanned this run, so
         # the LLM is never taught a reading convention for content that
@@ -329,7 +331,6 @@ class MarkdownGenerator(OutputGenerator):
             "",
             preamble,
             "",
-            f"> Generated on: {timestamp}",
             # Placeholders substituted by main.py once the full output is counted.
             "> Tokens: {{TOTAL_TOKENS}} (est. via {{TOKEN_METHOD}})",
             f"> Contents: {contents_line}",
@@ -402,21 +403,12 @@ class MarkdownGenerator(OutputGenerator):
                         ))
                         lines.append("")
 
-                    table_parts = []
-                    if table.header_note:
-                        table_parts.append(table.header_note)
-
-                    if render_data and not table.df.empty:
-                        table_parts.append(table.df.to_markdown(index=False))
-
-                    if table.footer_note:
-                        table_parts.append(table.footer_note)
-
-                    table_text = "\n".join(table_parts)
-                    if config:
-                        table_text = enforce_table_limit(table_text, config.table_limit, config.table_truncate)
-
-                    lines.append(table_text)
+                    lines.append(render_table_text(
+                        table,
+                        include_rows=render_data,
+                        table_limit=table_limit,
+                        table_truncate=table_truncate,
+                    ))
 
                     # Close Sheet block if applicable
                     if table.sheet_number is not None:
@@ -441,8 +433,12 @@ class MarkdownGenerator(OutputGenerator):
             lines.append("")
 
         # Recency anchor: an explicit terminal section so the model knows the
-        # document is complete and nothing was cut off mid-file.
+        # document is complete and nothing was cut off mid-file. The timestamp
+        # lives here, not in the metadata, so everything above stays
+        # byte-stable across runs (a reusable provider prompt-cache prefix).
         lines.append(f"# End of codebase: {project_name}")
+        lines.append("")
+        lines.append(f"> Generated on: {timestamp}")
         lines.append("")
         lines.append(_end_recap(project_name, len(index_entries)))
 
@@ -464,6 +460,8 @@ class XMLGenerator(OutputGenerator):
         schema_only = bool(config and config.schema_only)
         render_block = stats_summary or schema_only
         render_data = not schema_only
+        table_limit = config.table_limit if config else None
+        table_truncate = config.table_truncate if config else None
 
         # Preamble is pruned to the file types actually scanned this run, so
         # the LLM is never taught a reading convention for content that
@@ -489,7 +487,6 @@ class XMLGenerator(OutputGenerator):
             preamble,
             "",
             "<metadata>",
-            f"    <generated_on>{timestamp}</generated_on>",
             # Placeholders substituted by main.py once the full output is counted.
             '    <total_tokens method="{{TOKEN_METHOD}}">{{TOTAL_TOKENS}}</total_tokens>',
             f"    <stats {stats_attrs}/>",
@@ -573,21 +570,12 @@ class XMLGenerator(OutputGenerator):
                         ))
                         lines.append('</schema>')
 
-                    table_parts = []
-                    if table.header_note:
-                        table_parts.append(table.header_note)
-
-                    if render_data and not table.df.empty:
-                        table_parts.append(table.df.to_markdown(index=False))
-
-                    if table.footer_note:
-                        table_parts.append(table.footer_note)
-
-                    table_text = "\n".join(table_parts)
-                    if config:
-                        table_text = enforce_table_limit(table_text, config.table_limit, config.table_truncate)
-
-                    lines.append(table_text)
+                    lines.append(render_table_text(
+                        table,
+                        include_rows=render_data,
+                        table_limit=table_limit,
+                        table_truncate=table_truncate,
+                    ))
 
                     # Close the sub-section element if applicable
                     if table.sheet_number is not None:
@@ -603,8 +591,11 @@ class XMLGenerator(OutputGenerator):
         lines.append(f"</{TAG_FILES}>")
         lines.append("")
         # Recency anchor: an explicit terminal element so the model knows the
-        # document is complete and nothing was cut off mid-file.
+        # document is complete and nothing was cut off mid-file. The timestamp
+        # lives here, not in <metadata>, so everything above stays byte-stable
+        # across runs (a reusable provider prompt-cache prefix).
         lines.append(f"<{TAG_END_OF_CODEBASE}>")
+        lines.append(f"<generated_on>{timestamp}</generated_on>")
         lines.append(_end_recap(project_name, len(index_entries)))
         lines.append(f"</{TAG_END_OF_CODEBASE}>")
         lines.append("</codebase>")

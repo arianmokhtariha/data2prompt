@@ -157,9 +157,9 @@ def test_sampling_is_applied_when_rows_exceed_sample_size(tmp_path: Path) -> Non
     table_ir = result.content[0]
     assert len(table_ir.df) == 10
     assert table_ir.header_note is not None
-    assert "Sample" in table_ir.header_note
-    assert table_ir.footer_note is not None
-    assert "PARQUET truncated" in table_ir.footer_note
+    assert "random 10 of 30 rows" in table_ir.header_note
+    # The header note alone carries the sampling fact; no duplicate footer.
+    assert table_ir.footer_note is None
 
 
 def test_duplicate_field_names_do_not_crash(tmp_path: Path) -> None:

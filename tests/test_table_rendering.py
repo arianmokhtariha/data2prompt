@@ -1,0 +1,201 @@
+"""Sample-table rendering, row-safe table truncation, and the stable prefix.
+
+The table text (notices + sample rows) is rendered by one shared helper, so
+both generators emit it identically and ``flatten_ir`` counts the same text
+the document carries. These tests pin the contracts that helper exists for:
+values render faithfully (no fake columns, split rows, ``nan`` or rounding),
+an oversized table is cut at a row boundary with its notices intact, and the
+run-varying timestamp sits in the end anchor, not in the document prefix.
+"""
+
+import re
+from types import SimpleNamespace
+from typing import List
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from data2prompt.output import MarkdownGenerator, OutputGenerator, XMLGenerator
+from data2prompt.parsers import (
+    TableIR,
+    build_table_schema,
+    enforce_table_limit,
+    flatten_ir,
+    render_schema_block,
+)
+
+GENERATORS: List[OutputGenerator] = [MarkdownGenerator(), XMLGenerator()]
+
+# One row per defect of the old tabulate rendering: a '|' that added fake
+# columns, embedded newlines (LF and CRLF) that split a row, a missing value
+# that printed as 'nan', and floats that floatfmt="g" rounded to 6 digits.
+# float32 guards the fix itself: widened to a Python float, 0.1 would print
+# as 0.10000000149011612.
+_TRICKY_DF = pd.DataFrame({
+    "id": [1, 2, 3],
+    "note": ["a | b | c", "line1\r\nline2\nline3", np.nan],
+    "score": [102479.81746, np.nan, 1.23456789],
+    "ratio": np.array([0.1, 0.25, np.nan], dtype="float32"),
+})
+_TRICKY_TABLE_TEXT = "\n".join([
+    "| id | note | score | ratio |",
+    "|---|---|---|---|",
+    "| 1 | a \\| b \\| c | 102479.81746 | 0.1 |",
+    "| 2 | line1↵line2↵line3 |  | 0.25 |",
+    "| 3 |  | 1.23456789 |  |",
+])
+
+
+def _config(
+    table_limit: int = 50_000, table_truncate: int = 20_000
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        table_limit=table_limit,
+        table_truncate=table_truncate,
+        stats_summary=False,
+        schema_only=False,
+        env_keys=True,
+    )
+
+
+def _render_table(
+    generator: OutputGenerator, table: TableIR, config: SimpleNamespace
+) -> str:
+    """Render one CSV file holding ``table``; return the part after the preamble."""
+    output = generator.generate(
+        project_name="demo",
+        tree_text="data/t.csv",
+        files_data=[{
+            "path": "data/t.csv",
+            "content": [table],
+            "type": "CSV",
+            "tokens": 0,
+            "status": "Sampled",
+        }],
+        stats={"csv_count": 1},
+        config=config,
+    )
+    # Preamble-collision rule: scope past the preamble before asserting.
+    if isinstance(generator, MarkdownGenerator):
+        return output.split("# Files", 1)[1]
+    return output.split("</purpose>", 1)[1]
+
+
+# ---------------------------------------------------------------------------
+# Item 3: faithful sample rows, identical in both formats and in the estimate
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("generator", GENERATORS, ids=["markdown", "xml"])
+def test_sample_rows_render_faithfully(generator: OutputGenerator) -> None:
+    """Pipes escaped, newlines marked, missing values empty, floats unrounded,
+    and no alignment padding, in both formats."""
+    table = TableIR(name="t.csv", df=_TRICKY_DF)
+    body = _render_table(generator, table, _config())
+    assert _TRICKY_TABLE_TEXT in body
+
+
+def test_flatten_ir_counts_the_rendered_table_text() -> None:
+    """The per-file token estimate must count the same table text the
+    generators emit, not a differently formatted stand-in."""
+    flattened = flatten_ir([TableIR(name="t.csv", df=_TRICKY_DF)])
+    assert _TRICKY_TABLE_TEXT in flattened
+
+
+def test_schema_block_escapes_pipes_in_names_and_values() -> None:
+    """A '|' in a column name or a describe() value (e.g. `top`) must not add
+    columns to the schema table: every row keeps the header's cell count."""
+    df = pd.DataFrame({"a|b": ["x | y", "x | y", "z"]})
+    schema = build_table_schema(df, include_describe=True)
+
+    block = render_schema_block(schema, show_missing=True, show_describe=True)
+
+    table_rows = [line for line in block.split("\n") if line.startswith("|")]
+    unescaped_pipes = [len(re.findall(r"(?<!\\)\|", row)) for row in table_rows]
+    assert len(set(unescaped_pipes)) == 1
+    assert "| a\\|b |" in block
+    assert "x \\| y" in block
+
+
+# ---------------------------------------------------------------------------
+# Item 7: row-safe truncation that keeps both notices
+# ---------------------------------------------------------------------------
+
+_ROW = re.compile(r"^\| \d+ \| x{100} \|$")
+_TRUNCATED = re.compile(r"^-- \[Table truncated: showing first (\d+) of 50 rows; ")
+
+
+@pytest.mark.parametrize("generator", GENERATORS, ids=["markdown", "xml"])
+def test_oversized_table_is_cut_at_a_row_boundary(
+    generator: OutputGenerator,
+) -> None:
+    """The cap applies to the rendered rows only: every kept row is whole,
+    the notice cites kept/total rows, and header and footer notes survive."""
+    header_note = "-- [Sample: random 50 of 900 rows] --"
+    footer_note = "-- [Note: footer sentinel] --"
+    table = TableIR(
+        name="t.csv",
+        df=pd.DataFrame({"id": range(50), "text": ["x" * 100] * 50}),
+        header_note=header_note,
+        footer_note=footer_note,
+    )
+
+    lines = _render_table(generator, table, _config(1_000, 500)).split("\n")
+
+    start = lines.index(header_note)
+    assert lines[start + 1:start + 3] == ["| id | text |", "|---|---|"]
+    notice_at = next(i for i, line in enumerate(lines) if _TRUNCATED.match(line))
+    rows = lines[start + 3:notice_at]
+    assert rows and all(_ROW.match(row) for row in rows)
+    assert int(_TRUNCATED.match(lines[notice_at]).group(1)) == len(rows)
+    assert len("\n".join(lines[start + 1:notice_at])) <= 500
+    assert lines[notice_at + 1] == footer_note
+
+
+def test_enforce_table_limit_cuts_raw_rows_at_a_line_boundary() -> None:
+    """The SQL path caps raw INSERT lines: no line may be cut mid-row."""
+    rows = [f"INSERT INTO t VALUES ({i}, 'value {i}');" for i in range(100)]
+    text = "".join(f"{row}\n" for row in rows)
+
+    result = enforce_table_limit(text, limit=1_000, truncate_to=500)
+
+    *kept, notice = result.split("\n")
+    assert kept == rows[:len(kept)]
+    assert len("\n".join(kept)) <= 500
+    assert notice.startswith(
+        f"-- [Table truncated: showing first {len(kept)} of 100 rows"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Item 13: the timestamp lives in the end anchor, keeping the prefix stable
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("generator", "anchor", "stamp"),
+    [
+        (MarkdownGenerator(), "# End of codebase: demo", "> Generated on: "),
+        (XMLGenerator(), "<end_of_codebase>", "<generated_on>"),
+    ],
+    ids=["markdown", "xml"],
+)
+def test_generation_timestamp_is_in_the_end_anchor(
+    generator: OutputGenerator, anchor: str, stamp: str
+) -> None:
+    """Nothing run-varying may precede the end anchor, or a regenerated
+    prompt for an unchanged project never hits a provider prompt cache."""
+    output = generator.generate(
+        project_name="demo",
+        tree_text="src/app.py",
+        files_data=[{
+            "path": "src/app.py",
+            "content": "print('hi')\n",
+            "type": "py",
+            "tokens": 0,
+            "status": "Read",
+        }],
+        stats={},
+    )
+    prefix, end_section = output.rsplit(anchor, 1)
+    assert stamp not in prefix
+    assert re.search(re.escape(stamp) + r"\d{4}-\d\d-\d\d \d\d:\d\d", end_section)
