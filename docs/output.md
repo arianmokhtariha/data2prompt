@@ -587,9 +587,9 @@ Output formats are configured via CLI arguments defined in [`src/data2prompt/cli
 
 | Constant | Value | Usage |
 |----------|-------|-------|
-| [`DEFAULT_FORMAT`](../src/data2prompt/constants.py#L40) | `'markdown'` | Default output format |
-| [`SUPPORTED_FORMATS`](../src/data2prompt/constants.py#L43) | `{'xml': '.xml', 'markdown': '.md'}` | Format-to-extension mapping |
-| [`DEFAULT_OUTPUT_FILE`](../src/data2prompt/constants.py#L39) | `'PROMPT'` | Default output filename base |
+| [`DEFAULT_FORMAT`](../src/data2prompt/constants.py) | `'markdown'` | Default output format |
+| [`SUPPORTED_FORMATS`](../src/data2prompt/constants.py) | `{'xml': '.xml', 'markdown': '.md'}` | Format-to-extension mapping |
+| [`DEFAULT_OUTPUT_FILE`](../src/data2prompt/constants.py) | `'PROMPT'` | Default output filename base |
 
 ## Extension Points
 
@@ -598,7 +598,7 @@ To add a new output format:
 1. Create a new class inheriting from `OutputGenerator`
 2. Implement the `generate()` method
 3. Update [`get_generator()`](../src/data2prompt/output.py#L232) to handle the new format
-4. Add format constant to [`SUPPORTED_FORMATS`](../src/data2prompt/constants.py#L43) if file extension mapping is needed
+4. Add format constant to [`SUPPORTED_FORMATS`](../src/data2prompt/constants.py) if file extension mapping is needed
 
 ## Module-Level Helpers
 

@@ -128,6 +128,7 @@ def _run_in(project: Path, argv: List[str]) -> None:
 def test_report_rows_use_forward_slash_paths(budget_args: List[str]) -> None:
     """The terminal report must name files by the same forward-slash path the
     document uses, not the Windows-native backslash form."""
+    # Red only on Windows, where str(Path) uses backslashes; green on POSIX.
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         (project / "data" / "raw").mkdir(parents=True)

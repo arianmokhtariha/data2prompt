@@ -172,9 +172,9 @@ skip_exts=set(args.skip_exts) | CORE_SKIP_EXTS,
 
 | Config Field | User Input | Core Constants | Final Value |
 |:-------------|:-----------|:---------------|:------------|
-| `ignore_folders` | User-provided folders | [`CORE_IGNORES`](../src/data2prompt/constants.py#L4) | Union of both |
-| `ignore_files` | User-provided files | [`CORE_IGNORE_FILES`](../src/data2prompt/constants.py#L12) | Union of both |
-| `skip_exts` | User-provided extensions | [`CORE_SKIP_EXTS`](../src/data2prompt/constants.py#L16) | Union of both |
+| `ignore_folders` | User-provided folders | [`CORE_IGNORES`](../src/data2prompt/constants.py) | Union of both |
+| `ignore_files` | User-provided files | [`CORE_IGNORE_FILES`](../src/data2prompt/constants.py) | Union of both |
+| `skip_exts` | User-provided extensions | [`CORE_SKIP_EXTS`](../src/data2prompt/constants.py) | Union of both |
 
 ### Output Naming Logic
 
@@ -226,9 +226,9 @@ from data2prompt.constants import (
 
 ### Core Ignore Sets
 
-These sets are defined in [`constants.py`](../src/data2prompt/constants.py#L4) and always applied:
+These sets are defined in [`constants.py`](../src/data2prompt/constants.py) and always applied:
 
-**[`CORE_IGNORES`](../src/data2prompt/constants.py#L4)** - Folder names excluded from tree and content:
+**[`CORE_IGNORES`](../src/data2prompt/constants.py)** - Folder names excluded from tree and content:
 ```python
 {'.git', '__pycache__', 'venv', '.venv', '.conda', '.vscode',
  '.ipynb_checkpoints', 'node_modules', '.idea', 'dist', 'build',
@@ -241,7 +241,7 @@ These sets are defined in [`constants.py`](../src/data2prompt/constants.py#L4) a
 open document). See [constants.md](constants.md#core_ignores--folder-exclusion-set)
 for why bare `env` is not a core folder ignore.
 
-**[`CORE_SKIP_EXTS`](../src/data2prompt/constants.py#L16)** - Extensions skipped (name listed, content excluded):
+**[`CORE_SKIP_EXTS`](../src/data2prompt/constants.py)** - Extensions skipped (name listed, content excluded):
 ```python
 # Data & Databases
 # ('.db'/'.sqlite'/'.sqlite3' are NOT here — handled by SQLiteParser;
