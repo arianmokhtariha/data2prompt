@@ -122,7 +122,11 @@ Model. Nothing in it was written by hand.
   backticks when the content itself contains backticks; the fence length is
   chosen so the block never terminates early.
 - Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
-  each with a fenced source block and an optional **Outputs:** block.
+  each with a fenced source block and an optional **Outputs:** block. A
+  Cell 0 holding an `-- [Execution state: ...] --` notice means the saved
+  outputs may not match a clean top-to-bottom run: "run order" lists
+  execution counts in cell order, and missing counts mean cells were re-run
+  or deleted, so hidden kernel state is likely.
 - Excel workbooks are split into sheets: `### Sheet {n}: {name} - {path}`,
   each closed by a `---` line.
 - SQLite databases are split into tables: `### Table {n}: {name} - {path}`,
@@ -152,9 +156,9 @@ Model. Nothing in it was written by hand.
 - Sampled rows illustrate structure only — never treat them as the complete
   dataset. Use the schema block for full-dataset facts.
 - The File Index Status column is authoritative for what each file
-  contains: Full, Sampled, Cleaned (notebook, outputs trimmed), Truncated,
-  Schema Only, Redacted, Excluded, Binary Skipped, Skipped, Error, or
-  Omitted (listed but not rendered)."""
+  contains: Full, Sampled, Cleaned (notebook, outputs or long lines
+  trimmed), Truncated, Schema Only, Redacted, Excluded, Binary Skipped,
+  Skipped, Error, or Omitted (listed but not rendered)."""
 
 SYSTEM_INSTRUCTIONS_XML = """<purpose>
 This document is a machine-generated snapshot of a codebase and its data
@@ -179,7 +183,11 @@ Reading conventions:
   tags as structural markers, not strict XML; content may legally contain
   <, >, and & characters. Attribute values ARE quoted and escaped.
 - Notebooks (.ipynb) are split into <cell path="..." index="..."
-  type="..."> elements holding <content> and optional <outputs>.
+  type="..."> elements holding <content> and optional <outputs>. A cell
+  with index="0" holding an -- [Execution state: ...] -- notice means the
+  saved outputs may not match a clean top-to-bottom run: "run order" lists
+  execution counts in cell order, and missing counts mean cells were re-run
+  or deleted, so hidden kernel state is likely.
 - Excel workbooks are split into <sheet name="..." sheet_number="..."
   path="..."> elements.
 - SQLite databases are split into <table name="..." table_number="..."
@@ -207,9 +215,9 @@ Accuracy rules:
 - Sampled rows illustrate structure only — never treat them as the complete
   dataset. Use the <schema> block for full-dataset facts.
 - The status attribute (on <entry> and <file>) is authoritative for what
-  each file contains: Full, Sampled, Cleaned (notebook, outputs trimmed),
-  Truncated, Schema Only, Redacted, Excluded, Binary Skipped, Skipped,
-  Error, or Omitted (listed but not rendered).
+  each file contains: Full, Sampled, Cleaned (notebook, outputs or long
+  lines trimmed), Truncated, Schema Only, Redacted, Excluded, Binary
+  Skipped, Skipped, Error, or Omitted (listed but not rendered).
 </purpose>"""
 
 # --- Optional / conditional preamble segments ---
@@ -233,10 +241,18 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
     (
         'notebooks',
         """- Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
-  each with a fenced source block and an optional **Outputs:** block.
+  each with a fenced source block and an optional **Outputs:** block. A
+  Cell 0 holding an `-- [Execution state: ...] --` notice means the saved
+  outputs may not match a clean top-to-bottom run: "run order" lists
+  execution counts in cell order, and missing counts mean cells were re-run
+  or deleted, so hidden kernel state is likely.
 """,
         """- Notebooks (.ipynb) are split into <cell path="..." index="..."
-  type="..."> elements holding <content> and optional <outputs>.
+  type="..."> elements holding <content> and optional <outputs>. A cell
+  with index="0" holding an -- [Execution state: ...] -- notice means the
+  saved outputs may not match a clean top-to-bottom run: "run order" lists
+  execution counts in cell order, and missing counts mean cells were re-run
+  or deleted, so hidden kernel state is likely.
 """,
     ),
     (
@@ -344,7 +360,7 @@ INCLUSION_STATUS_MAP: Dict[str, str] = {
     "Sampled": "Sampled",
     "Parsed": "Sampled",         # SQL: schema kept, data rows sampled
     "Extracted": "Sampled",      # Excel: sheets kept, rows sampled
-    "Cleaned": "Cleaned",        # Notebook: full source, trimmed outputs
+    "Cleaned": "Cleaned",        # Notebook: outputs or long lines trimmed
     "Truncated": "Truncated",
     "Schema Only": "Schema Only",
     "Redacted": "Redacted",

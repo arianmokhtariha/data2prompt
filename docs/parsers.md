@@ -96,13 +96,21 @@ class NotebookCellIR:
     type: str  # 'code' or 'markdown'
     source: str
     outputs: Optional[str] = None
+    trimmed: bool = False
+    error: bool = False
 ```
 
 Represents a single cell in a Jupyter Notebook, capturing:
-- **Cell number** for sequential ordering
+- **Cell number** for sequential ordering (matches the cell's position in the
+  notebook; `0` is reserved for file-level pseudo-cells: the execution-state
+  notice, the empty-notebook note, and the unreadable-notebook error)
 - **Cell type** (code/markdown)
 - **Source content** with line truncation applied
 - **Outputs** (for code cells) with truncation and filtering
+- **Parse outcome** — `trimmed` (a long line was cut, an output was clipped,
+  or rich/base64 content was dropped) and `error` (the placeholder for a
+  notebook that could not be read). Never rendered; `NotebookParser` reads
+  them to derive the file's [inclusion status](#inclusion-status)
 
 ### TableIR
 
@@ -119,6 +127,8 @@ class TableIR:
     schema: Optional[TableSchema] = None
     section_label: str = "Sheet"
     ddl: Optional[str] = None
+    partial: bool = False
+    error: bool = False
 ```
 
 Represents tabular data (CSV, Excel, SQLite), capturing:
@@ -140,6 +150,12 @@ Represents tabular data (CSV, Excel, SQLite), capturing:
 - **DDL** — optional raw `CREATE` statement(s) (SQLite only). Rendered in a
   fenced `sql` block (Markdown) / `<ddl>` element (XML), gated by the same
   flags as the schema block (`stats_summary or schema_only`).
+- **Parse outcome** — `partial` (rows were sampled, a SQLite large table was
+  head-sampled, or a `--max-sheets`/`--max-tables` cap withheld the sheets or
+  tables after this one) and `error` (this sheet/table, or the whole file,
+  could not be read). Never rendered; the tabular parsers read them to derive
+  the file's [inclusion status](#inclusion-status). Set explicitly by the
+  process functions, never inferred from the notice text.
 
 ### ColumnSchema / TableSchema
 
@@ -380,11 +396,15 @@ Uses [`process_csv()`](../src/data2prompt/parsers.py#L149) to:
    **before** sampling, so an LLM can never mistake the sample for the data.
    There is deliberately no footer note repeating it (see
    [One sampling notice per table](#one-sampling-notice-per-table))
-6. Return a single-element `TableIR` list (status `"Schema Only"` when `schema_only`)
+6. Return a single-element `TableIR` list (`partial=True` when rows were
+   sampled). The status follows the [inclusion status](#inclusion-status)
+   rules: `Read` when every row is shown, `Sampled` when sampled, `Schema Only`
+   under `schema_only`, `Error` when the file could not be read
 
 **Error Handling:**
-- Empty CSV files → Empty DataFrame with note
-- Parse errors → DataFrame with error message in footer_note
+- Empty CSV files → Empty DataFrame with note (status `Read`: nothing is withheld)
+- Parse errors → DataFrame with error message in footer_note, `error=True`
+  (status `Error`, even under `--schema-only`)
 
 ### NotebookParser
 
@@ -400,11 +420,21 @@ Uses [`process_notebook()`](../src/data2prompt/parsers.py#L178) to:
      (`'code'` and `[]` respectively), so a malformed cell degrades to empty
      content rather than aborting the whole notebook via the outer exception handler
    - Truncate long lines using [`truncate_long_lines()`](../src/data2prompt/parsers.py#L118)
-   - Filter outputs: `stream` text, `execute_result`/`display_data` plain text,
-     and `error` tracebacks (joined from the `traceback` list, prefixed with
-     `-- [Error output] --`)
-   - Apply max_lines limit per output block
-3. Return a list of `NotebookCellIR` objects. A notebook with a valid but
+   - Render each output via `_render_notebook_output()`: `stream` text,
+     `execute_result`/`display_data` plain text, and `error` tracebacks
+     (joined from the `traceback` list, prefixed with `-- [Error output] --`).
+     Other MIME types (images, HTML, JSON) are dropped, and a `text/plain`
+     payload containing `base64` drops the whole output
+   - Strip ANSI escape sequences (`\x1b[...m` colors and other CSI codes)
+     from all output text. IPython stores colored tracebacks verbatim, and
+     the codes are pure token noise. Stripping them loses no content, so it
+     does not count as trimming
+   - Apply max_lines limit per output block (`_clip_lines()`)
+   - Record `trimmed=True` on the cell when a long line was cut, an output
+     was clipped, or content was dropped
+3. Prepend a **Cell 0 execution-state notice** when the saved run history is
+   noteworthy (`_execution_state_notice()`, see below)
+4. Return a list of `NotebookCellIR` objects. A notebook with a valid but
    empty `"cells": []` list returns a single placeholder cell
    (`-- [Note: notebook contains no cells] --`) instead of an empty list —
    an empty `ParserContent` list would fall through `output.py`'s
@@ -413,9 +443,43 @@ Uses [`process_notebook()`](../src/data2prompt/parsers.py#L178) to:
    explanation, violating the "nothing partial may look complete" invariant
    (see [output-contract.md](output-contract.md)).
 
+The status is `Cleaned` only when some cell has `trimmed=True`, `Error` when
+the notebook could not be read, and otherwise `Read` (Full). See
+[inclusion status](#inclusion-status).
+
+#### Execution-state notice
+
+`execution_count` is the classic source of "works on my machine" notebook
+bugs: cells run out of order, cells never run, or cells re-run or deleted so
+the kernel held state the saved notebook no longer shows.
+`_execution_state_notice()` reads the code cells' counts and, only when
+something is noteworthy, returns one compact line that `process_notebook()`
+places in a leading `NotebookCellIR(number=0, type="markdown")`:
+
+```
+-- [Execution state: run order 1,5,2; cell 5 never run; execution counts 3-4 missing (hidden state likely); first error in cell 3: ValueError] --
+```
+
+| Part | Emitted when |
+|---|---|
+| `run order ...` | executed code cells' counts, in cell order, are not strictly increasing. Consecutive stretches collapse to ranges (`1-3,7-8,4-6`) |
+| `cell(s) N never run` | a code cell with non-blank source has no count while others do |
+| `execution count(s) A-B missing (hidden state likely)` | numbers in `1..max(count)` appear on no cell: those runs belong to re-run or deleted cells |
+| `first error in cell N: {ename}` | a code cell holds an `error` output |
+
+Cell numbers match the `Cell {n}` headers. A notebook with no executed code
+cell (never run, or saved with outputs cleared) carries no hidden state and
+gets no notice, and so does a clean top-to-bottom run. The notice appears only
+when there is something to report. Cell 0 is the file-level slot the error
+and empty-notebook placeholders already use, so every real cell keeps its
+own number. The meaning is taught in the notebooks bullet of both preambles
+(`PREAMBLE_OPTIONAL_SEGMENTS`, trigger `notebooks`).
+
 **Error Handling:**
 - JSON decode errors → Single error cell with malformed notebook message
+  (`error=True`, status `Error`)
 - General exceptions → Single error cell with exception message
+  (`error=True`, status `Error`)
 - Missing `cell_type` or `source` keys in an individual cell → safe defaults;
   the loop continues; only a truly unrecoverable file-level exception returns the
   global error cell
@@ -501,6 +565,15 @@ Uses [`process_excel()`](../src/data2prompt/parsers.py) to:
 **cwd-relative path with forward slashes** (`Path.as_posix()`), matching the
 canonical path keys used by the output File Index and file headers.
 
+Its type label is `Excel ({n} sheet)` / `Excel ({n} sheets)`, where `n` counts
+only real sheets (`TableIR`s with a `sheet_number`). A file-level placeholder
+(an unopenable workbook, a `--max-sheets 0` note) is not a sheet, so a corrupt
+workbook reads `Excel (0 sheets)` and `excel_sheets_count` is not inflated.
+The status follows the [inclusion status](#inclusion-status) rules with
+`Extracted` as the sampled status: `Error` when the workbook or every sheet
+failed, `Read` when every row of every sheet is shown, `Extracted` when any
+sheet was sampled, a sheet failed, or the sheet cap withheld sheets.
+
 #### Visual-element detection
 
 ```python
@@ -538,8 +611,10 @@ to the `ParserRegistry`, `budget.py`'s `EXTS_TABULAR`, and `main.py`'s
 
 **Error Handling:**
 - Empty sheets → Note indicating visual dashboard or empty
-- Sheet read errors → Empty DataFrame with sanitized error message
+- Sheet read errors → Empty DataFrame with sanitized error message (`error=True`)
 - Workbook open errors → single `TableIR` with sanitized error note
+  (`error=True`; this includes the missing-`xlrd` note, since the file cannot
+  be read either way)
 - `--max-sheets 0` → a standalone placeholder `TableIR` carrying the
   `-- [Workbook truncated: Only first 0 sheets processed] --` note, not an
   empty list (see step 3 above)
@@ -580,6 +655,8 @@ Handles columnar binary formats via [`process_arrow_file()`](../src/data2prompt/
    sampling header note carries the full row count (`-- [Sample: random 15 of
    50,000 rows] --`), captured before sampling.
 6. **schema_only mode**: returns an empty-df `TableIR` carrying only the schema.
+7. **Status**: [inclusion status](#inclusion-status) rules with `Sampled` as the
+   sampled status (`Read` when every row is shown, `Error` on a read failure).
 
 **Statistics updated**: `parquet_count`, `feather_count`, or `arrow_count` (one per file,
 keyed by extension).
@@ -661,8 +738,15 @@ blocks, table-size capping, canonical paths, File Index status, and the
 
 `SQLiteParser.parse()` computes each table's `file_path` (`display_path`) as the
 cwd-relative forward-slashed path (`Path.as_posix()`), and returns
-`type=f"SQLite ({n} tables)"`, `status="Schema Only"` under `--schema-only` else
-`"Sampled"`, and `stats_update={"sqlite_count": 1, "db_tables_count": n}`.
+`type="SQLite ({n} table)"` / `"SQLite ({n} tables)"` and
+`stats_update={"sqlite_count": 1, "db_tables_count": n}`, where `n` counts
+only real tables (`TableIR`s with a `sheet_number`; the error,
+no-user-tables and `--max-tables 0` placeholders are not tables). The status
+follows the [inclusion status](#inclusion-status) rules with `Sampled` as the
+sampled status: `Error` when the database or every table failed, `Read` when
+every row of every table is shown, `Sampled` when any table was sampled or
+head-sampled (large tables are always `partial`), a table failed, or the
+table cap withheld tables.
 
 > **DuckDB** (`.duckdb`) is a planned follow-up behind an optional
 > `data2prompt[duckdb]` extra (an `ArrowParser`-style import guard); it is not
@@ -670,12 +754,14 @@ cwd-relative forward-slashed path (`Path.as_posix()`), and returns
 
 **Error handling:**
 - Non-SQLite `.db` → `Skipped (Binary)` with an actionable note.
-- Connection open failure → single `TableIR` with `-- [Error reading DB: ...] --`.
+- Connection open failure → single `TableIR` with `-- [Error reading DB: ...] --`
+  (`error=True`, status `Error`).
 - Corrupted database that passes the magic-byte sniff but fails on the
   discovery query (`PRAGMA`/`sqlite_master`) → the same
   `-- [Error reading DB: ...] --` `TableIR`, not an uncaught `sqlite3.Error`.
-- Database with no user tables → `-- [Note: database contains no user tables] --`.
-- Per-table read error → error-note `TableIR` for that table only.
+- Database with no user tables → `-- [Note: database contains no user tables] --`
+  (status `Read`, type `SQLite (0 tables)`).
+- Per-table read error → error-note `TableIR` for that table only (`error=True`).
 - `--max-tables 0` → a standalone placeholder `TableIR` carrying the
   `-- [Database truncated: Only first 0 tables processed] --` note, not an
   empty list (see step 3 above).
@@ -760,6 +846,43 @@ sample. Changing `--seed` changes the positions for every table at once.
 and draws every table's rows from that one stream, so two tables inside the
 same `.sql` file do not repeat positions. Each new `.sql` file starts the
 stream again.
+
+## Inclusion Status
+
+The preamble tells the LLM the File Index status is authoritative, so a status
+must describe what actually reached the document, never what a parser usually
+does. The data parsers therefore derive it from explicit parse-outcome flags
+the process functions set on the IR (`TableIR.partial` / `TableIR.error`,
+`NotebookCellIR.trimmed` / `NotebookCellIR.error`), not from a constant and
+not by string-matching the notice text. All outcomes map onto existing raw
+statuses in `INCLUSION_STATUS_MAP`, so no new vocabulary is involved.
+
+`_tabular_status(tables, schema_only, partial_status)` (CSV, Excel, Arrow,
+SQLite), evaluated in order:
+
+| Outcome | Raw status | Index status |
+|---|---|---|
+| every table/sheet has `error` (unreadable file) | `Error` | Error |
+| `--schema-only` | `Schema Only` | Schema Only |
+| any table `partial` or `error` (sampled rows, a head sample, a sheet/table cap, or a failed sibling) | `partial_status`: `Sampled` (CSV/Arrow/SQLite), `Extracted` (Excel) | Sampled |
+| every row of every table shown | `Read` | Full |
+
+`Error` is checked before `Schema Only` deliberately: an unreadable file shows
+only an error note, which is not a schema either. A file where some sheets or
+tables failed and others were read keeps the sampled status. Each failed
+section's own error note explains the failure, and the file as a whole is
+neither unreadable nor complete. An empty CSV or an empty database withholds
+nothing and is `Read`. Excel images/charts are not data rows: their own
+`-- [Note: Workbook contains visual elements ...] --` notice covers them, and
+they do not make a workbook partial.
+
+`_notebook_status(cells)`: `Error` when the notebook could not be read,
+`Cleaned` when any cell has `trimmed=True`, otherwise `Read` (Full). Stripping
+ANSI codes and adding the execution-state notice do not count as trimming.
+
+The terminal report needs no special handling: `ui.status_severity()` treats
+`Error` (like any status outside its ok/warn sets) as error severity, so these
+files render in the error style in the flagged rows.
 
 ## Defensive Programming Measures
 
@@ -878,7 +1001,10 @@ Current notices:
 | `-- [N data row(s) omitted: schema-only] --` | `process_sql` under `--schema-only` |
 | `-- [Table data truncated: Showing random 15 of 200 rows to save context] --` | `process_sql` sampling (data rows only; bare `INSERT ... VALUES` headers are kept but not counted) |
 | `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --` | `process_sql` line cap |
-| `-- [Output truncated: Showing first 40 lines] --` | notebook outputs |
+| `-- [Output truncated: Showing first 40 lines] --` | notebook `stream`/`error` outputs (`_clip_lines`) |
+| `-- [Data preview truncated: Showing first 40 lines] --` | notebook `execute_result`/`display_data` outputs |
+| `-- [Error output] --` | prefix of a notebook `error` output (ANSI codes stripped) |
+| `-- [Execution state: run order 1,5,2; cell 5 never run; ...] --` | `process_notebook` Cell 0, only when the run history is noteworthy (see [Execution-state notice](#execution-state-notice)) |
 | `-- [Line truncated: showing first 1000 characters] --` | `truncate_long_lines` |
 | `-- [Table truncated: showing first 4 of 15 rows; the table exceeded 50,000 characters] --` | `enforce_table_limit` (rendered sample rows; says `lines` for SQL data blocks) |
 | `-- [File truncated: Showing first 10KB ...] --` | `DefaultParser` size cap |
@@ -969,12 +1095,12 @@ Each parser returns a `stats_update` dictionary that is aggregated by the main o
 | CSVParser | `{"csv_count": 1}` |
 | NotebookParser | `{"notebook_count": 1}` |
 | SQLParser | `{"sql_count": 1}` |
-| ExcelParser | `{"excel_count": 1, "excel_sheets_count": sheet_count}` |
+| ExcelParser | `{"excel_count": 1, "excel_sheets_count": sheet_count}` (real sheets only; placeholders are not counted) |
 | ArrowParser (`.parquet`) | `{"parquet_count": 1}` |
 | ArrowParser (`.feather`) | `{"feather_count": 1}` |
 | ArrowParser (`.arrow`) | `{"arrow_count": 1}` |
 | ArrowParser (pyarrow missing) | `{}` — no count incremented |
-| SQLiteParser | `{"sqlite_count": 1, "db_tables_count": table_count}` |
+| SQLiteParser | `{"sqlite_count": 1, "db_tables_count": table_count}` (real tables only) |
 | SQLiteParser (non-SQLite `.db`) | `{"binary_count": 1}` |
 | EnvParser | `{"env_count": 1}` |
 | DefaultParser | `{"binary_count": 1}` or `{"truncated_count": 1}` |
@@ -982,7 +1108,9 @@ Each parser returns a `stats_update` dictionary that is aggregated by the main o
 ### Parser Status Values
 
 Beyond the established statuses (`Read`, `Sampled`, `Cleaned`, `Parsed`, `Extracted`,
-`Truncated`, `Skipped (Binary)`, `Skipped (Exclusion)`), the new behaviors introduce:
+`Truncated`, `Error`, `Skipped (Binary)`, `Skipped (Exclusion)`), the new behaviors
+introduce the ones below. Which of them a data parser returns is decided per
+file from the parse outcome (see [Inclusion Status](#inclusion-status)):
 
 | Status | Meaning |
 |--------|---------|

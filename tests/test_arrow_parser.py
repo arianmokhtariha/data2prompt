@@ -107,7 +107,8 @@ def test_happy_path_returns_one_table_ir(fmt: str, parquet_file: Path, feather_f
 
     result = ArrowParser().parse(path, config)
 
-    assert result.status == "Sampled"
+    # 5 rows, all shown: nothing was sampled, so the file is Full.
+    assert result.status == "Read"
     assert result.type == fmt.upper()
     assert isinstance(result.content, list)
     assert len(result.content) == 1
@@ -156,6 +157,7 @@ def test_sampling_is_applied_when_rows_exceed_sample_size(tmp_path: Path) -> Non
 
     result = ArrowParser().parse(path, config)
 
+    assert result.status == "Sampled"
     table_ir = result.content[0]
     assert len(table_ir.df) == 10
     assert table_ir.header_note is not None
@@ -179,7 +181,7 @@ def test_duplicate_field_names_do_not_crash(tmp_path: Path) -> None:
 
     result = ArrowParser().parse(path, config)
 
-    assert result.status == "Sampled"
+    assert result.status == "Read"
     table_ir = result.content[0]
     assert table_ir.footer_note is None
     assert list(table_ir.df.columns) == ["a", "b", "a"]
@@ -272,3 +274,17 @@ def test_missing_pyarrow_tokens_are_nonzero(tmp_path: Path) -> None:
         result = ArrowParser().parse(path, config)
 
     assert result.tokens > 0
+
+
+# ---------------------------------------------------------------------------
+# Honest inclusion status
+# ---------------------------------------------------------------------------
+
+def test_status_is_error_when_file_is_unreadable(tmp_path: Path) -> None:
+    path = tmp_path / "broken.parquet"
+    path.write_bytes(b"definitely not parquet")
+
+    result = ArrowParser().parse(path, _make_config())
+
+    assert result.status == "Error"
+    assert "Error reading PARQUET file" in (result.content[0].footer_note or "")

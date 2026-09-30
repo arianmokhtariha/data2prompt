@@ -95,9 +95,12 @@ degrades the product.
    core. Any sampling, truncation, or omission must (a) carry a `-- [...] --`
    notice at the point of reduction, (b) cite the full-dataset count, captured
    *before* reducing (the `total_rows = len(df)` pattern — capture first, then
-   sample), and (c) surface an honest status in the File Index. A file that
-   appears in the scan but is not rendered must still appear in the index
-   (status `Omitted`) — nothing silently vanishes.
+   sample), and (c) surface an honest status in the File Index. Honest works
+   both ways: a status is derived from what the parse actually did (an
+   unreadable file is `Error`, a file shown in full is `Full`), never
+   hard-coded per parser. See [parsers.md § Inclusion Status](parsers.md#inclusion-status).
+   A file that appears in the scan but is not rendered must still appear in
+   the index (status `Omitted`) — nothing silently vanishes.
 
 4. **One notice grammar.** Every tool-inserted line uses exactly
    `-- [Category: detail] --`. Never `*Note: ...*` prose, never emoji, never
@@ -154,7 +157,11 @@ degrades the product.
    contract first (per the CLAUDE.md docs-first rule).
 2. Implement the parser and register it in the `ParserRegistry`. Pick its raw
    status string(s) deliberately — reuse an existing raw status
-   (`Read`, `Sampled`, `Truncated`, ...) whenever the semantics match.
+   (`Read`, `Sampled`, `Truncated`, ...) whenever the semantics match — and
+   derive the status from the parse outcome, not a constant: set the IR's
+   outcome flags (`TableIR.partial` / `.error`) and reuse
+   `_tabular_status()` for tabular types, so a failed read shows `Error` and
+   a complete one `Full`.
 3. **Status:** if the parser introduces a *new* raw status, add it to
    `INCLUSION_STATUS_MAP` mapping onto an existing LLM-facing term where
    possible. Only invent a new LLM-facing term when no existing one is honest
@@ -217,8 +224,8 @@ explicitly if it deserves its own LLM-facing term.
 
 > **Worked example — `SQLiteParser` (`.db`/`.sqlite`/`.sqlite3`).** Added
 > following exactly the checklist above: it reuses the existing raw statuses
-> `Sampled`/`Schema Only`/`Skipped (Binary)` (no `INCLUSION_STATUS_MAP`
-> change), adds the `sqlite_count`/`db_tables_count` counters with
+> `Read`/`Sampled`/`Schema Only`/`Error`/`Skipped (Binary)` (no
+> `INCLUSION_STATUS_MAP` change), adds the `sqlite_count`/`db_tables_count` counters with
 > `STATS_SUMMARY_LABELS`, renders each table as a `### Table {n}:` sub-section
 > (`<table table_number="">` in XML) plus a fenced `sql` DDL block
 > (`<ddl>` in XML) — all defined in both generators and documented in both

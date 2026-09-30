@@ -272,7 +272,9 @@ syntax differs) across four parts:
    [output.md](output.md#end-of-codebase-anchor)).
 3. **Reading conventions** — dynamic backtick fencing, notebook cell / Excel
    sheet / SQLite table labeling (the latter with `CREATE TABLE` DDL in a
-   fenced `sql` block / `<ddl>` element), schema blocks (full-dataset stats vs.
+   fenced `sql` block / `<ddl>` element), the notebook
+   `-- [Execution state: ...] --` notice (what "run order" and missing
+   execution counts mean: hidden kernel state), schema blocks (full-dataset stats vs.
    sampled rows), table-cell conventions (in sample rows an empty cell is a
    missing value, in schema and stats blocks an empty statistic means not
    applicable to that column; `""` is an empty string and a quoted blank is
@@ -282,7 +284,8 @@ syntax differs) across four parts:
 4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted
    content is not included and must not be invented; samples illustrate
    structure only; the File Index `Status` is authoritative, with the full
-   controlled vocabulary spelled out.
+   controlled vocabulary spelled out (`Cleaned` glossed as "notebook, outputs
+   or long lines trimmed").
 
 The XML variant additionally states that element content is embedded verbatim
 (not XML-escaped) and tags are structural markers, not strict XML.
@@ -392,7 +395,7 @@ INCLUSION_STATUS_MAP: Dict[str, str] = {
     "Sampled": "Sampled",
     "Parsed": "Sampled",         # SQL: schema kept, data rows sampled
     "Extracted": "Sampled",      # Excel: sheets kept, rows sampled
-    "Cleaned": "Cleaned",        # Notebook: full source, trimmed outputs
+    "Cleaned": "Cleaned",        # Notebook: outputs or long lines trimmed
     "Truncated": "Truncated",
     "Schema Only": "Schema Only",
     "Redacted": "Redacted",
@@ -408,6 +411,12 @@ INCLUSION_STATUS_MAP: Dict[str, str] = {
 in the system instructions. `resolve_inclusion_status()` in
 [`output.py`](output.md) applies a `"Skipped ("` prefix fallback and then
 verbatim passthrough, so an unmapped future status can never crash generation.
+
+The data parsers pick among these raw statuses from what the parse actually did,
+never from a constant (see [parsers.md § Inclusion status](parsers.md#inclusion-status)):
+an unreadable CSV/Excel/Arrow/SQLite file is `Error`, one whose every row is
+shown is `Read` (Full), and a notebook is `Cleaned` only when something was
+trimmed.
 
 #### `STATS_SUMMARY_LABELS` — Content Summary Labels
 

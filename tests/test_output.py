@@ -21,7 +21,12 @@ from data2prompt.output import (
     get_generator,
 )
 from data2prompt.utils import count_tokens
-from data2prompt.parsers import NotebookCellIR, TableIR, build_table_schema
+from data2prompt.parsers import (
+    CSVParser,
+    NotebookCellIR,
+    TableIR,
+    build_table_schema,
+)
 from data2prompt.constants import (
     TABLE_CELL_NEWLINE_MARKER,
     PREAMBLE_OPTIONAL_SEGMENTS,
@@ -358,6 +363,42 @@ def test_markdown_file_index_maps_statuses() -> None:
     assert "| .env | Env | Redacted |" in output
 
 
+def test_file_index_status_reflects_real_parse_outcome(tmp_path: Path) -> None:
+    """End to end: the index status comes from what the parser actually did.
+    An unreadable CSV must read Error and a CSV shown in full must read Full,
+    identically in both formats (a hard-coded Sampled lied about both)."""
+    broken = tmp_path / "cp1252.csv"
+    broken.write_bytes(b"name,city\nJos\xe9,S\xe3o Paulo\n")
+    small = tmp_path / "small.csv"
+    small.write_bytes(b"id,v\n1,a\n2,b\n3,c\n")
+    config = SimpleNamespace(
+        csv_sample_size=15, seed=42, stats_summary=False, schema_only=False,
+        table_limit=50_000, table_truncate=20_000, env_keys=True,
+    )
+    files = []
+    for path in (broken, small):
+        result = CSVParser().parse(path, config)
+        files.append({
+            "path": path.name, "content": result.content, "type": result.type,
+            "tokens": result.tokens, "status": result.status,
+        })
+    tree = "\n".join(f["path"] for f in files)
+
+    md = MarkdownGenerator().generate(
+        project_name="demo", tree_text=tree, files_data=files, stats={},
+        config=config,
+    )
+    xml = XMLGenerator().generate(
+        project_name="demo", tree_text=tree, files_data=files, stats={},
+        config=config,
+    )
+
+    assert "| cp1252.csv | CSV | Error |" in md
+    assert "| small.csv | CSV | Full |" in md
+    assert '<entry path="cp1252.csv" type="CSV" status="Error"/>' in xml
+    assert '<entry path="small.csv" type="CSV" status="Full"/>' in xml
+
+
 def test_index_lists_tree_only_files_as_omitted() -> None:
     """A tree path with no rendered section must appear as Omitted — and only
     in the index, never as a content section."""
@@ -533,6 +574,7 @@ def test_markdown_preamble_omits_gated_bullets_without_matching_files() -> None:
         files_data=_sample_files(), stats={},
     )
     assert "Notebooks (.ipynb) are split into cells" not in output
+    assert "Execution state" not in output
     assert "Excel workbooks are split into sheets" not in output
     assert "SQLite databases are split into tables" not in output
     assert "Tabular data files" not in output
@@ -554,6 +596,7 @@ def test_xml_preamble_omits_gated_bullets_without_matching_files() -> None:
         files_data=_sample_files(), stats={},
     )
     assert "Notebooks (.ipynb) are split into" not in output
+    assert "Execution state" not in output
     assert "Excel workbooks are split into" not in output
     assert "SQLite databases are split into" not in output
     assert "Tabular data files" not in output
@@ -588,6 +631,21 @@ def test_markdown_preamble_includes_sqlite_bullets_when_sqlite_scanned() -> None
     )
     assert "SQLite databases are split into tables" in output
     assert "very large database table" in output
+
+
+@pytest.mark.parametrize("generator_cls", [MarkdownGenerator, XMLGenerator])
+def test_preamble_teaches_execution_state_notice_when_notebooks_scanned(
+    generator_cls: type,
+) -> None:
+    """The execution-state notice carries a meaning the generic notice rule
+    cannot convey (hidden kernel state), so both preambles teach it whenever
+    a notebook is in the document."""
+    output = generator_cls().generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files(), stats={"notebook_count": 1},
+    )
+    assert "-- [Execution state: ...] --" in output
+    assert "hidden kernel state" in output
 
 
 def test_markdown_preamble_env_bullet_omitted_with_no_env_keys() -> None:

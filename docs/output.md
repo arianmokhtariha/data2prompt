@@ -207,7 +207,11 @@ Jupyter Notebooks are rendered using [`NotebookCellIR`](../src/data2prompt/parse
 ```
 ````
 
-Cell outputs are displayed in text code blocks when present.
+Cell outputs are displayed in text code blocks when present. A notebook whose
+saved run history is noteworthy opens with a `Cell 0 (markdown)` holding one
+`-- [Execution state: ...] --` notice (`<cell index="0">` in XML). The parser
+emits it as an ordinary `NotebookCellIR`, so both generators render it with no
+special case (see [parsers.md](parsers.md#execution-state-notice)).
 
 #### Table Rendering
 
@@ -401,6 +405,11 @@ the system instructions via `INCLUSION_STATUS_MAP` ([`constants.py`](constants.m
 | any other `Skipped (...)` | `Skipped` |
 | anything unknown | passed through verbatim (never raises) |
 
+The data parsers choose the raw status from the parse outcome, so a small CSV
+shown in full reads `Full`, an unreadable one reads `Error`, and a notebook
+reads `Cleaned` only when something was trimmed
+(see [parsers.md § Inclusion Status](parsers.md#inclusion-status)).
+
 In Markdown the index is a `| Path | Type | Status |` table (cell values are
 pipe-escaped via `_md_cell()`); in XML it is a
 `<file_index>` element of self-closing
@@ -541,10 +550,12 @@ The output module consumes two types of Intermediate Representations produced by
 ```python
 @dataclass
 class NotebookCellIR:
-    number: int          # Cell index (1-based)
+    number: int          # Cell index (1-based; 0 = file-level notice/placeholder)
     type: str           # 'code' or 'markdown'
     source: str         # Cell content
     outputs: Optional[str] = None  # Captured outputs for code cells
+    trimmed: bool = False  # Parse outcome for the status; never rendered
+    error: bool = False    # Parse outcome for the status; never rendered
 ```
 
 ### TableIR
@@ -561,7 +572,14 @@ class TableIR:
     schema: Optional[TableSchema] = None # Full-df schema/stats metadata
     section_label: str = "Sheet"      # Sub-section word: "Sheet" (Excel) / "Table" (SQLite)
     ddl: Optional[str] = None         # SQLite CREATE-statement DDL
+    partial: bool = False             # Parse outcome for the status; never rendered
+    error: bool = False               # Parse outcome for the status; never rendered
 ```
+
+The parse-outcome flags are read only by the parsers, to derive the file's raw
+status (see [parsers.md § Inclusion Status](parsers.md#inclusion-status)). The
+generators never read them, so they receive the result through the `status`
+field alone.
 
 ## Dynamic Wrapping
 

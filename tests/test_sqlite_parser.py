@@ -16,6 +16,7 @@ Covers the contracts that make the SQLite parser trustworthy:
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Tuple
 
 from data2prompt.parsers import SQLiteParser, process_sqlite
 
@@ -273,3 +274,53 @@ def test_sqlite_parser_sniff_rejects_non_sqlite(tmp_path: Path) -> None:
     assert result.status == "Skipped (Binary)"
     assert result.stats_update == {"binary_count": 1}
     assert "not a SQLite database" in result.content
+
+
+# ---------------------------------------------------------------------------
+# Honest inclusion status: derived from the parse outcome of every table
+# ---------------------------------------------------------------------------
+
+def _build_tiny_db(
+    path: Path, table_names: Tuple[str, ...] = ("items",)
+) -> None:
+    """Tables of two rows each: well under any sample size."""
+    con = sqlite3.connect(path)
+    for name in table_names:
+        con.execute(f"CREATE TABLE {name} (id INTEGER)")
+        con.execute(f"INSERT INTO {name}(id) VALUES (1), (2)")
+    con.commit()
+    con.close()
+
+
+def test_sqlite_parser_corrupt_database_is_error(tmp_path: Path) -> None:
+    """Magic header intact, pages garbage: the body is only an error note."""
+    db = tmp_path / "corrupt.db"
+    _build_db(db)
+    with open(db, "r+b") as f:
+        f.truncate(200)
+
+    result = SQLiteParser().parse(db, _make_config())
+
+    assert result.status == "Error"
+    assert result.type == "SQLite (0 tables)"
+
+
+def test_sqlite_parser_all_rows_shown_is_full(tmp_path: Path) -> None:
+    db = tmp_path / "tiny.db"
+    _build_tiny_db(db)
+
+    result = SQLiteParser().parse(db, _make_config())
+
+    assert result.status == "Read"
+    assert result.type == "SQLite (1 table)"
+
+
+def test_sqlite_parser_table_cap_keeps_sampled_status(tmp_path: Path) -> None:
+    """Tables beyond --max-tables are withheld, so the database is not Full
+    even though each processed table shows all its rows."""
+    db = tmp_path / "many.db"
+    _build_tiny_db(db, ("a", "b", "c"))
+
+    result = SQLiteParser().parse(db, _make_config(max_tables=2))
+
+    assert result.status == "Sampled"

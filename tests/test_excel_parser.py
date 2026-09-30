@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import openpyxl
+import pandas as pd
 
 from data2prompt.parsers import (
     ExcelParser,
@@ -126,7 +127,7 @@ def test_xlsm_routes_to_excel_parser_and_reads_correctly(tmp_path: Path) -> None
     assert list(tables[0].df.columns) == ["id", "amount"]
 
     result = ExcelParser().parse(path, _make_config())
-    assert result.status == "Extracted"
+    assert result.status == "Read"
     assert result.stats_update == {"excel_count": 1, "excel_sheets_count": 1}
 
 
@@ -255,7 +256,82 @@ def test_excel_parser_stats_and_status(tmp_path: Path) -> None:
 
     result = ExcelParser().parse(path, _make_config())
 
-    assert result.status == "Extracted"
+    # Every row of every sheet is shown, so the workbook is Full, not Sampled.
+    assert result.status == "Read"
     assert result.type == "Excel (2 sheets)"
     assert result.stats_update == {"excel_count": 1, "excel_sheets_count": 2}
     assert result.tokens > 0
+
+
+# ---------------------------------------------------------------------------
+# Honest inclusion status: derived from the parse outcome of every sheet
+# ---------------------------------------------------------------------------
+
+def test_excel_parser_corrupt_workbook_is_error_with_no_sheets(
+    tmp_path: Path,
+) -> None:
+    """An unopenable workbook yields only an error note: status Error, and the
+    placeholder is not counted as a sheet."""
+    path = tmp_path / "corrupt.xlsx"
+    path.write_bytes(b"PK\x03\x04 this is not a real workbook")
+
+    result = ExcelParser().parse(path, _make_config())
+
+    assert result.status == "Error"
+    assert result.type == "Excel (0 sheets)"
+    assert result.stats_update == {"excel_count": 1, "excel_sheets_count": 0}
+
+
+def test_excel_parser_single_sheet_label_is_singular(tmp_path: Path) -> None:
+    path = tmp_path / "one.xlsx"
+    _write_workbook(path, {"Only": [["x"], [1]]})
+
+    result = ExcelParser().parse(path, _make_config())
+
+    assert result.type == "Excel (1 sheet)"
+
+
+def test_excel_parser_sampled_sheet_keeps_sampled_status(tmp_path: Path) -> None:
+    path = tmp_path / "big.xlsx"
+    _write_workbook(path, {
+        "Small": [["x"], [1]],
+        "Big": [["y"]] + [[i] for i in range(20)],
+    })
+
+    result = ExcelParser().parse(path, _make_config(csv_sample_size=15))
+
+    assert result.status == "Extracted"
+
+
+def test_excel_parser_sheet_cap_keeps_sampled_status(tmp_path: Path) -> None:
+    """Sheets beyond --max-sheets are withheld: the workbook is not Full even
+    when every processed sheet shows all its rows."""
+    path = tmp_path / "many.xlsx"
+    _write_workbook(path, {name: [["x"], [1]] for name in ("A", "B", "C")})
+
+    result = ExcelParser().parse(path, _make_config(max_sheets=2))
+
+    assert result.status == "Extracted"
+
+
+def test_excel_parser_one_failed_sheet_keeps_normal_status(
+    tmp_path: Path,
+) -> None:
+    """A partial failure is explained by the sheet's own error note; the file
+    as a whole is neither Error (one sheet read fine) nor Full."""
+    path = tmp_path / "mixed.xlsx"
+    _write_workbook(path, {"Good": [["x"], [1]], "Broken": [["y"], [2]]})
+    real_parse = pd.ExcelFile.parse
+
+    def parse_failing_on_broken(
+        self: pd.ExcelFile, sheet_name: str, *args: object, **kwargs: object
+    ) -> pd.DataFrame:
+        if sheet_name == "Broken":
+            raise ValueError("unreadable sheet")
+        return real_parse(self, sheet_name, *args, **kwargs)
+
+    with patch.object(pd.ExcelFile, "parse", parse_failing_on_broken):
+        result = ExcelParser().parse(path, _make_config())
+
+    assert result.status == "Extracted"
+    assert "unreadable sheet" in (result.content[1].footer_note or "")

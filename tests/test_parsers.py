@@ -3,10 +3,14 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import List, Optional
 
 import pandas as pd
+import pytest
 
 from data2prompt.parsers import (
+    CSVParser,
+    NotebookParser,
     process_sql,
     process_csv,
     process_notebook,
@@ -490,10 +494,11 @@ def test_process_notebook_error_output_captured():
 
     try:
         cells = process_notebook(path)
-        assert len(cells) == 1
-        assert cells[0].outputs is not None
-        assert "Error output" in cells[0].outputs
-        assert "ValueError: boom" in cells[0].outputs
+        # Cell 0 is the execution-state notice the error output triggers.
+        assert len(cells) == 2
+        assert cells[1].outputs is not None
+        assert "Error output" in cells[1].outputs
+        assert "ValueError: boom" in cells[1].outputs
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -1060,3 +1065,202 @@ def test_process_sql_schema_only_counts_data_rows_not_headers(
     result = process_sql(path, schema_only=True)
 
     assert "8 data row(s) omitted: schema-only" in result
+
+
+# ---------------------------------------------------------------------------
+# Honest inclusion status — CSVParser / NotebookParser derive the File Index
+# status from what the parse actually did, never from a constant.
+# ---------------------------------------------------------------------------
+
+def _status_config(
+    csv_sample_size: int = 15,
+    schema_only: bool = False,
+    max_lines: int = 40,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        csv_sample_size=csv_sample_size,
+        seed=42,
+        stats_summary=True,
+        schema_only=schema_only,
+        max_lines=max_lines,
+        line_length_threshold=4000,
+        truncated_line_length=1000,
+    )
+
+
+_CP1252_CSV = b"name,city\nJos\xe9,S\xe3o Paulo\n"
+
+
+@pytest.mark.parametrize(
+    ("payload", "schema_only", "expected_status"),
+    [
+        # cp1252 bytes the utf-8 reader rejects: the body is only an error note.
+        (_CP1252_CSV, False, "Error"),
+        # A failed read is not a schema either, even under --schema-only.
+        (_CP1252_CSV, True, "Error"),
+        # Every row shown: nothing was sampled, so the file is Full.
+        (b"id,v\n1,a\n2,b\n3,c\n", False, "Read"),
+        (b"id,v\n" + b"".join(b"%d,x\n" % i for i in range(20)), False, "Sampled"),
+        (b"id,v\n1,a\n", True, "Schema Only"),
+    ],
+    ids=["unreadable", "unreadable-schema-only", "all-rows", "sampled", "schema"],
+)
+def test_csv_parser_status_follows_parse_outcome(
+    tmp_path: Path, payload: bytes, schema_only: bool, expected_status: str
+) -> None:
+    path = tmp_path / "data.csv"
+    path.write_bytes(payload)
+
+    result = CSVParser().parse(path, _status_config(schema_only=schema_only))
+
+    assert result.status == expected_status
+
+
+def _write_notebook(path: Path, cells: List[dict]) -> None:
+    nb = {"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": cells}
+    path.write_text(json.dumps(nb), encoding="utf-8")
+
+
+def _code_cell(
+    source: str, execution_count: Optional[int], outputs: Optional[list] = None
+) -> dict:
+    return {
+        "cell_type": "code",
+        "execution_count": execution_count,
+        "metadata": {},
+        "source": [source],
+        "outputs": outputs or [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("outputs", "expected_status"),
+    [
+        # Short text output kept verbatim: nothing trimmed, so Full.
+        ([{"output_type": "stream", "name": "stdout", "text": ["ok\n"]}], "Read"),
+        # Output clipped at max_lines.
+        (
+            [{"output_type": "stream", "name": "stdout",
+              "text": [f"line {i}\n" for i in range(60)]}],
+            "Cleaned",
+        ),
+        # A figure: the image is stripped, only its text/plain label is kept.
+        (
+            [{"output_type": "display_data", "metadata": {},
+              "data": {"text/plain": ["<Figure>"], "image/png": "iVBORw0K"}}],
+            "Cleaned",
+        ),
+    ],
+    ids=["untouched", "lines-clipped", "image-stripped"],
+)
+def test_notebook_parser_status_is_cleaned_only_when_trimmed(
+    tmp_path: Path, outputs: list, expected_status: str
+) -> None:
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell("run()", 1, outputs)])
+
+    result = NotebookParser().parse(path, _status_config())
+
+    assert result.status == expected_status
+
+
+def test_notebook_parser_long_source_line_marks_cleaned(tmp_path: Path) -> None:
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell("x = '" + "a" * 5000 + "'", 1)])
+
+    result = NotebookParser().parse(path, _status_config())
+
+    assert result.status == "Cleaned"
+
+
+def test_notebook_parser_malformed_notebook_is_error(tmp_path: Path) -> None:
+    path = tmp_path / "nb.ipynb"
+    path.write_text("{ not json", encoding="utf-8")
+
+    result = NotebookParser().parse(path, _status_config())
+
+    assert result.status == "Error"
+
+
+# ---------------------------------------------------------------------------
+# Notebooks — ANSI noise and execution-state forensics
+# ---------------------------------------------------------------------------
+
+def test_process_notebook_strips_ansi_from_traceback(tmp_path: Path) -> None:
+    """IPython stores colored tracebacks; the escape codes are token noise."""
+    error = {
+        "output_type": "error",
+        "ename": "ValueError",
+        "evalue": "bad",
+        "traceback": [
+            "\u001b[1;31mValueError\u001b[0m                Traceback",
+            "\u001b[1;31mValueError\u001b[0m: bad",
+        ],
+    }
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell("f()", 1, [error])])
+
+    cells = process_notebook(path)
+
+    outputs = cells[-1].outputs or ""
+    assert "\x1b" not in outputs
+    assert "[1;31m" not in outputs
+    assert "ValueError: bad" in outputs
+
+
+def test_process_notebook_reports_execution_state(tmp_path: Path) -> None:
+    """Run order 1,5,2 + a never-run cell + missing counts 3-4 + an error:
+    one compact notice in a leading Cell 0, with cell numbers matching the
+    `Cell {n}` headers."""
+    error = {"output_type": "error", "ename": "ValueError", "evalue": "x",
+             "traceback": ["ValueError: x"]}
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [
+        {"cell_type": "markdown", "metadata": {}, "source": ["# EDA"]},
+        _code_cell("import pandas as pd", 1),
+        _code_cell("df.mean()", 5, [error]),
+        _code_cell("df.shape", 2),
+        _code_cell("df.merge(other)", None),
+    ])
+
+    cells = process_notebook(path)
+
+    assert cells[0].number == 0
+    assert cells[0].source == (
+        "-- [Execution state: run order 1,5,2; cell 5 never run; "
+        "execution counts 3-4 missing (hidden state likely); "
+        "first error in cell 3: ValueError] --"
+    )
+    assert [c.number for c in cells[1:]] == [1, 2, 3, 4, 5]
+
+
+def test_process_notebook_execution_state_collapses_ranges(
+    tmp_path: Path,
+) -> None:
+    """Long in-order stretches collapse to ranges so the notice stays short."""
+    counts = [1, 2, 3, 7, 8, 4, 5, 6]
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell(f"x{c}", c) for c in counts])
+
+    cells = process_notebook(path)
+
+    assert cells[0].source == "-- [Execution state: run order 1-3,7-8,4-6] --"
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [[1, 2, 3], [None, None]],
+    ids=["clean-top-to-bottom-run", "never-executed"],
+)
+def test_process_notebook_no_execution_notice_when_unremarkable(
+    tmp_path: Path, counts: List[Optional[int]]
+) -> None:
+    """A clean run, or a notebook saved without executing (outputs cleared),
+    carries no hidden state: no notice, no extra tokens."""
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell("pass", c) for c in counts])
+
+    cells = process_notebook(path)
+
+    assert all(c.number != 0 for c in cells)
+    assert not any("Execution state" in c.source for c in cells)
