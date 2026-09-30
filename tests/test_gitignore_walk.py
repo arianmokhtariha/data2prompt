@@ -1,6 +1,7 @@
 import tempfile
 from pathlib import Path
 
+from data2prompt.constants import CORE_IGNORE_FILES, CORE_IGNORES
 from data2prompt.utils import ProjectScanner
 
 
@@ -299,3 +300,37 @@ def test_same_basename_elsewhere_is_not_excluded() -> None:
         files = {f.relative_to(root).as_posix() for f in scanner.scan()}
         assert "PROMPT.md" not in files
         assert "docs/PROMPT.md" in files
+
+
+# ---------------------------------------------------------------------------
+# Core ignore sets: tool/env folders and Office lock files never reach output
+# ---------------------------------------------------------------------------
+
+def test_core_ignores_drop_tool_folders_and_office_lock_files() -> None:
+    """Without a .gitignore (conda-style envs, --no-gitignore), the core sets
+    alone must keep virtualenvs, tool caches and '~$' lock files out."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        noise = [
+            ".venv/Lib/site-packages/somepkg/mod.py",
+            ".conda/lib/site.py",
+            ".tox/py312/log.txt",
+            ".nox/session/log.txt",
+            ".ruff_cache/0.5.0/cache",
+            "data/~$budget.xlsx",
+        ]
+        kept = ["data/budget.xlsx", "env/environment.yml", "app.py"]
+        for rel in noise + kept:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text("x")
+
+        scanner = ProjectScanner(
+            project_path=root,
+            ignore_folders=set(CORE_IGNORES),
+            ignore_files=set(CORE_IGNORE_FILES),
+            output_file="PROMPT.md",
+            use_gitignore=False,
+        )
+        files = {f.relative_to(root).as_posix() for f in scanner.scan()}
+        # 'env/' stays: it is a common config-folder name, not only a venv.
+        assert files == set(kept)

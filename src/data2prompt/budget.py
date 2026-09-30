@@ -53,7 +53,7 @@ EXTS_NOTEBOOK = frozenset({".ipynb"})
 class FileRecord:
     """One scanned file's first-pass parse result, re-parseable in place."""
     absolute_path: Path
-    relative_path: str          # str(relative) exactly as main.py builds it
+    relative_path: str          # forward-slash path, as main.py builds it
     result: ParserResult
 
 
@@ -216,8 +216,8 @@ def fit_to_budget(
 
     Applies a fixed ladder in order: halve csv-sample-size, max-lines,
     sql-sample-size, and sql-max-lines down to their floors; then drop
-    notebook outputs entirely, turn off the stats-summary block, switch to
-    schema-only, and cap unhandled text files to 10KB; finally, as a last
+    notebook outputs entirely, switch to schema-only, turn off the
+    stats-summary block, and cap unhandled text files to 10KB; finally, as a last
     resort, omit the token-heaviest remaining files. Each step is skipped
     if it has no affected records or is already at/below its floor. Returns
     a ``BudgetOutcome``: ``fits=True`` with the rendered output, or
@@ -351,26 +351,9 @@ def fit_to_budget(
             _reparse_records(notebooks, current, reparse)
             result = _attempt(current)
 
-    # Step 6: drop the per-table describe/missing stats block.
-    if _over_budget() and current.stats_summary:
-        tabular = _select_by_ext(records, omitted, EXTS_TABULAR)
-        if tabular:
-            current = replace(current, stats_summary=False)
-            adjustments["stats-summary"] = BudgetAdjustment(
-                parameter="stats-summary",
-                requested="on",
-                adjusted="off",
-                scope=(
-                    "describe/missing stats dropped from "
-                    f"{len(tabular)} tabular data file(s)"
-                ),
-            )
-            if on_progress is not None:
-                on_progress("Fitting", "stats-summary -> off")
-            _reparse_records(tabular, current, reparse)
-            result = _attempt(current)
-
-    # Step 7: schema-only — drop data rows, keep schema/columns.
+    # Step 6: schema-only — drop data rows, keep schema/columns. Runs
+    # before the stats step: samples only illustrate structure, while the
+    # stats block is computed over every row.
     if _over_budget() and not current.schema_only:
         schema_group = _select_by_ext(
             records, omitted, EXTS_TABULAR | EXTS_SQL
@@ -389,6 +372,25 @@ def fit_to_budget(
             if on_progress is not None:
                 on_progress("Fitting", "schema-only -> on")
             _reparse_records(schema_group, current, reparse)
+            result = _attempt(current)
+
+    # Step 7: drop the per-table describe/missing stats block.
+    if _over_budget() and current.stats_summary:
+        tabular = _select_by_ext(records, omitted, EXTS_TABULAR)
+        if tabular:
+            current = replace(current, stats_summary=False)
+            adjustments["stats-summary"] = BudgetAdjustment(
+                parameter="stats-summary",
+                requested="on",
+                adjusted="off",
+                scope=(
+                    "describe/missing stats dropped from "
+                    f"{len(tabular)} tabular data file(s)"
+                ),
+            )
+            if on_progress is not None:
+                on_progress("Fitting", "stats-summary -> off")
+            _reparse_records(tabular, current, reparse)
             result = _attempt(current)
 
     # Step 8: cap unhandled text files to their first 10KB. DefaultParser's

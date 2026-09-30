@@ -301,7 +301,9 @@ Compiles CLI-level and project-level ignore patterns into a single `PathSpec`.
 
 **Pattern Sources (in priority order):**
 1. Explicit `ignore_folders` (appended with `/` for directory matching)
-2. Explicit `ignore_files` (exact filenames)
+2. Explicit `ignore_files`, added verbatim, so each entry is a gitignore-style
+   pattern rather than only an exact name (the core `~$*` Office lock-file
+   pattern relies on this; a slash-free pattern matches at any depth)
 3. `.data2promptignore` patterns (project-specific)
 
 ```python

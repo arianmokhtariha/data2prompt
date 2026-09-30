@@ -77,7 +77,7 @@ count_tokens`.
 class FileRecord:
     """One scanned file's first-pass parse result, re-parseable in place."""
     absolute_path: Path
-    relative_path: str          # str(relative) exactly as main.py builds it
+    relative_path: str          # forward-slash path, as main.py builds it
     result: ParserResult
 ```
 
@@ -301,9 +301,10 @@ EXTS_NOTEBOOK = frozenset({".ipynb"})
   tabular, SQL, and notebook ladder steps. SQLite databases (`.db`/`.sqlite`/
   `.sqlite3`) are in `EXTS_TABULAR`, so they ride the same tabular steps as
   CSV/Excel/Arrow: step 1 re-samples their tables (`csv_sample_size` halving),
-  step 6 drops their DDL + schema block (`stats_summary → off`), and step 7
-  demotes them to schema-only. Their presence in `EXTS_TABULAR` also keeps them
-  **out** of the text group, so a rendered multi-table database is never
+  step 6 demotes them to schema-only (data rows gone; DDL and schema block
+  kept), and step 7 (`stats_summary → off`) strips the missing/describe
+  columns from that schema block. Their presence in `EXTS_TABULAR` also keeps
+  them **out** of the text group, so a rendered multi-table database is never
   byte-truncated as if it were a plain text file.
 - `_select_text_group(records, omitted, config)` — the "text group" the
   `DefaultParser` would handle: included records whose suffix is **not** in
@@ -316,7 +317,7 @@ EXTS_NOTEBOOK = frozenset({".ipynb"})
 ## The De-escalation Ladder
 
 Nine fixed steps, applied in order. Each step is skipped outright if it has
-no affected records or if its condition is already satisfied (e.g. step 6
+no affected records or if its condition is already satisfied (e.g. step 7
 only runs if `stats_summary` is currently `True`); each halving loop also
 stops the instant an attempt fits, so a step that isn't needed to reach the
 budget never runs at all.
@@ -328,8 +329,8 @@ budget never runs at all.
 | 3 | sql-sample-size | `sql_sample_size` | halve | `BUDGET_MIN_SQL_SAMPLE` = 5 | SQL (`EXTS_SQL`) |
 | 4 | sql-max-lines | `sql_max_lines` | halve | `BUDGET_MIN_SQL_MAX_LINES` = 20 | SQL (`EXTS_SQL`) |
 | 5 | max-lines → 0 | `max_lines` | drop to zero | `0` | notebook (`EXTS_NOTEBOOK`) |
-| 6 | stats-summary → off | `stats_summary` | `True → False` | — | tabular (`EXTS_TABULAR`) |
-| 7 | schema-only → on | `schema_only` | `False → True` | — | tabular + SQL (`EXTS_TABULAR \| EXTS_SQL`) |
+| 6 | schema-only → on | `schema_only` | `False → True` | — | tabular + SQL (`EXTS_TABULAR \| EXTS_SQL`) |
+| 7 | stats-summary → off | `stats_summary` | `True → False` | — | tabular (`EXTS_TABULAR`) |
 | 8 | max-file-size → 10KB | `max_file_size` | cap | `BUDGET_TEXT_FILE_SIZE_KB` = 10 | text group (`_select_text_group`) |
 | 9 | omission | *(no config change)* | remove files | — | all remaining included records |
 
@@ -380,20 +381,31 @@ merged entry's `requested` stays the *original* pre-ladder value, `adjusted`
 becomes `"0"`, and the scope is overwritten to
 `"notebook outputs dropped from {n} notebook(s)"`.
 
-### Step 6: drop the per-table stats block
+### Why sample rows go before the stats block
 
-Only runs if still over budget and `current.stats_summary` is `True`. Sets
-`stats_summary = False`, dropping the describe/missing stats block — often
-the largest single chunk of a wide table's rendering. Scope:
-`"describe/missing stats dropped from {n} tabular data file(s)"`.
+Steps 6 and 7 are ordered by information value. Sample rows only illustrate
+structure (the preamble tells the model so), while the stats block (missing
+counts, ranges, top values) is computed over **every** row. Under pressure
+the ladder therefore drops the illustration first and keeps the full-dataset
+truth as long as possible. The reverse order would leave the model with a
+handful of rows and nothing about the data as a whole.
 
-### Step 7: schema-only
+### Step 6: schema-only
 
 Only runs if still over budget and `current.schema_only` is `False`. Sets
 `schema_only = True` for the tabular **and** SQL groups combined — data rows
-vanish, schema/columns stay, and the affected files' statuses become
+vanish, schema/columns stay (with their missing/describe stats, since
+`stats_summary` is still on), and the affected files' statuses become
 `"Schema Only"` automatically via the existing parser logic (no new status is
 introduced). Scope: `"{n} data file(s) reduced to schema only"`.
+
+### Step 7: drop the per-table stats block
+
+Only runs if still over budget and `current.stats_summary` is `True`. Sets
+`stats_summary = False`, which removes the missing/describe columns from the
+tabular files' schema blocks, leaving `column | dtype`. SQLite DDL stays,
+because DDL renders whenever `schema_only` is on. Scope:
+`"describe/missing stats dropped from {n} tabular data file(s)"`.
 
 ### Step 8: cap unhandled text files to 10KB
 
@@ -481,11 +493,10 @@ instead of `Path(...).as_posix()` because `pathlib.Path` only treats `\` as a
 separator on Windows (`WindowsPath`) — on POSIX (`PosixPath`, including every
 Linux CI runner), `\` is just a literal filename character, so
 `.as_posix()` would silently no-op on a backslash-separated string and leave
-it unnormalized. `relative_path` is built with the current OS's native
-separator, so this only mattered for Windows-built paths, but the unconditional
-string replace makes normalization correct regardless of which OS runs the
-code. Omitted files are never
-deleted from `records` or the tree — they stay scanned, so
+it unnormalized. `main.py` already builds `relative_path` with
+`Path.as_posix()`, so the replace is a no-op on the real pipeline; it stays so
+`fit_to_budget()` never depends on its caller for the canonical path key.
+Omitted files are never deleted from `records` or the tree — they stay scanned, so
 `output.build_file_index()`'s existing "present in the tree but absent from
 `files_data`" leftover rule picks them up automatically and lists them with
 status `Omitted` (see [output.md](output.md#file-index)).
@@ -521,7 +532,11 @@ infeasible path.
 - Sampling inside re-parsed files still uses `config.seed`, unchanged by the
   ladder — the same seed produces the same sampled rows on every re-parse.
 - The ladder is a fixed, hard-coded sequence of nine steps, always attempted
-  in the same order.
+  in the same order: the four halvings, notebook outputs → 0, schema-only,
+  stats-summary off, the 10KB text cap, then omission. Schema-only comes
+  before dropping the stats block on purpose (see
+  [Why sample rows go before the stats block](#why-sample-rows-go-before-the-stats-block)),
+  so the report's adjustment rows always appear in that order too.
 - Omission ties break on `relative_path` (a plain string), so two
   equal-weight files are always omitted in the same order.
 - No other randomness is introduced anywhere in `budget.py`.

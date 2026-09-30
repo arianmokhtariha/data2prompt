@@ -38,7 +38,7 @@ class Config:
     table_limit: int                     # Max chars per table after sampling
     table_truncate: int                  # Truncation target for tables
     ignore_folders: Set[str]             # Folders to exclude
-    ignore_files: Set[str]               # Specific files to exclude
+    ignore_files: Set[str]               # File patterns to exclude (gitignore-style)
     max_file_size: int                   # Max file size (KB) for full read
     skip_exts: Set[str]                  # File extensions to skip content
     use_gitignore: bool                  # Whether to respect .gitignore
@@ -127,7 +127,7 @@ and the infeasible-outcome contract.
 | Argument | Type | Default | Description |
 |:---------|:----:|:--------|:------------|
 | `--ignore-folders` | `List[str]` | `[]` | Additional folder names to exclude from scanning. Core folders (`.git`, `__pycache__`, etc.) are always included. |
-| `--ignore-files` | `List[str]` | `[]` | Additional specific filenames to exclude. Core ignores are always applied. |
+| `--ignore-files` | `List[str]` | `[]` | Additional files to exclude, as gitignore-style patterns (`secret.json`, `*.bak`). Core ignores (Office `~$*` lock files) are always applied. |
 | `--max-file-size` | `int` | `70` | Maximum file size in KB for unhandled file types to read entirely. Files larger than this only have their first 10KB included. |
 | `--skip-exts` | `List[str]` | `[]` | Additional file extensions to skip content processing (content is still listed in tree). |
 | `--no-gitignore` | `flag` | `True` | When specified, disables automatic `.gitignore` detection and filtering. Default sourced from [`DEFAULT_USE_GITIGNORE`](../src/data2prompt/constants.py). |
@@ -230,10 +230,16 @@ These sets are defined in [`constants.py`](../src/data2prompt/constants.py#L4) a
 
 **[`CORE_IGNORES`](../src/data2prompt/constants.py#L4)** - Folder names excluded from tree and content:
 ```python
-{'.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
- 'node_modules', '.idea', 'dist', 'build', '.mypy_cache',
- '.pytest_cache', 'target', '.docker', '.aws', '.gcloud', '__MACOSX'}
+{'.git', '__pycache__', 'venv', '.venv', '.conda', '.vscode',
+ '.ipynb_checkpoints', 'node_modules', '.idea', 'dist', 'build',
+ '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.nox', 'target',
+ '.docker', '.aws', '.gcloud', '__MACOSX'}
 ```
+
+**`CORE_IGNORE_FILES`** - File patterns excluded from tree and content:
+`{'~$*'}` (`OFFICE_LOCK_FILE_PATTERN`, the lock file Office creates next to an
+open document). See [constants.md](constants.md#core_ignores--folder-exclusion-set)
+for why bare `env` is not a core folder ignore.
 
 **[`CORE_SKIP_EXTS`](../src/data2prompt/constants.py#L16)** - Extensions skipped (name listed, content excluded):
 ```python
@@ -246,7 +252,7 @@ These sets are defined in [`constants.py`](../src/data2prompt/constants.py#L4) a
 # Media
 '.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.mp4', '.mp3', '.mov',
 # Environment & Secrets ('.env' is NOT here — handled by EnvParser, see parsers.md)
-'.venv', '.pyc', '.ds_store'
+'.pyc', '.ds_store'
 ```
 
 ## Integration with Main Module

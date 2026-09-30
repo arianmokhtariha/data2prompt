@@ -13,6 +13,7 @@ placeholder substitution on a successful --budget run's written file.
 import os
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Dict, List
 from unittest.mock import patch
@@ -315,8 +316,68 @@ def test_stats_not_double_counted_across_multiple_ladder_attempts() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ladder order: sample rows only illustrate structure, while the stats block
+# is computed over every row, so schema-only must be tried before the stats
+# block is dropped.
+# ---------------------------------------------------------------------------
+
+def _rows_and_stats_reparse(
+    row_words: int, stats_words: int,
+) -> Callable[[Path, Config], ParserResult]:
+    """A fake tabular reparse whose content is a fixed-size block of sample
+    rows (gone under schema_only) plus a stats block (gone when
+    stats_summary is off). Row size ignores csv_sample_size, so the halving
+    step alone can never fit the budget."""
+    def _reparse(path: Path, cfg: Config) -> ParserResult:
+        rows = "" if cfg.schema_only else "row " * row_words
+        stats = "stat " * stats_words if cfg.stats_summary else ""
+        return ParserResult(
+            content=rows + stats,
+            tokens=0,
+            type="CSV",
+            status="Schema Only" if cfg.schema_only else "Sampled",
+            stats_update={"csv_count": 1},
+        )
+    return _reparse
+
+
+def test_ladder_drops_sample_rows_before_stats_block() -> None:
+    reparse = _rows_and_stats_reparse(row_words=2000, stats_words=400)
+    path = Path("data/orders.csv")
+    tree = "data/orders.csv"
+
+    # Fits once rows are gone but stats are kept; the 300-token slack covers
+    # the Budget Report's adjustment rows yet is far below the 2000-token
+    # row block, so dropping only the stats block can never fit.
+    schema_cfg = replace(_config(), schema_only=True)
+    schema_record = FileRecord(path, "data/orders.csv", reparse(path, schema_cfg))
+    budget = _render_tokens([schema_record], schema_cfg, tree) + 300
+
+    record = FileRecord(path, "data/orders.csv", reparse(path, _config()))
+    outcome = fit_to_budget(
+        budget=budget,
+        config=_config(),
+        records=[record],
+        scanned_file_count=1,
+        tree_text=tree,
+        project_name="demo",
+        reparse=reparse,
+    )
+
+    assert outcome.fits
+    assert outcome.config.schema_only
+    assert outcome.config.stats_summary, (
+        "the stats block was dropped although schema-only alone fits: the "
+        "ladder must drop sample rows before full-dataset stats"
+    )
+    parameters = [a.parameter for a in outcome.report.adjustments]
+    assert "schema-only" in parameters
+    assert "stats-summary" not in parameters
+
+
+# ---------------------------------------------------------------------------
 # Extension classification: a .db must ride the tabular ladder steps
-# (re-sample / stats-off / schema-only), never the text-truncation step —
+# (re-sample / schema-only / stats-off), never the text-truncation step —
 # byte-truncating a rendered multi-table database would be meaningless.
 # ---------------------------------------------------------------------------
 
@@ -331,7 +392,7 @@ def test_budget_classifies_sqlite_as_tabular_not_text() -> None:
     records = [record]
 
     assert ".db" in EXTS_TABULAR
-    # Steps 1/6/7 select tabular files (csv-sample-size, stats-summary, schema-only).
+    # Steps 1/6/7 select tabular files (csv-sample-size, schema-only, stats-summary).
     assert _select_by_ext(records, set(), EXTS_TABULAR) == [record]
     # Step 8 (text truncation to first N KB) must never touch a database file.
     assert _select_text_group(records, set(), _config()) == []
@@ -397,9 +458,9 @@ def test_omission_phase_drops_heaviest_files_first() -> None:
 
 
 def test_omission_uses_forward_slash_paths() -> None:
-    """main.py builds relative_path via str(Path(...)), which is
-    backslash-separated on Windows — the report's omitted paths must still
-    be forward-slash (Path.as_posix()), matching the File Index convention."""
+    """main.py passes forward-slash paths, but fit_to_budget() must not rely
+    on its caller: a backslash-separated relative_path must still be reported
+    with forward slashes, matching the File Index convention."""
     light_content, heavy_content = "w " * 100, "w " * 4000
     heavy = FileRecord(
         absolute_path=Path("data") / "heavy.txt",

@@ -25,16 +25,20 @@ graph LR
 
 ```python
 CORE_IGNORES = {
-    '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
-    'node_modules', '.idea', 'dist', 'build', '.mypy_cache',
-    '.pytest_cache', 'target', '.docker', '.aws', '.gcloud',
-    '__MACOSX'
+    '.git', '__pycache__', 'venv', '.venv', '.conda', '.vscode',
+    '.ipynb_checkpoints', 'node_modules', '.idea', 'dist', 'build',
+    '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.nox', 'target',
+    '.docker', '.aws', '.gcloud', '__MACOSX'
 }
 ```
 
 **Type:** `set[str]`
 
-**Purpose:** Folder names excluded from both project tree generation and content processing. These are high-level directories that never contain relevant source code or data.
+**Purpose:** Folder names excluded from both project tree generation and content processing. These are high-level directories that never contain relevant source code or data. Each name is compiled to a directory-only gitignore pattern (`name/`), so it matches a folder of that name at any depth.
+
+Virtual environments (`venv`, `.venv`, `.conda`) and tool caches (`.tox`, `.nox`, `.ruff_cache`, `.mypy_cache`, `.pytest_cache`) are listed even though most of them ship their own `.gitignore`: older tools, conda-style envs and `--no-gitignore` runs would otherwise pack whole `site-packages` trees.
+
+Bare `env` is **deliberately not** listed. It is the name of a venv in some tutorials (`python -m venv env`), but it is also a common name for a config folder (`env/environment.yml`, `config/env/production.js`, `infra/env/prod/`), and a folder ignore drops it silently, with no File Index entry. A venv named `env` is still caught by the project's `.gitignore` (GitHub's Python template lists `env/`) or by `--ignore-folders env`.
 
 **Consumed by:**
 - [`cli.py`](../src/data2prompt/cli.py#L141) — Merged with user-provided `--ignore-folders` via set union
@@ -43,12 +47,15 @@ CORE_IGNORES = {
 #### `CORE_IGNORE_FILES` — File Exclusion Set
 
 ```python
-CORE_IGNORE_FILES = set()
+OFFICE_LOCK_FILE_PATTERN = '~$*'
+CORE_IGNORE_FILES = {OFFICE_LOCK_FILE_PATTERN}
 ```
 
 **Type:** `set[str]`
 
-**Purpose:** Specific filenames to exclude from the entire process. Currently empty, but provides a hook for future expansion.
+**Purpose:** File patterns excluded from the entire process (tree and content). Entries are **gitignore-style patterns**, not just exact names: `ProjectScanner` compiles them with `pathspec`, so a pattern without a slash matches a file of that name at any depth.
+
+`OFFICE_LOCK_FILE_PATTERN` (`~$*`) matches the lock file Microsoft Office creates next to a workbook or document while it is open (e.g. `~$budget.xlsx`). The lock file is not a real workbook, so parsing it only produced an Excel error entry.
 
 **Consumed by:**
 - [`cli.py`](../src/data2prompt/cli.py#L142) — Merged with user-provided `--ignore-files`
@@ -68,13 +75,17 @@ CORE_SKIP_EXTS = {
     # Environment & Secrets
     # Note: '.env' is intentionally NOT here — env files are detected by name and
     # routed to EnvParser, which emits variable names with redacted values.
-    '.venv', '.pyc', '.ds_store'
+    '.pyc', '.ds_store'
 }
 ```
 
 **Type:** `set[str]`
 
 **Purpose:** File extensions where file names appear in the project tree but content is skipped. This preserves tree visibility while avoiding binary bloat.
+
+> **Note:** `.venv` was previously listed here too, but it is a folder, and a
+> folder's `Path.suffix` is empty, so the entry never matched anything. It now
+> lives in `CORE_IGNORES`.
 
 > **Note:** `.env` was previously listed here, but a bare `.env` file has an empty
 > suffix (`Path(".env").suffix == ""`), so extension-based skipping never matched it.
@@ -144,6 +155,21 @@ honest — a 5-row sample still shows structure; 0 rows would not.
 - [`cli.py`](../src/data2prompt/cli.py) — `DEFAULT_BUDGET` is the `-b`/`--budget` argparse default
 - [`budget.py`](budget.md) — the five `BUDGET_MIN_*`/`BUDGET_TEXT_FILE_SIZE_KB`
   floors and `BUDGET_TOKEN_MARGIN` drive every ladder step and the fit test
+
+#### `OUTPUT_SIZE_WARNING_KB` — Large-Output Warning Threshold
+
+```python
+OUTPUT_SIZE_WARNING_KB = 2000
+```
+
+**Type:** `int`
+
+**Purpose:** When the written output is larger than this many KB, `main.py`
+ends the run with a warning panel that suggests `--budget`. The threshold
+also appears in the warning text, so changing it here changes both.
+
+**Consumed by:**
+- [`main.py`](../src/data2prompt/main.py) — the final size check in `_run()`
 
 #### Boolean Feature Toggles
 
@@ -507,7 +533,7 @@ constants.py
 
 Some modules use constants indirectly through the `Config` object created by `cli.py`:
 
-- [`main.py`](../src/data2prompt/main.py) — Accesses constants via `config.*` attributes
+- [`main.py`](../src/data2prompt/main.py) — Accesses constants via `config.*` attributes (the one direct import is `OUTPUT_SIZE_WARNING_KB`)
 - [`utils.py`](../src/data2prompt/utils.py) — Uses ignore sets passed from `Config`
 
 This indirection allows runtime configuration to override defaults while maintaining the fallback values in `constants.py`.

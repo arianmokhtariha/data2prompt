@@ -650,6 +650,27 @@ Matches `.env`, dotted variants (`.env.local`, `.env.production`) and suffixed v
 [`process_target_file()`](../src/data2prompt/main.py) and exposed alongside the shared
 `env_parser` singleton.
 
+## Seeded Sampling: Same Seed, Same Row Positions
+
+Every pandas-based sample (CSV, Excel sheets, Arrow files, small SQLite
+tables) calls `df.sample(n, random_state=config.seed)`, which starts a fresh
+random generator from the same seed for **each table**. The drawn row
+positions therefore depend only on the table's row count and `n`. Two tables
+with the same number of rows get samples at exactly the same positions (for
+example, rows 411, 521, 660, 737 and 740 of two 1,000-row files with seed 42
+and `n = 5`), while tables of different lengths get unrelated positions.
+
+This is intentional and harmless, and it can help: when two equal-length
+tables are row-aligned (a 1:1 split of one dataset, or a table and its
+labels), the samples show matching rows side by side. It is positional, not
+key-based. Tables that share a join key but not a row order get no aligned
+sample. Changing `--seed` changes the positions for every table at once.
+
+`SQLParser` differs slightly: it creates one `random.Random(seed)` per file
+and draws every table's rows from that one stream, so two tables inside the
+same `.sql` file do not repeat positions. Each new `.sql` file starts the
+stream again.
+
 ## Defensive Programming Measures
 
 ### Binary Detection

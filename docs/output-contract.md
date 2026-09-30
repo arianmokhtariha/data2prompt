@@ -97,10 +97,12 @@ degrades the product.
 
 5. **One canonical path key.** Every file has exactly one display path:
    project-relative, forward-slashed (produced by `ProjectScanner
-   .generate_tree()` via `Path.as_posix()` on real `Path` objects, and
-   normalized again by `_display_path()` in `output.py` and the omission
-   phase in `budget.py`, both via a plain `rel_path.replace("\\", "/")` on
-   the already-stringified `relative_path`). The plain string replace —
+   .generate_tree()` and by `main.py`'s per-file `relative_path`, both via
+   `Path.as_posix()` on real `Path` objects, so the terminal report uses the
+   same key; and normalized again, defensively, by `_display_path()` in
+   `output.py` and the omission phase in `budget.py`, both via a plain
+   `rel_path.replace("\\", "/")` on the already-stringified path). The
+   plain string replace —
    rather than reconstructing a `Path` and calling `.as_posix()` on it — is
    deliberate: `pathlib.Path` only treats `\` as a separator on Windows, so
    re-wrapping an already-`str` relative path in `Path(...)` on a POSIX

@@ -3,15 +3,21 @@
 from typing import Dict, List, Optional, Tuple
 
 # Folders matching these names are excluded from both the project tree and content processing.
+# Bare 'env' is deliberately absent: it is also a common config-folder name
+# (env/environment.yml, config/env/), and a folder ignore drops it silently.
 CORE_IGNORES = {
-    '.git', '__pycache__', 'venv', '.vscode', '.ipynb_checkpoints',
-    'node_modules', '.idea', 'dist', 'build', '.mypy_cache',
-    '.pytest_cache', 'target', '.docker', '.aws', '.gcloud',
-    '__MACOSX'
+    '.git', '__pycache__', 'venv', '.venv', '.conda', '.vscode',
+    '.ipynb_checkpoints', 'node_modules', '.idea', 'dist', 'build',
+    '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox', '.nox', 'target',
+    '.docker', '.aws', '.gcloud', '__MACOSX'
 }
 
-# Specific filenames that should be excluded from the entire process.
-CORE_IGNORE_FILES = set()
+# Lock file Office creates next to an open document (e.g. '~$budget.xlsx').
+OFFICE_LOCK_FILE_PATTERN = '~$*'
+
+# Gitignore-style file patterns excluded from the entire process (tree and
+# content), matched at any depth.
+CORE_IGNORE_FILES = {OFFICE_LOCK_FILE_PATTERN}
 
 # Files with these extensions will have their names listed in the project tree,
 # but their actual content will be skipped.
@@ -27,7 +33,7 @@ CORE_SKIP_EXTS = {
     # Environment & Secrets
     # Note: '.env' is intentionally NOT here — env files are detected by name and
     # routed to EnvParser, which emits variable names with redacted values.
-    '.venv', '.pyc', '.ds_store'
+    '.pyc', '.ds_store'
 }
 
 # Default values for CLI arguments and processing functions
@@ -68,6 +74,9 @@ BUDGET_MIN_NOTEBOOK_LINES = 10  # max_lines floor before outputs are dropped
 BUDGET_MIN_SQL_SAMPLE = 5      # sql_sample_size floor
 BUDGET_MIN_SQL_MAX_LINES = 20  # sql_max_lines floor
 BUDGET_TEXT_FILE_SIZE_KB = 10  # max_file_size cap for text-truncation step
+
+# Output size (KB) above which a run ends with a warning suggesting --budget.
+OUTPUT_SIZE_WARNING_KB = 2000
 
 # Placeholder substituted for every value in a .env file so secrets never leak.
 ENV_VALUE_PLACEHOLDER = '<redacted>'

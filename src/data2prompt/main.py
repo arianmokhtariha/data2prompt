@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import List, Optional, Set
 from data2prompt.cli import setup_cli, Config
+from data2prompt.constants import OUTPUT_SIZE_WARNING_KB
 from data2prompt.parsers import (
     registry,
     ParserResult,
@@ -123,7 +124,9 @@ def _run() -> None:
         records: List[FileRecord] = []
 
         for file_path in all_files:
-            relative_path = file_path.relative_to(project_path)
+            # Forward slashes: the canonical path key the document uses, so
+            # the terminal report names every file exactly the same way.
+            relative_path = file_path.relative_to(project_path).as_posix()
             ext = file_path.suffix.lower()
             stats["file_count"] += 1
 
@@ -138,7 +141,7 @@ def _run() -> None:
 
             # Collect file data for the generator
             files_data.append({
-                "path": str(relative_path),
+                "path": relative_path,
                 "content": result.content,
                 "type": result.type,
                 "tokens": result.tokens,
@@ -148,7 +151,7 @@ def _run() -> None:
             if config.budget is not None:
                 records.append(FileRecord(
                     absolute_path=file_path,
-                    relative_path=str(relative_path),
+                    relative_path=relative_path,
                     result=result,
                 ))
 
@@ -158,7 +161,7 @@ def _run() -> None:
                 stats[key] = stats.get(key, 0) + value
             
             processed_files_info.append({
-                "name": str(relative_path),
+                "name": relative_path,
                 "type": result.type,
                 "tokens": result.tokens,
                 "status": result.status
@@ -267,11 +270,12 @@ def _run() -> None:
             "[bold]For pipx users:[/bold] pipx inject data2prompt pyarrow"
         )
 
-    if file_size_kb > 2000:
+    if file_size_kb > OUTPUT_SIZE_WARNING_KB:
         ui.print_warning_panel(
-            "Output is over 2MB. This might be too large for some context windows.\n"
-            "[bold]Suggestion:[/bold] reduce --csv-sample-size, --sql-sample-size "
-            "or --max-lines."
+            f"Output is over {OUTPUT_SIZE_WARNING_KB:,} KB. This might be too "
+            "large for some context windows.\n"
+            "[bold]Suggestion:[/bold] rerun with --budget <tokens> "
+            "(e.g. --budget 100k) to fit it automatically."
         )
 
 def main() -> None:

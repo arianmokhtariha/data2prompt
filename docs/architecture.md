@@ -133,9 +133,16 @@ all_files = scanner.scan()
 
 ```python
 for file_path in all_files:
+    relative_path = file_path.relative_to(project_path).as_posix()
     result = process_target_file(file_path, config)
     files_data.append({...})
 ```
+
+`relative_path` is built once, with forward slashes, and reused for the
+`files_data` entry, the budget `FileRecord`, and the terminal report row. So
+the terminal report names every file by the same canonical path key the
+document uses (see [output-contract.md](output-contract.md), invariant 5)
+instead of `data\raw\x.tsv` on Windows.
 
 The [`process_target_file()`](../src/data2prompt/main.py#L27) function:
 
@@ -333,7 +340,9 @@ own contents (the stats summary).
 
 1. **Warning Suppression**: Global suppression of `openpyxl` and `pandas` warnings for cleaner TUI output
 2. **Offline-safe tokenization**: [`_load_encoding()`](../src/data2prompt/utils.py#L19) reads the bundled BPE file — no network call is ever made
-3. **File Size Warning**: Triggers a warning panel if output exceeds 2MB (potential context window issues)
+3. **File Size Warning**: Triggers a warning panel if the output is larger than
+   `OUTPUT_SIZE_WARNING_KB` (2,000 KB, see [constants.md](constants.md)), which
+   may not fit some context windows. The panel suggests rerunning with `--budget`.
 4. **Graceful Skipping**: Files matching skip extensions receive a placeholder result rather than failing
 5. **Per-file error containment**: every parser wraps its own filesystem/library
    calls in `try/except` and degrades a single bad file to an error-note result

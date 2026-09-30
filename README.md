@@ -144,7 +144,7 @@ data2prompt --budget 100k
 ```
 
 `--budget` runs a de-escalation ladder: halve CSV and SQL sample sizes, trim
-notebook outputs, drop the stats blocks, switch to schema-only, and as a last
+notebook outputs, switch to schema-only, drop the stats blocks, and as a last
 resort omit the heaviest remaining files. It re-renders and re-counts the actual
 document after every step until it fits. The number that gets checked is the
 number you ship.
