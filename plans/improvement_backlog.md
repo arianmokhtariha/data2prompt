@@ -19,20 +19,20 @@
 
 1. **Read, in order:**
    - this file
-   - the repo `CLAUDE.md`
+   - the root `CLAUDE.md` (environment, git conventions, delegation) and the
+     CLAUDE.md of each directory you'll touch
    - `docs/architecture.md`
    - `docs/output-contract.md`
-   - `.claude/backlog/BRIEFING.md`: the agent protocol, paths and environment
-     traps
-2. **Check the kit exists:** `.claude/backlog/` should hold `BRIEFING.md`,
-   `make_fixture.py`, `snapshot.py`, `fixture_proj/` and `baseline/`, and
-   `.claude/agents/` should hold `d2p-*.md`. Both folders are gitignored, so they
-   are local to this machine. If they are missing, rebuild them from §3.3.
-3. **Refresh the baseline from current main** before the wave starts:
-   ```bash
-   "/d/miniconda3/python.exe" .claude/backlog/snapshot.py . .claude/backlog/baseline
-   "/d/miniconda3/python.exe" -m pytest -q        # record the test count
-   ```
+2. **Check the local tooling exists** (gitignored, so this machine only):
+   - the agents `.claude/agents/implementer.md`, `code-reviewer.md` and
+     `fix-verifier.md`
+   - the skill `.claude/skills/output-snapshot/`
+   
+   If they're missing, rebuild them from §3.2–3.3.
+3. **Record the starting point** before the wave starts. Take a reference
+   snapshot of current main (see the `output-snapshot` skill) into the session
+   scratchpad, and record the test count
+   (`"/d/miniconda3/python.exe" -m pytest -q`).
 4. **Pick the wave** from §5 (Next wave) and run the pipeline in §3. Report to the
    owner at the end of the wave (§3.6).
 
@@ -112,65 +112,51 @@ Implementer ─► Reviewer (full) ─► Fixer ─► Verifier ─► (loop unt
 
 ### 3.2 Agent roles and model tiers (token efficiency, owner request)
 
-Use Sonnet whenever the task or plan is clear. Reserve Opus for first full reviews
-and open design problems. Match effort to the task. Agent types live in
-`.claude/agents/` and load at session start:
+The project's general-purpose agents (`.claude/agents/`, loaded at session start)
+carry the role protocols. Standards live in the CLAUDE.md files, which the agents
+also load:
 
-| Agent type | Model / effort | Use for |
-|---|---|---|
-| `d2p-implementer` | Sonnet / high | Implementing a clearly specified item, or a fix list needing moderate design (rebases, plumbing) |
-| `d2p-fixer` | Sonnet / medium | Applying a precise, already-decided fix list |
-| `d2p-reviewer` | Opus / high | First full review of new work (unified code + contract) |
-| `d2p-verifier` | Sonnet / high | Re-review after fixes |
-| `general-purpose` + `model: opus` | Opus | Open design problems with no settled plan (e.g. items 4, 6, 17) |
+| Pipeline role | Agent | Model / effort | Notes |
+|---|---|---|---|
+| Implementer, and fixer for decided fix lists | `implementer` | Sonnet / high | Override with `model: opus` for open design (e.g. items 4, 6, 17). Pass `isolation: worktree` for parallel tracks. |
+| First full review | `code-reviewer` | Opus / high | One unified reviewer: code quality + output contract. Keeps a local memory of recurring defect patterns. |
+| Re-review after fixes | `fix-verifier` | Sonnet / high | Needs the prior finding IDs and the fix commit range. |
 
-Each agent's prompt names: the item(s) in this file, the worktree path and branch,
-the runs/track id, the reference snapshot to diff against, and (for fixers and
-verifiers) the finding IDs and the commit range.
+**Each delegation prompt names:**
+- the item(s) in this file
+- the worktree path and branch (`backlog/w<wave>-<track>-<slug>`)
+- the reference snapshot to diff against
+- for verifiers: the finding IDs and the commit range
 
-### 3.3 The kit (`.claude/backlog/`, local, gitignored)
+### 3.3 Output verification: the `output-snapshot` skill
 
-| File | Purpose |
-|---|---|
-| `BRIEFING.md` | The protocol every agent reads first: paths, environment traps, code standards, the implementer and reviewer protocols, report formats. |
-| `make_fixture.py` | Builds `fixture_proj/`, a deterministic messy project that reproduces the backlog bugs. It covers: semicolon, pipe, cp1252, preamble and ragged CSVs; a CSV with `\|`, newlines and empty cells; DD/MM dates, `$` amounts, case variants, a `-999` sentinel and duplicate rows; a 63-column sensor table; a long-text table; `.tsv`, `.csv.gz`, `.jsonl` and `.json`; an Excel file with a title row; a corrupt xlsx and an Office lock file; SQLite with a foreign key; Parquet; a notebook with out-of-order runs and an ANSI traceback; a `.venv`; `.env`; code; and a README. **Add new cases here** when an item needs them (e.g. item 20 needs a list/struct Parquet). |
-| `snapshot.py` | `snapshot.py <tree_root> <out_dir>` runs that tree's code (via `PYTHONPATH`) on a fresh temp copy of the fixture in 4 variants: `default_md`, `default_xml`, `schema_only`, `budget_12k`. It saves the documents with normalized timestamps, plus the terminal output. |
-| `baseline/` | Snapshot of main at the start of the current wave. Refresh it at the start of every wave. |
-| `runs/`, `review/` | Per-track outputs and reviewer scratch; they can be deleted between waves. |
+`.claude/skills/output-snapshot/` holds:
+- `scripts/snapshot.py`: runs any tree on a fixture in 4 variants
+- `scripts/make_fixture.py`: builds a deterministic messy fixture covering every
+  backlog bug class
 
-If the kit is lost: recreate `BRIEFING.md` from §3.1–3.5 of this file plus
-CLAUDE.md, and rebuild the fixture from the list above.
+Its `SKILL.md` documents the procedure. **Add fixture cases there** when an item
+needs them (e.g. item 20 needs a list/struct Parquet). If the skill is lost,
+rebuild the fixture from the inventory in its `SKILL.md`.
 
-### 3.4 Environment traps (each one cost time in Wave 1)
+### 3.4 Program-specific traps (each one cost time in Wave 1)
 
-- **Python:** only `"/d/miniconda3/python.exe"`. Bare `python` lacks the
-  dependencies.
-- **The `data2prompt` console script** is an editable install of the main repo.
-  In a worktree it runs MAIN's code, so run trees via `snapshot.py` or
-  `PYTHONPATH=<tree>/src`. Tests are safe: `tests/conftest.py` puts the tree's own
-  `src/` first.
-- **Stale worktree base:** a new agent worktree (`isolation: worktree`) may start
-  from an OLD commit. The agent must check `git merge-base HEAD main` and run
-  `git reset --hard main` if it has no work yet.
-- **Untracked files** (e.g. an uncommitted plan) are not in worktrees. Point agents
-  at the main repo path.
-- **New agent types** in `.claude/agents/` only load at session start. Mid-session,
-  use `general-purpose` with a `model` override and tell the agent to read the
-  definition file as its instructions.
-- **Parallel tracks** must own disjoint files. `parsers.py`, `output.py` and
-  `constants.py` (preamble) are hotspots, so merge tracks one at a time and rebase
-  the next branch onto main before its fix round.
+The general traps (Python path, the console script, hotspot files) are in the root
+CLAUDE.md. Those specific to running waves:
+- **Stale worktree base:** a new agent worktree may start from an OLD commit.
+  The `implementer` agent checks for this; verify it in its report.
+- **Untracked files** (e.g. an uncommitted plan) don't exist in worktrees. Point
+  agents at the main repo path.
+- **Rebase before fixing:** rebase the next branch onto main before its fix
+  round, so reviewers see final code.
 
-### 3.5 Git and commit conventions
+### 3.5 Git
 
-- Branches: `backlog/w<wave>-<track>-<slug>`, e.g. `backlog/w2-a-ingestion`. All
-  local. The lead merges with `--ff-only`. **Nothing is pushed until the owner says
-  so.**
-- Commit style (strict): lowercase, dash-prefixed bullets, one short line per
-  logical change stating what and briefly why. **Never a `Co-Authored-By` or any
-  attribution trailer.** Fixes are new commits, never amends.
-- After a wave is merged, remove its worktrees
-  (`git worktree remove <path>`); the branches keep the history.
+Follow the root CLAUDE.md conventions. Waves add only these:
+- Branch names are `backlog/w<wave>-<track>-<slug>`.
+- Nothing is pushed until the owner says so.
+- After a wave is merged, remove its worktrees (`git worktree remove <path>`); the
+  branches keep the history.
 
 ### 3.6 The end-of-wave report (owner expectation)
 
