@@ -254,6 +254,8 @@ The flags you will actually reach for:
 | `--max-lines` | `40` | Output lines kept per notebook cell |
 | `--max-sheets` | `10` | Sheets processed per Excel workbook |
 | `--max-tables` | `25` | Tables processed per SQLite database |
+| `--stats-decimals` | `4` | Max decimals for float statistics (small values keep 4 significant digits) |
+| `--data-decimals` | `6` | Max decimals for float sample values (`17` keeps full float64 precision) |
 | `--max-file-size` | `70` | KB threshold before plain files are head-truncated |
 | `--no-stats-summary` | stats on | Drop the per-table stats block |
 | `--no-env-keys` | redact | Skip `.env` files entirely instead of redacting |

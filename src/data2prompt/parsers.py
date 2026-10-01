@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import math
 import random
 import re
 import sqlite3
@@ -39,6 +40,9 @@ from data2prompt.constants import (
     DEFAULT_TRUNCATED_LINE_LENGTH,
     DEFAULT_TABLE_CHAR_LIMIT,
     DEFAULT_TABLE_TRUNCATED_SIZE,
+    DEFAULT_STATS_DECIMALS,
+    DEFAULT_DATA_DECIMALS,
+    MIN_SIGNIFICANT_DIGITS,
     ENV_VALUE_PLACEHOLDER,
     GENERATION_FLAG,
     NOTEBOOK_NOTICE_LIST_LIMIT,
@@ -197,13 +201,15 @@ def render_schema_block(
     *,
     show_missing: bool,
     show_describe: bool,
+    stats_decimals: int = DEFAULT_STATS_DECIMALS,
 ) -> str:
     """Render a table's schema metadata as a Markdown snippet.
 
     Single source of truth used both for token estimation and by the output
     generators. ``show_missing`` adds missing count/percentage columns;
     ``show_describe`` merges describe() stats as additional columns in the
-    same table rather than as a separate section.
+    same table rather than as a separate section. Float statistics are
+    rounded to ``stats_decimals`` (see ``format_float``).
     """
     lines: List[str] = [
         f"**Schema** — {schema.row_count:,} rows × {schema.col_count} columns",
@@ -235,7 +241,7 @@ def render_schema_block(
                 stats_row = desc.iloc[i]
                 for stat in stat_cols:
                     val = stats_row[stat]
-                    row.append(_format_cell(val))
+                    row.append(_format_cell(val, stats_decimals))
             else:
                 row += [""] * len(stat_cols)
             lines.append("| " + " | ".join(row) + " |")
@@ -264,15 +270,36 @@ def render_schema_block(
 _SAMPLE_TABLE_HEADER_LINES = 2
 
 
-def _format_cell(value: object) -> str:
-    """Render one table cell faithfully; only a missing value is left empty.
+def format_float(value: float, decimals: int) -> str:
+    """Round a float to at most ``decimals`` places, never losing significance.
 
-    ``str()`` gives a float's shortest round-trip form, so values are never
-    rounded. An empty or whitespace-only string is quoted (``""``, ``"  "``)
-    so it cannot be mistaken for a missing value.
+    Single source of truth for numeric precision. The place count is raised
+    for small magnitudes so at least ``MIN_SIGNIFICANT_DIGITS`` significant
+    digits survive (``0.0000123456`` at 4 decimals gives ``1.235e-05``, not
+    ``0.0``). The result is the shortest ``repr``, so no trailing zeros are
+    added. Zero, NaN and infinities have no magnitude and print as ``repr``.
+    """
+    if value == 0 or not math.isfinite(value):
+        return repr(value)
+    magnitude = math.floor(math.log10(abs(value)))
+    places = max(decimals, MIN_SIGNIFICANT_DIGITS - 1 - magnitude)
+    return repr(round(value, places))
+
+
+def _format_cell(value: object, decimals: int) -> str:
+    """Render one table cell; only a missing value is left empty.
+
+    Float values (Python, numpy and pandas nullable) are rounded to
+    ``decimals`` places by ``format_float``; every other type keeps its
+    ``str()`` form. An empty or whitespace-only string is quoted (``""``,
+    ``"  "``) so it cannot be mistaken for a missing value.
     """
     if pd.api.types.is_scalar(value) and pd.isna(value):
         return ""
+    if pd.api.types.is_float(value):
+        # Parse the shortest text form, not the binary value: a float32 0.1
+        # widens to 0.10000000149011612 and would defeat a large decimal cap.
+        return format_float(float(str(value)), decimals)
     text = str(value)
     if not text.strip():
         return f'"{_escape_table_cell(text)}"'
@@ -284,12 +311,15 @@ def _join_row(cells: Sequence[str]) -> str:
     return "|" + "|".join(f" {cell} " if cell else " " for cell in cells) + "|"
 
 
-def render_sample_table(df: pd.DataFrame) -> str:
+def render_sample_table(
+    df: pd.DataFrame, data_decimals: int = DEFAULT_DATA_DECIMALS
+) -> str:
     """Render sample rows as a compact Markdown table, one line per row.
 
-    No alignment padding: it costs tokens and tells a model nothing. Cell
-    conventions (empty = missing, quoted blanks, the newline marker) are
-    taught in the tabular preamble bullet.
+    No alignment padding: it costs tokens and tells a model nothing. Float
+    values are rounded to ``data_decimals``. Cell conventions (empty =
+    missing, quoted blanks, the newline marker) are taught in the tabular
+    preamble bullet.
     """
     header = [_escape_table_cell(str(name)) for name in df.columns]
     lines = [
@@ -301,7 +331,9 @@ def render_sample_table(df: pd.DataFrame) -> str:
     # Positional access keeps duplicate column labels apart.
     columns = [df.iloc[:, i].array for i in range(df.shape[1])]
     for row in zip(*columns):
-        lines.append(_join_row([_format_cell(value) for value in row]))
+        lines.append(_join_row(
+            [_format_cell(value, data_decimals) for value in row]
+        ))
     return "\n".join(lines)
 
 
@@ -311,6 +343,7 @@ def render_table_text(
     include_rows: bool,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
+    data_decimals: int = DEFAULT_DATA_DECIMALS,
 ) -> str:
     """Render a table's notes and sample rows: header note, rows, footer note.
 
@@ -324,7 +357,7 @@ def render_table_text(
     if table.header_note:
         parts.append(table.header_note)
     if include_rows and not table.df.empty:
-        rows_text = render_sample_table(table.df)
+        rows_text = render_sample_table(table.df, data_decimals)
         if table_limit is not None and table_truncate is not None:
             rows_text = enforce_table_limit(
                 rows_text,
@@ -345,6 +378,8 @@ def flatten_ir(
     stats_summary: bool = False,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
+    stats_decimals: int = DEFAULT_STATS_DECIMALS,
+    data_decimals: int = DEFAULT_DATA_DECIMALS,
     file_note: Optional[str] = None,
 ) -> str:
     """
@@ -356,11 +391,19 @@ def flatten_ir(
     included when either flag is set, and data rows are dropped under ``schema_only``.
     ``table_limit``/``table_truncate`` apply the same sample-row cap as the
     generators, so the estimate counts the text the document carries.
+    ``stats_decimals``/``data_decimals`` are the float rounding caps of the
+    schema block and the sample rows.
     ``file_note`` is the file-level notice the generators print under the
     file header.
     """
     body = _flatten_content(
-        content, schema_only, stats_summary, table_limit, table_truncate
+        content,
+        schema_only,
+        stats_summary,
+        table_limit,
+        table_truncate,
+        stats_decimals,
+        data_decimals,
     )
     return "\n".join([file_note, body]) if file_note else body
 
@@ -371,6 +414,8 @@ def _flatten_content(
     stats_summary: bool,
     table_limit: Optional[int],
     table_truncate: Optional[int],
+    stats_decimals: int,
+    data_decimals: int,
 ) -> str:
     """Flatten the content of ``flatten_ir`` without the file-level note."""
     if isinstance(content, str):
@@ -406,6 +451,7 @@ def _flatten_content(
                     table.schema,
                     show_missing=stats_summary,
                     show_describe=stats_summary,
+                    stats_decimals=stats_decimals,
                 ))
 
             # The same notes + rows text the generators emit.
@@ -414,6 +460,7 @@ def _flatten_content(
                 include_rows=not schema_only,
                 table_limit=table_limit,
                 table_truncate=table_truncate,
+                data_decimals=data_decimals,
             )
             if table_text:
                 parts.append(table_text)
@@ -1162,7 +1209,9 @@ def process_excel(
 
 # --- Inclusion status from the parse outcome ---
 
-def _rows_were_cut(table: TableIR, limit: int, truncate_to: int) -> bool:
+def _rows_were_cut(
+    table: TableIR, limit: int, truncate_to: int, data_decimals: int
+) -> bool:
     """Whether the table character cap will cut this table's sample rows.
 
     Asks ``fit_table_rows`` about the very text the generators render, so
@@ -1172,7 +1221,7 @@ def _rows_were_cut(table: TableIR, limit: int, truncate_to: int) -> bool:
     if table.df.empty:
         return False
     _, rows, kept_count = fit_table_rows(
-        render_sample_table(table.df),
+        render_sample_table(table.df, data_decimals),
         limit,
         truncate_to,
         _SAMPLE_TABLE_HEADER_LINES,
@@ -1186,6 +1235,7 @@ def _tabular_status(
     partial_status: str,
     table_limit: int,
     table_truncate: int,
+    data_decimals: int,
 ) -> str:
     """Derive a tabular file's raw status from its tables' parse outcomes.
 
@@ -1194,7 +1244,8 @@ def _tabular_status(
     under ``--schema-only``; ``partial_status`` (the parser's own sampled
     status) when any rows, sheets or tables were left out or failed, or the
     table character cap (``table_limit``/``table_truncate``) cuts a table's
-    rows at render time; and ``Read`` (Full) when every row of every table
+    rows at render time (measured on rows rounded to ``data_decimals``); and
+    ``Read`` (Full) when every row of every table
     is shown.
     """
     if all(table.error for table in tables):
@@ -1204,7 +1255,7 @@ def _tabular_status(
     if any(
         table.partial
         or table.error
-        or _rows_were_cut(table, table_limit, table_truncate)
+        or _rows_were_cut(table, table_limit, table_truncate, data_decimals)
         for table in tables
     ):
         return partial_status
@@ -1244,6 +1295,8 @@ class CSVParser:
             stats_summary=config.stats_summary,
             table_limit=config.table_limit,
             table_truncate=config.table_truncate,
+            stats_decimals=config.stats_decimals,
+            data_decimals=config.data_decimals,
         ))
         return ParserResult(
             content=content,
@@ -1255,6 +1308,7 @@ class CSVParser:
                 "Sampled",
                 config.table_limit,
                 config.table_truncate,
+                config.data_decimals,
             ),
             stats_update={"csv_count": 1}
         )
@@ -1344,6 +1398,8 @@ class ExcelParser:
             stats_summary=config.stats_summary,
             table_limit=config.table_limit,
             table_truncate=config.table_truncate,
+            stats_decimals=config.stats_decimals,
+            data_decimals=config.data_decimals,
         ))
         return ParserResult(
             content=content,
@@ -1355,6 +1411,7 @@ class ExcelParser:
                 "Extracted",
                 config.table_limit,
                 config.table_truncate,
+                config.data_decimals,
             ),
             stats_update={"excel_count": 1, "excel_sheets_count": sheet_count}
         )
@@ -1485,6 +1542,8 @@ class ArrowParser:
             stats_summary=config.stats_summary,
             table_limit=config.table_limit,
             table_truncate=config.table_truncate,
+            stats_decimals=config.stats_decimals,
+            data_decimals=config.data_decimals,
         ))
         return ParserResult(
             content=content,
@@ -1496,6 +1555,7 @@ class ArrowParser:
                 "Sampled",
                 config.table_limit,
                 config.table_truncate,
+                config.data_decimals,
             ),
             stats_update={stat_key: 1},
         )
@@ -1980,6 +2040,8 @@ class SQLiteParser:
             stats_summary=config.stats_summary,
             table_limit=config.table_limit,
             table_truncate=config.table_truncate,
+            stats_decimals=config.stats_decimals,
+            data_decimals=config.data_decimals,
         ))
         return ParserResult(
             content=content,
@@ -1991,6 +2053,7 @@ class SQLiteParser:
                 "Sampled",
                 config.table_limit,
                 config.table_truncate,
+                config.data_decimals,
             ),
             stats_update={"sqlite_count": 1, "db_tables_count": table_count},
         )

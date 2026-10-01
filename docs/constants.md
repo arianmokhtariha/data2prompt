@@ -118,6 +118,9 @@ All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and 
 | `DEFAULT_TRUNCATED_LINE_LENGTH` | `1000` | Characters retained when line is truncated |
 | `DEFAULT_TABLE_CHAR_LIMIT` | `50000` | Max characters for table/sheet after sampling |
 | `DEFAULT_TABLE_TRUNCATED_SIZE` | `20000` | Characters retained when table is size-truncated |
+| `DEFAULT_STATS_DECIMALS` | `4` | Max decimals for float statistics (describe() values); `--stats-decimals` |
+| `DEFAULT_DATA_DECIMALS` | `6` | Max decimals for float values in sample rows; `--data-decimals` |
+| `MIN_SIGNIFICANT_DIGITS` | `4` | Significance guard: a rounded float keeps at least this many significant digits (not a CLI option) |
 | `DEFAULT_MAX_FILE_SIZE_KB` | `70` | Max file size (KB) for unhandled types to be read entirely |
 | `DEFAULT_OUTPUT_FILE` | `'PROMPT'` | Default output base name |
 | `DEFAULT_FORMAT` | `'markdown'` | Default output format |
@@ -285,7 +288,8 @@ syntax differs) across four parts:
    sample rows an empty cell is a missing value, in schema and stats
    blocks an empty statistic means not applicable to that column; `""` is
    an empty string and a quoted blank is whitespace-only text; `↵` marks
-   a line break inside a value; `\|` is a literal pipe), the
+   a line break inside a value; `\|` is a literal pipe; floats are rounded,
+   with the configured caps named in the sentence), the
    `-- [...] --` tool-notice grammar, and env-value redaction.
 4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted
    content is not included and must not be invented; samples illustrate
@@ -296,10 +300,21 @@ syntax differs) across four parts:
 The XML variant additionally states that element content is embedded verbatim
 (not XML-escaped) and tags are structural markers, not strict XML.
 
+**Rounding slots.** The cell-convention bullet ends with one sentence stating
+the run's float caps: "Floats are rounded: data values to at most
+{DATA_DECIMALS} decimals, statistics to at most {STATS_DECIMALS} (small values
+keep {SIGNIFICANT_DIGITS} significant digits)." The three `{...}` tokens are
+named slots (`PREAMBLE_SLOT_DATA_DECIMALS`, `PREAMBLE_SLOT_STATS_DECIMALS`,
+`PREAMBLE_SLOT_SIGNIFICANT_DIGITS`), not `str.format` fields (the preambles
+contain literal braces such as `{n}`). `output.py`'s `_fill_preamble_slots()`
+replaces them with `config.data_decimals`, `config.stats_decimals` and
+`MIN_SIGNIFICANT_DIGITS` after pruning, identically in both formats.
+
 **Consumed by:**
 - [`output.py`](../src/data2prompt/output.py) — spliced into both outputs
   after being run through [`_prune_preamble()`](output.md#system-instructions-preamble-pruning)
-  (see below); the constants themselves are never edited at render time.
+  and `_fill_preamble_slots()` (see below); the constants themselves are never
+  edited at render time.
 
 #### `PREAMBLE_OPTIONAL_SEGMENTS` — Context-Aware Preamble Pruning Table
 

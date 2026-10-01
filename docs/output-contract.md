@@ -37,7 +37,8 @@ degrades the product.
    formats render identically has one shared renderer in `parsers.py`
    (`render_schema_block()` for schema blocks, `render_table_text()` for a
    table's notes and sample rows), also used by `flatten_ir()` so per-file
-   token estimates count the same text (including the table-size cap);
+   token estimates count the same text (including the table-size cap and the
+   float rounding caps, `format_float()` being the one place that rounds);
    never re-implement it per generator.
 
 2. **The document teaches the LLM how to read itself.** The preambles
@@ -266,6 +267,13 @@ explicitly if it deserves its own LLM-facing term.
    "large table" tail sentence inside the tabular-schema bullet),
    `_prune_preamble()`'s longest-first removal order already handles the
    overlap correctly — no ordering care is needed in the segment list itself.
+7. **Run-dependent numbers** (like the float rounding caps in the
+   cell-convention bullet) are written as named slots such as
+   `{DATA_DECIMALS}` in both constants and in the fragment, and filled by
+   `_fill_preamble_slots()` after pruning; never `str.format` (the preambles
+   hold literal braces) and never per-generator replacements. A rounding or
+   other precision rule that changes rendered values must also be stated in
+   the preamble with the real configured numbers.
 
 ## The Preamble-Collision Test Rule
 

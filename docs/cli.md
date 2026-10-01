@@ -47,6 +47,8 @@ class Config:
     stats_summary: bool                  # Include the per-table stats metadata block
     env_keys: bool                       # List .env variable names (redacted values)
     budget: Optional[int]                # Target token budget for --budget (None = off)
+    stats_decimals: int = 4              # Max decimals for float statistics
+    data_decimals: int = 6               # Max decimals for float sample values
 ```
 
 ## CLI Arguments Reference
@@ -121,6 +123,23 @@ and the infeasible-outcome contract.
 |:---------|:----:|:--------|:------------|
 | `--table-limit` | `int` | `50000` | Maximum characters allowed for a single table or sheet representation after sampling. Tables exceeding this are truncated. |
 | `--table-truncate` | `int` | `20000` | Number of characters to retain when a table/sheet exceeds the limit. |
+
+### Numeric Precision Settings
+
+| Argument | Type | Default | Description |
+|:---------|:----:|:--------|:------------|
+| `--stats-decimals` | `int` | `4` | Maximum decimals for float values in the schema block's describe() statistics (mean, std, min, quartiles, max, ...). |
+| `--data-decimals` | `int` | `6` | Maximum decimals for float values in sample rows. A large value such as `17` effectively keeps full float64 precision. |
+
+Only true float values are rounded (Python/numpy floats, `float32` and pandas
+nullable `Float64`). Integers, booleans, dates and times, strings (including
+numeric-looking text), bytes and decimals render untouched, and raw-text
+formats (SQL dumps, notebooks, plain files) are never rewritten. A significance
+guard stops small values from collapsing: each value is rounded to
+`max(decimals, 4 - 1 - floor(log10(|value|)))` places
+(`MIN_SIGNIFICANT_DIGITS = 4`), so `0.0000123456` renders as `1.235e-05`, and
+because of the guard even `--data-decimals 0` keeps 4 significant digits of a
+value like `97.6856`. The preamble states the configured caps to the model.
 
 ### Exclusion Settings
 
@@ -328,6 +347,8 @@ data2prompt \
     --truncated-line-length 1000 \
     --table-limit 50000 \
     --table-truncate 20000 \
+    --stats-decimals 4 \
+    --data-decimals 6 \
     --ignore-folders venv .pytest_cache \
     --ignore-files .env \
     --max-file-size 70 \
@@ -344,7 +365,7 @@ Numeric arguments use two custom `argparse` types defined in
 - `_non_negative_int` (≥ 0): all counts and sizes — `--csv-sample-size`,
   `--sql-sample-size`, `--sql-max-lines`, `--max-lines`, `--max-sheets`,
   `--max-tables`, `--truncated-line-length`, `--table-truncate`,
-  `--max-file-size`
+  `--max-file-size`, `--stats-decimals`, `--data-decimals`
 - `_positive_int` (≥ 1): thresholds that would be nonsensical at zero —
   `--line-length-threshold`, `--table-limit`
 - `_token_budget` (≥ 1): `--budget`. Accepts plain integers (`50000`),

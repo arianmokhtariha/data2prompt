@@ -1093,6 +1093,8 @@ def _status_config(
         truncated_line_length=1000,
         table_limit=table_limit,
         table_truncate=table_truncate,
+        stats_decimals=4,
+        data_decimals=6,
     )
 
 

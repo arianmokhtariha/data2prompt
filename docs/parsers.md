@@ -256,6 +256,8 @@ def flatten_ir(
     stats_summary: bool = False,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
+    stats_decimals: int = DEFAULT_STATS_DECIMALS,
+    data_decimals: int = DEFAULT_DATA_DECIMALS,
     file_note: Optional[str] = None,
 ) -> str:
     """
@@ -280,10 +282,12 @@ pass the real `Config` flags.
 
 The optional `table_limit` / `table_truncate` are forwarded to
 `render_table_text()`, so a table over `config.table_limit` characters is
-estimated at the capped size the document actually carries. The per-file
+estimated at the capped size the document actually carries. Likewise
+`stats_decimals` / `data_decimals` are forwarded to `render_schema_block()` and
+`render_table_text()`, so the estimate counts the rounded values the document
+carries; every parser class passes the `Config` values. The per-file
 estimate feeds the terminal ranking and the `--budget` omission order, so an
-uncapped estimate would misrank files. Every parser class passes the
-`Config` values.
+uncapped estimate would misrank files.
 
 ### Schema Helpers
 
@@ -291,7 +295,10 @@ Two module-level helpers back the schema/stats features:
 
 ```python
 def build_table_schema(df: pd.DataFrame, include_describe: bool) -> TableSchema: ...
-def render_schema_block(schema, *, show_missing: bool, show_describe: bool) -> str: ...
+def render_schema_block(
+    schema, *, show_missing: bool, show_describe: bool,
+    stats_decimals: int = DEFAULT_STATS_DECIMALS,
+) -> str: ...
 ```
 
 - [`build_table_schema()`](../src/data2prompt/parsers.py) computes row/column counts,
@@ -337,8 +344,11 @@ def render_table_text(
     include_rows: bool,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
+    data_decimals: int = DEFAULT_DATA_DECIMALS,
 ) -> str: ...
-def render_sample_table(df: pd.DataFrame) -> str: ...
+def render_sample_table(
+    df: pd.DataFrame, data_decimals: int = DEFAULT_DATA_DECIMALS
+) -> str: ...
 ```
 
 - `render_table_text()` joins, one per line: `header_note`, the sample rows
@@ -353,7 +363,8 @@ def render_sample_table(df: pd.DataFrame) -> str: ...
   defects: a `|` in a value added fake columns, an embedded newline split one
   row into two, a missing value printed as `nan` (indistinguishable from the
   string "nan"), and the default `floatfmt="g"` rounded real data to 6
-  significant digits (`102479.81746` → `102480`).
+  significant digits (`102479.81746` → `102480`). Floats are now rounded
+  deliberately and visibly, see [Numeric precision](#numeric-precision).
 - Cell rules (`_format_cell()` / `_escape_table_cell()`), shared by the sample
   rows and the schema block's describe() values (so a `top` value follows the
   same rules). Cells are joined by `_join_row()` with single spaces, and an
@@ -361,9 +372,12 @@ def render_sample_table(df: pd.DataFrame) -> str: ...
   - missing (`None`, `NaN`, `NaT`, `pd.NA`) → empty cell;
   - an empty or whitespace-only string → quoted, `""` or `"   "`, so it is
     never mistaken for a missing value;
-  - any other value → `str(value)`, which for floats is the shortest
-    round-trip form, so sample values are never rounded (rounding belongs to
-    computed stats only). Values are read from each column's own array
+  - a float (Python, numpy, `float32`, pandas nullable `Float64`) →
+    `format_float(value, decimals)`, the cap being `data_decimals` for sample
+    rows and `stats_decimals` for describe() values (see
+    [Numeric precision](#numeric-precision)); every other type, including
+    integers, bools, datetimes, strings and `Decimal`, → `str(value)`.
+    Values are read from each column's own array
     (`df.iloc[:, i].array`, positional so duplicate labels stay apart), not
     via `itertuples()`, which widens `float32` to a Python float and would
     print `0.1` as `0.10000000149011612`;
@@ -378,6 +392,51 @@ def render_sample_table(df: pd.DataFrame) -> str: ...
   are rendered (see [constants.md](constants.md)). Empty strings really occur
   in SQLite and Parquet/Arrow text columns and in whitespace-only CSV fields
   (a bare empty CSV field is parsed as `NaN`, hence missing).
+
+### Numeric Precision
+
+```python
+def format_float(value: float, decimals: int) -> str: ...
+```
+
+[`format_float()`](../src/data2prompt/parsers.py) is the single source of truth
+for rounding a float. A value is rounded to
+`max(decimals, MIN_SIGNIFICANT_DIGITS - 1 - floor(log10(|value|)))` decimal
+places and printed with the shortest `repr`, so there are no trailing zeros.
+The second term is the significance guard: small magnitudes get extra places so
+at least `MIN_SIGNIFICANT_DIGITS` (4) significant digits survive.
+
+| Value | Cap | Result |
+|---|---|---|
+| `97.68560353337905` | 6 | `97.685604` |
+| `0.5303300858899106` | 4 | `0.5303` |
+| `102479.81746031746` | 4 | `102479.8175` |
+| `0.0000123456` | 4 | `1.235e-05` (not `0.0`) |
+| `2.0` | 4 | `2.0` |
+
+Zero, NaN and infinities have no magnitude: zero and the infinities print as
+`repr` (`0.0`, `inf`), and a missing value never reaches the helper (it is an
+empty cell). Because of the guard, a cap below the significant-digit floor has
+no effect on mid-sized values (`--data-decimals 0` still prints `97.6856` as
+`97.69`); a large cap such as `17` effectively keeps full float64 precision.
+
+Only true float values are rounded: Python `float`, numpy floating (including
+`float32`) and pandas nullable `Float64`, detected with
+`pd.api.types.is_float()`. The value is parsed from its shortest text form
+first, so a `float32` `0.1` is not widened to `0.10000000149011612`. Integers,
+bools, datetimes, timedeltas, strings (including numeric-looking text in object
+columns), bytes and `Decimal` keep their `str()` form. Raw-text formats (SQL
+dumps, notebooks, plain files) never pass through the cell formatter and are
+unchanged.
+
+The caps are `--data-decimals` (sample rows, default 6) and `--stats-decimals`
+(describe() values, default 4); `missing %` is already rounded to 2 places and
+is left alone. They reach `_format_cell()` through `render_sample_table()` /
+`render_table_text()` and `render_schema_block()`, and the same values go
+through `flatten_ir()` and `_tabular_status()` so the token estimate and the
+inclusion status are computed on the rounded text the document carries. The
+preamble tells the model the configured caps (see
+[constants.md](constants.md)).
 
 ## Parser Implementations
 
@@ -901,7 +960,7 @@ not by string-matching the notice text. All outcomes map onto existing raw
 statuses in `INCLUSION_STATUS_MAP`, so no new vocabulary is involved.
 
 `_tabular_status(tables, schema_only, partial_status, table_limit,
-table_truncate)` (CSV, Excel, Arrow, SQLite), evaluated in order:
+table_truncate, data_decimals)` (CSV, Excel, Arrow, SQLite), evaluated in order:
 
 | Outcome | Raw status | Index status |
 |---|---|---|
@@ -912,8 +971,9 @@ table_truncate)` (CSV, Excel, Arrow, SQLite), evaluated in order:
 
 The character cap (`--table-limit` / `--table-truncate`) is applied when the
 document is rendered, after the parser has set its flags, so the status asks
-the same question the renderer does. `_rows_were_cut(table, limit, truncate_to)`
-renders the table's sample rows and calls `fit_table_rows()`, the pure helper
+the same question the renderer does. `_rows_were_cut(table, limit, truncate_to,
+data_decimals)` renders the table's sample rows (rounded as the document will
+be, since rounding changes the row width) and calls `fit_table_rows()`, the pure helper
 that `enforce_table_limit()` itself cuts with (see
 [Table Size Enforcement](#table-size-enforcement)); there is one piece of
 length arithmetic, so an 8-row CSV with 9,000-character cells can no longer be
@@ -1112,6 +1172,9 @@ The parsers module imports configuration constants from [`constants.py`](../src/
 | `DEFAULT_TRUNCATED_LINE_LENGTH` | 1000 | Characters to keep when truncating |
 | `DEFAULT_TABLE_CHAR_LIMIT` | 50000 | Max characters per table representation |
 | `DEFAULT_TABLE_TRUNCATED_SIZE` | 20000 | Characters to keep when table is truncated |
+| `DEFAULT_STATS_DECIMALS` | 4 | Float cap for describe() values |
+| `DEFAULT_DATA_DECIMALS` | 6 | Float cap for sample-row values |
+| `MIN_SIGNIFICANT_DIGITS` | 4 | Significance guard of `format_float()` |
 | `GENERATION_FLAG` | `"DATA2PROMPT_GENERATED_CONTENT"` | Skip marker for generated files |
 | `TABLE_CELL_NEWLINE_MARKER` | `"↵"` | Replaces a line break inside a sample-table cell |
 

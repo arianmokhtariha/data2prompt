@@ -32,6 +32,8 @@ def test_output_layer_still_enforces_table_limit() -> None:
     cfg = SimpleNamespace(
         table_limit=1000,
         table_truncate=500,
+        stats_decimals=4,
+        data_decimals=6,
         stats_summary=False,
         schema_only=False,
         env_keys=True,

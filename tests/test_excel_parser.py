@@ -42,6 +42,7 @@ def _make_config(
         schema_only=schema_only,
         table_limit=50_000,
         table_truncate=20_000,
+        stats_decimals=4, data_decimals=6,
     )
 
 

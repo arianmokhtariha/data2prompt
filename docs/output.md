@@ -136,7 +136,20 @@ def _active_preamble_triggers(
 
 def _prune_preamble(base: str, active: Set[str], xml: bool) -> str:
     """Delete every inactive segment's exact fragment from `base`."""
+
+def _fill_preamble_slots(
+    preamble: str, stats_decimals: int, data_decimals: int
+) -> str:
+    """Fill the float-rounding slots with this run's caps."""
 ```
+
+`_fill_preamble_slots()` runs after pruning. The cell-convention bullet carries
+three named slots (`{DATA_DECIMALS}`, `{STATS_DECIMALS}`,
+`{SIGNIFICANT_DIGITS}`, see [constants.md](constants.md)) so the rounding
+sentence states the real `config.data_decimals`, `config.stats_decimals` and
+`MIN_SIGNIFICANT_DIGITS`; both generators call it with the values from
+`_rounding_caps(config)` (the defaults when `config` is `None`), so Markdown and
+XML always agree.
 
 `_active_preamble_triggers()` derives six trigger keys: five from the `stats`
 dict already threaded into `generate()`, plus `cells` from `_cells_rendered()`
@@ -183,7 +196,8 @@ Because every fragment is an exact, verified substring of the base constant
 (`tests/test_output.py` asserts `frag in SYSTEM_INSTRUCTIONS_*` and
 `.count(frag) == 1` for all eight entries) and deletion never rewrites
 surrounding text, **a run where every trigger is active reproduces the base
-preamble byte-for-byte** — pruning only ever subtracts, never rewords. This
+preamble byte-for-byte once the rounding slots are filled** — pruning only
+ever subtracts, never rewords. This
 also composes transparently with `--budget`: `fit_to_budget()` rebuilds
 `stats` from scratch on every ladder attempt (see [budget.md](budget.md)), so
 if an attempt omits the only SQLite/notebook/env file in the project to fit
@@ -257,11 +271,14 @@ table with no alignment padding:
 `|` inside a value is escaped as `\|`, a line break inside a value becomes
 `↵` (`TABLE_CELL_NEWLINE_MARKER`), a missing value is an empty cell (`| |`),
 an empty or whitespace-only string is quoted (`""`, `"  "`) so it cannot pass
-for a missing value, and values are never rounded. The same cell rules apply to
-describe() values in the schema block. A `cells`-triggered preamble bullet
+for a missing value, and float values are rounded to `config.data_decimals`
+(default 6; describe() values use `config.stats_decimals`, default 4) with a
+significance guard, see [Numeric precision](parsers.md#numeric-precision). The
+same cell rules apply to describe() values in the schema block. A `cells`-triggered preamble bullet
 teaches these conventions (in sample rows an empty cell is a missing value; in
 schema and stats blocks an empty statistic means not applicable to that column,
-e.g. `top`/`freq` for a numeric column) and is emitted only when table cells
+e.g. `top`/`freq` for a numeric column, and that floats are rounded, naming
+the configured caps) and is emitted only when table cells
 are actually rendered (not under `--schema-only` without stats, and not for
 empty tables or header-only files).
 When a `Config` is given, `config.table_limit` /
@@ -659,6 +676,9 @@ which caps each table's rendered **sample rows** (never its notes) via
 [`enforce_table_limit()`](parsers.md#table-size-enforcement):
 - `config.table_limit`: Maximum characters allowed for the rendered rows
 - `config.table_truncate`: Characters of whole rows to keep when over the limit
+- `config.data_decimals`: Float cap for sample rows (`render_table_text()`)
+- `config.stats_decimals`: Float cap for describe() values
+  (`render_schema_block()`)
 
 Without a `config`, no cap is applied.
 
@@ -695,6 +715,8 @@ All shared by both generators (single source of truth for the scaffolding):
 | `resolve_inclusion_status(status) -> str` | Raw parser status → index vocabulary; `Skipped (...)` prefix fallback, then verbatim passthrough — never raises |
 | `_active_preamble_triggers(stats, env_keys_enabled, cells_rendered) -> Set[str]` | Which optional preamble segments apply this run (see [System Instructions: Preamble Pruning](#system-instructions-preamble-pruning)) |
 | `_prune_preamble(base, active, xml) -> str` | Deletes every inactive `PREAMBLE_OPTIONAL_SEGMENTS` fragment from a preamble constant, longest-first |
+| `_fill_preamble_slots(preamble, stats_decimals, data_decimals) -> str` | Fills the float-rounding slots of the cell-convention bullet with the run's caps |
+| `_rounding_caps(config) -> Tuple[int, int]` | `(stats_decimals, data_decimals)` from `config`, or the defaults when there is none |
 | `build_file_index(tree_text, files_data) -> List[IndexEntry]` | Rendered files in document order + tree-only leftovers as `Omitted` |
 | `summarize_stats(stats, file_total) -> List[Tuple[str, int]]` | Ordered (label, count) pairs; `Total files` always present, zero counts dropped |
 | `_end_recap(project_name, indexed_count) -> str` | Shared closing recap sentence |

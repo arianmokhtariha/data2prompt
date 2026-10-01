@@ -21,6 +21,12 @@ from data2prompt.constants import (
     TAG_BUDGET_REPORT,
     TAG_ADJUSTMENT,
     TAG_OMITTED_FILE,
+    DEFAULT_STATS_DECIMALS,
+    DEFAULT_DATA_DECIMALS,
+    MIN_SIGNIFICANT_DIGITS,
+    PREAMBLE_SLOT_DATA_DECIMALS,
+    PREAMBLE_SLOT_STATS_DECIMALS,
+    PREAMBLE_SLOT_SIGNIFICANT_DIGITS,
     INCLUSION_STATUS_MAP,
     STATS_SUMMARY_LABELS,
     SYSTEM_INSTRUCTIONS_MARKDOWN,
@@ -155,6 +161,30 @@ def _prune_preamble(base: str, active: Set[str], xml: bool) -> str:
     for frag in sorted(to_remove, key=len, reverse=True):
         text = text.replace(frag, "", 1)
     return text
+
+
+def _rounding_caps(config: Optional['Config']) -> Tuple[int, int]:
+    """The ``(stats_decimals, data_decimals)`` float caps for this run."""
+    if config is None:
+        return DEFAULT_STATS_DECIMALS, DEFAULT_DATA_DECIMALS
+    return config.stats_decimals, config.data_decimals
+
+
+def _fill_preamble_slots(
+    preamble: str, stats_decimals: int, data_decimals: int
+) -> str:
+    """Fill the rounding slots of a preamble with this run's caps.
+
+    The slots live in the cell-convention bullet, so a pruned preamble may
+    not contain them; the replacement is then a no-op.
+    """
+    for slot, value in (
+        (PREAMBLE_SLOT_DATA_DECIMALS, data_decimals),
+        (PREAMBLE_SLOT_STATS_DECIMALS, stats_decimals),
+        (PREAMBLE_SLOT_SIGNIFICANT_DIGITS, MIN_SIGNIFICANT_DIGITS),
+    ):
+        preamble = preamble.replace(slot, str(value))
+    return preamble
 
 
 def build_file_index(
@@ -338,6 +368,7 @@ class MarkdownGenerator(OutputGenerator):
         render_data = not schema_only
         table_limit = config.table_limit if config else None
         table_truncate = config.table_truncate if config else None
+        stats_decimals, data_decimals = _rounding_caps(config)
 
         # Preamble is pruned to the file types actually scanned this run, so
         # the LLM is never taught a reading convention for content that
@@ -348,8 +379,12 @@ class MarkdownGenerator(OutputGenerator):
             env_keys_enabled,
             _cells_rendered(files_data, schema_only, stats_summary),
         )
-        preamble = _prune_preamble(
-            SYSTEM_INSTRUCTIONS_MARKDOWN, active_triggers, xml=False
+        preamble = _fill_preamble_slots(
+            _prune_preamble(
+                SYSTEM_INSTRUCTIONS_MARKDOWN, active_triggers, xml=False
+            ),
+            stats_decimals,
+            data_decimals,
         )
 
         index_entries = build_file_index(tree_text, files_data)
@@ -432,6 +467,7 @@ class MarkdownGenerator(OutputGenerator):
                             table.schema,
                             show_missing=stats_summary,
                             show_describe=stats_summary,
+                            stats_decimals=stats_decimals,
                         ))
                         lines.append("")
 
@@ -440,6 +476,7 @@ class MarkdownGenerator(OutputGenerator):
                         include_rows=render_data,
                         table_limit=table_limit,
                         table_truncate=table_truncate,
+                        data_decimals=data_decimals,
                     ))
 
                     # Close Sheet block if applicable
@@ -498,6 +535,7 @@ class XMLGenerator(OutputGenerator):
         render_data = not schema_only
         table_limit = config.table_limit if config else None
         table_truncate = config.table_truncate if config else None
+        stats_decimals, data_decimals = _rounding_caps(config)
 
         # Preamble is pruned to the file types actually scanned this run, so
         # the LLM is never taught a reading convention for content that
@@ -508,8 +546,12 @@ class XMLGenerator(OutputGenerator):
             env_keys_enabled,
             _cells_rendered(files_data, schema_only, stats_summary),
         )
-        preamble = _prune_preamble(
-            SYSTEM_INSTRUCTIONS_XML, active_triggers, xml=True
+        preamble = _fill_preamble_slots(
+            _prune_preamble(
+                SYSTEM_INSTRUCTIONS_XML, active_triggers, xml=True
+            ),
+            stats_decimals,
+            data_decimals,
         )
 
         index_entries = build_file_index(tree_text, files_data)
@@ -607,6 +649,7 @@ class XMLGenerator(OutputGenerator):
                             table.schema,
                             show_missing=stats_summary,
                             show_describe=stats_summary,
+                            stats_decimals=stats_decimals,
                         ))
                         lines.append('</schema>')
 
@@ -615,6 +658,7 @@ class XMLGenerator(OutputGenerator):
                         include_rows=render_data,
                         table_limit=table_limit,
                         table_truncate=table_truncate,
+                        data_decimals=data_decimals,
                     ))
 
                     # Close the sub-section element if applicable

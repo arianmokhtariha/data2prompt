@@ -34,7 +34,7 @@ GENERATORS: List[OutputGenerator] = [MarkdownGenerator(), XMLGenerator()]
 
 # One row per defect of the old tabulate rendering: a '|' that added fake
 # columns, embedded newlines (LF and CRLF) that split a row, a missing value
-# that printed as 'nan', and floats that floatfmt="g" rounded to 6 digits.
+# that printed as 'nan', and a float rounded to the data cap (6 decimals).
 # float32 guards the fix itself: widened to a Python float, 0.1 would print
 # as 0.10000000149011612.
 _TRICKY_DF = pd.DataFrame({
@@ -48,7 +48,7 @@ _TRICKY_TABLE_TEXT = "\n".join([
     "|---|---|---|---|",
     "| 1 | a \\| b \\| c | 102479.81746 | 0.1 |",
     "| 2 | line1↵line2↵line3 | | 0.25 |",
-    "| 3 | | 1.23456789 | |",
+    "| 3 | | 1.234568 | |",
 ])
 
 
@@ -58,6 +58,7 @@ def _config(
     return SimpleNamespace(
         table_limit=table_limit,
         table_truncate=table_truncate,
+        stats_decimals=4, data_decimals=6,
         stats_summary=False,
         schema_only=False,
         env_keys=True,
@@ -93,7 +94,7 @@ def _render_table(
 
 @pytest.mark.parametrize("generator", GENERATORS, ids=["markdown", "xml"])
 def test_sample_rows_render_faithfully(generator: OutputGenerator) -> None:
-    """Pipes escaped, newlines marked, missing values empty, floats unrounded,
+    """Pipes escaped, newlines marked, missing values empty, floats rounded,
     and no alignment padding, in both formats."""
     table = TableIR(name="t.csv", df=_TRICKY_DF)
     body = _render_table(generator, table, _config())

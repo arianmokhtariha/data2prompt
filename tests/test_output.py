@@ -18,6 +18,7 @@ from data2prompt.output import (
     MarkdownGenerator,
     OutputGenerator,
     XMLGenerator,
+    _fill_preamble_slots,
     get_generator,
 )
 from data2prompt.utils import count_tokens
@@ -223,6 +224,7 @@ def _table_files(
     cfg = SimpleNamespace(
         table_limit=50_000,
         table_truncate=20_000,
+        stats_decimals=4, data_decimals=6,
         stats_summary=stats_summary,
         schema_only=schema_only,
         env_keys=True,
@@ -297,6 +299,7 @@ def test_xml_sheet_name_with_quotes_and_angle_brackets_is_quoted() -> None:
     files = [{"path": "book.xlsx", "content": [table], "type": "Excel", "tokens": 0, "status": "Extracted"}]
     cfg = SimpleNamespace(
         table_limit=50_000, table_truncate=20_000,
+        stats_decimals=4, data_decimals=6,
         stats_summary=False, schema_only=False, env_keys=True,
     )
 
@@ -372,6 +375,7 @@ def test_file_index_status_reflects_real_parse_outcome(tmp_path: Path) -> None:
     small = tmp_path / "small.csv"
     small.write_bytes(b"id,v\n1,a\n2,b\n3,c\n")
     config = SimpleNamespace(
+        stats_decimals=4, data_decimals=6,
         csv_sample_size=15, seed=42, stats_summary=False, schema_only=False,
         table_limit=50_000, table_truncate=20_000, env_keys=True,
     )
@@ -552,6 +556,7 @@ _ALL_TRIGGERS_STATS = {
 
 _ENV_KEYS_CFG = SimpleNamespace(
     table_limit=50_000, table_truncate=20_000,
+    stats_decimals=4, data_decimals=6,
     stats_summary=False, schema_only=False, env_keys=True,
 )
 
@@ -692,6 +697,7 @@ def test_markdown_preamble_env_bullet_omitted_with_no_env_keys() -> None:
     bullet describing redaction must not appear despite the nonzero count."""
     cfg = SimpleNamespace(
         table_limit=50_000, table_truncate=20_000,
+        stats_decimals=4, data_decimals=6,
         stats_summary=False, schema_only=False, env_keys=False,
     )
     output = MarkdownGenerator().generate(
@@ -720,7 +726,7 @@ def test_markdown_preamble_matches_base_constant_when_all_types_scanned() -> Non
         files_data=_sample_files_with_rows(),
         stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
     )
-    assert SYSTEM_INSTRUCTIONS_MARKDOWN in output
+    assert _fill_preamble_slots(SYSTEM_INSTRUCTIONS_MARKDOWN, 4, 6) in output
 
 
 def test_xml_preamble_matches_base_constant_when_all_types_scanned() -> None:
@@ -730,4 +736,4 @@ def test_xml_preamble_matches_base_constant_when_all_types_scanned() -> None:
         files_data=_sample_files_with_rows(),
         stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
     )
-    assert SYSTEM_INSTRUCTIONS_XML in output
+    assert _fill_preamble_slots(SYSTEM_INSTRUCTIONS_XML, 4, 6) in output

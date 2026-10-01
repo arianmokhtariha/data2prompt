@@ -18,6 +18,9 @@ from data2prompt.constants import (
     DEFAULT_TRUNCATED_LINE_LENGTH,
     DEFAULT_TABLE_CHAR_LIMIT,
     DEFAULT_TABLE_TRUNCATED_SIZE,
+    DEFAULT_STATS_DECIMALS,
+    DEFAULT_DATA_DECIMALS,
+    MIN_SIGNIFICANT_DIGITS,
     DEFAULT_MAX_FILE_SIZE_KB,
     DEFAULT_OUTPUT_FILE,
     DEFAULT_FORMAT,
@@ -99,6 +102,8 @@ class Config:
     stats_summary: bool = True
     env_keys: bool = True
     budget: Optional[int] = None
+    stats_decimals: int = DEFAULT_STATS_DECIMALS
+    data_decimals: int = DEFAULT_DATA_DECIMALS
 
 def setup_cli() -> Config:
     """Configures the Command Line Interface (CLI) for the tool.
@@ -164,6 +169,12 @@ def setup_cli() -> Config:
                         help=f'Max characters for a single table/sheet after sampling (default: {DEFAULT_TABLE_CHAR_LIMIT})')
     parser.add_argument('--table-truncate', type=_non_negative_int, default=DEFAULT_TABLE_TRUNCATED_SIZE,
                         help=f'Length to truncate large tables to (default: {DEFAULT_TABLE_TRUNCATED_SIZE})')
+
+    # Numeric precision settings
+    parser.add_argument('--stats-decimals', type=_non_negative_int, default=DEFAULT_STATS_DECIMALS,
+                        help=f'Max decimals for float statistics; small values keep {MIN_SIGNIFICANT_DIGITS} significant digits (default: {DEFAULT_STATS_DECIMALS})')
+    parser.add_argument('--data-decimals', type=_non_negative_int, default=DEFAULT_DATA_DECIMALS,
+                        help=f'Max decimals for float values in sample rows; 17 keeps full float64 precision (default: {DEFAULT_DATA_DECIMALS})')
 
     # Exclusions
     parser.add_argument('--ignore-folders', nargs='+', default=[],
@@ -238,5 +249,7 @@ def setup_cli() -> Config:
         schema_only=args.schema_only,
         stats_summary=args.stats_summary,
         env_keys=args.env_keys,
-        budget=args.budget
+        budget=args.budget,
+        stats_decimals=args.stats_decimals,
+        data_decimals=args.data_decimals,
     )

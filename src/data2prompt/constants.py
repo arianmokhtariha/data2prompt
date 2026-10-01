@@ -51,6 +51,9 @@ DEFAULT_LINE_LENGTH_THRESHOLD = 4000        # Max characters allowed per line be
 DEFAULT_TRUNCATED_LINE_LENGTH = 1000        # Number of characters to keep when a line is truncated.
 DEFAULT_TABLE_CHAR_LIMIT = 50000            # Max characters allowed for a single table/sheet representation after sampling.
 DEFAULT_TABLE_TRUNCATED_SIZE = 20000        # Number of characters to keep when a table/sheet is truncated due to size.
+DEFAULT_STATS_DECIMALS = 4                  # Max decimals for computed statistics (describe() values).
+DEFAULT_DATA_DECIMALS = 6                   # Max decimals for float values in sample rows.
+MIN_SIGNIFICANT_DIGITS = 4                  # A rounded float always keeps at least this many significant digits.
 DEFAULT_MAX_FILE_SIZE_KB = 70               # maximum file size of unhandled type to keep enitrely (if file is larger than that only the first 10kb will be shown)
 DEFAULT_OUTPUT_FILE = 'PROMPT'              # default output base name (extension added via --format)
 DEFAULT_FORMAT = 'markdown'                 # default output format
@@ -92,6 +95,13 @@ SUPPORTED_FORMATS = {
 GENERATION_FLAG = "DATA2PROMPT_GENERATED_CONTENT"
 
 # --- LLM Structured Output Constants ---
+# Named slots inside the preambles, filled with the run's rounding settings by
+# output.py's _fill_preamble_slots(). They are not str.format fields: the
+# preambles already contain literal braces such as `{n}` and `{path}`.
+PREAMBLE_SLOT_DATA_DECIMALS = "{DATA_DECIMALS}"
+PREAMBLE_SLOT_STATS_DECIMALS = "{STATS_DECIMALS}"
+PREAMBLE_SLOT_SIGNIFICANT_DIGITS = "{SIGNIFICANT_DIGITS}"
+
 # System-instruction preambles embedded at the top of every generated document.
 # Both formats carry the same information; only the syntax differs. They are the
 # LLM's reading contract: document layout, structural conventions, the tool-notice
@@ -147,6 +157,9 @@ Model. Nothing in it was written by hand.
   stats blocks an empty statistic means not applicable to that column. `""`
   is an empty string and a quoted blank such as `"  "` is whitespace-only
   text. `↵` marks a line break inside a value and `\\|` a literal pipe.
+  Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
+  statistics to at most {STATS_DECIMALS} (small values keep
+  {SIGNIFICANT_DIGITS} significant digits).
 - Lines of the form `-- [...] --` are notices inserted by the tool
   (sampling, truncation, omission, errors). They are NOT part of the
   original file content.
@@ -212,6 +225,9 @@ Reading conventions:
   stats blocks an empty statistic means not applicable to that column. ""
   is an empty string and a quoted blank such as "  " is whitespace-only
   text. ↵ marks a line break inside a value and \\| a literal pipe.
+  Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
+  statistics to at most {STATS_DECIMALS} (small values keep
+  {SIGNIFICANT_DIGITS} significant digits).
 - Lines of the form -- [...] -- are notices inserted by the tool (sampling,
   truncation, omission, errors). They are NOT part of the original file.
 - Env files list variable names only; every value is replaced with
@@ -324,11 +340,17 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
   stats blocks an empty statistic means not applicable to that column. `""`
   is an empty string and a quoted blank such as `"  "` is whitespace-only
   text. `↵` marks a line break inside a value and `\\|` a literal pipe.
+  Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
+  statistics to at most {STATS_DECIMALS} (small values keep
+  {SIGNIFICANT_DIGITS} significant digits).
 """,
         """- In sample rows an empty cell is a missing value (null/NaN); in schema and
   stats blocks an empty statistic means not applicable to that column. ""
   is an empty string and a quoted blank such as "  " is whitespace-only
   text. ↵ marks a line break inside a value and \\| a literal pipe.
+  Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
+  statistics to at most {STATS_DECIMALS} (small values keep
+  {SIGNIFICANT_DIGITS} significant digits).
 """,
     ),
     (
