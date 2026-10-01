@@ -224,9 +224,10 @@ def test_process_excel_emits_visual_note_once_on_first_sheet(tmp_path: Path) -> 
 # Legacy .xls without the optional xlrd engine
 # ---------------------------------------------------------------------------
 
-def test_xls_without_xlrd_yields_actionable_note(tmp_path: Path) -> None:
-    """pandas raises ImportError for .xls when xlrd is missing; the parser must
-    surface an install hint instead of a stack-trace error note."""
+def test_xls_engine_import_failure_yields_error_note(tmp_path: Path) -> None:
+    """The parser skips .xls when xlrd is absent, so an ImportError reaching
+    process_excel means xlrd is installed but broken: an error notice with the
+    reason and no install hint."""
     path = tmp_path / "legacy.xls"
     path.write_bytes(b"\xd0\xcf\x11\xe0 fake BIFF header")
 
@@ -239,8 +240,9 @@ def test_xls_without_xlrd_yields_actionable_note(tmp_path: Path) -> None:
     assert len(tables) == 1
     assert tables[0].df.empty
     note = tables[0].footer_note or ""
-    assert "xlrd" in note
-    assert "pip install xlrd" in note
+    assert note.startswith("-- [Error reading Excel: xlrd failed to import: ")
+    assert "Missing optional dependency" in note
+    assert "pip install" not in note
 
 
 # ---------------------------------------------------------------------------

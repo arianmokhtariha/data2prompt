@@ -18,7 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Tuple
 
-from data2prompt.parsers import SQLiteParser, process_sqlite
+from data2prompt.parsers import SQLiteParser, _tabular_status, process_sqlite
 
 
 def _make_config(
@@ -139,6 +139,18 @@ def test_process_sqlite_large_table_degrades_to_head_sample(tmp_path: Path) -> N
     assert "first 5 of 50 rows" in (customers.header_note or "")
     # The footer adds only what the header lacks: no repeated row count.
     assert customers.footer_note == "-- [Large table: full-scan stats omitted] --"
+
+
+def test_large_table_head_sample_is_sampled_status(tmp_path: Path) -> None:
+    """A table above the full-scan threshold shows only its head, so the
+    inclusion status must be Sampled (not Read)."""
+    db = tmp_path / "app.db"
+    _build_db(db)
+
+    tables = process_sqlite(db, sample_size=5, full_scan_max_rows=10)
+
+    status = _tabular_status(tables, False, "Sampled", 50_000, 20_000)
+    assert status == "Sampled"
 
 
 # ---------------------------------------------------------------------------

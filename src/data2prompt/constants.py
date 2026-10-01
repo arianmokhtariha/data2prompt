@@ -124,11 +124,11 @@ Model. Nothing in it was written by hand.
   chosen so the block never terminates early.
 - Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
   each with a fenced source block and an optional **Outputs:** block. An
-  `-- [Execution state: ...] --` notice directly under the file header means
-  the saved outputs may not match a clean top-to-bottom run: it names cell
-  numbers in the order the cells ran and cells never run, and says which
-  execution counts are missing (cells re-run or deleted, so hidden kernel
-  state is possible). An `-- [Output omitted: <mime types>] --` line in an
+  `-- [Execution state: ...] --` notice directly under the file header may
+  name the first cell with an error output. Its other clauses (cells ran
+  out of order, cells never run, execution counts missing) mean the saved
+  outputs may not match a clean top-to-bottom run; hidden kernel state is
+  possible. An `-- [Output omitted: <mime types>] --` line in an
   Outputs block marks an image, HTML or other non-text output left out.
 - Excel workbooks are split into sheets: `### Sheet {n}: {name} - {path}`,
   each closed by a `---` line.
@@ -189,11 +189,11 @@ Reading conventions:
   <, >, and & characters. Attribute values ARE quoted and escaped.
 - Notebooks (.ipynb) are split into <cell path="..." index="..."
   type="..."> elements holding <content> and optional <outputs>. An
-  -- [Execution state: ...] -- notice directly under the <file> tag means
-  the saved outputs may not match a clean top-to-bottom run: it names cell
-  numbers in the order the cells ran and cells never run, and says which
-  execution counts are missing (cells re-run or deleted, so hidden kernel
-  state is possible). An -- [Output omitted: <mime types>] -- line in an
+  -- [Execution state: ...] -- notice directly under the <file> tag may
+  name the first cell with an error output. Its other clauses (cells ran
+  out of order, cells never run, execution counts missing) mean the saved
+  outputs may not match a clean top-to-bottom run; hidden kernel state is
+  possible. An -- [Output omitted: <mime types>] -- line in an
   <outputs> element marks an image, HTML or other non-text output left out.
 - Excel workbooks are split into <sheet name="..." sheet_number="..."
   path="..."> elements.
@@ -251,20 +251,20 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
         'notebooks',
         """- Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
   each with a fenced source block and an optional **Outputs:** block. An
-  `-- [Execution state: ...] --` notice directly under the file header means
-  the saved outputs may not match a clean top-to-bottom run: it names cell
-  numbers in the order the cells ran and cells never run, and says which
-  execution counts are missing (cells re-run or deleted, so hidden kernel
-  state is possible). An `-- [Output omitted: <mime types>] --` line in an
+  `-- [Execution state: ...] --` notice directly under the file header may
+  name the first cell with an error output. Its other clauses (cells ran
+  out of order, cells never run, execution counts missing) mean the saved
+  outputs may not match a clean top-to-bottom run; hidden kernel state is
+  possible. An `-- [Output omitted: <mime types>] --` line in an
   Outputs block marks an image, HTML or other non-text output left out.
 """,
         """- Notebooks (.ipynb) are split into <cell path="..." index="..."
   type="..."> elements holding <content> and optional <outputs>. An
-  -- [Execution state: ...] -- notice directly under the <file> tag means
-  the saved outputs may not match a clean top-to-bottom run: it names cell
-  numbers in the order the cells ran and cells never run, and says which
-  execution counts are missing (cells re-run or deleted, so hidden kernel
-  state is possible). An -- [Output omitted: <mime types>] -- line in an
+  -- [Execution state: ...] -- notice directly under the <file> tag may
+  name the first cell with an error output. Its other clauses (cells ran
+  out of order, cells never run, execution counts missing) mean the saved
+  outputs may not match a clean top-to-bottom run; hidden kernel state is
+  possible. An -- [Output omitted: <mime types>] -- line in an
   <outputs> element marks an image, HTML or other non-text output left out.
 """,
     ),

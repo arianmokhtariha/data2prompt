@@ -1292,6 +1292,60 @@ def test_execution_notice_lists_are_capped(tmp_path: Path) -> None:
     assert f"…(+{50 - limit} more) never run" in notice
 
 
+def test_execution_notice_more_tail_counts_hidden_cells(tmp_path: Path) -> None:
+    """`(+N more)` counts hidden cells, not collapsed runs: one hidden run of
+    three cells must read +3, never +1."""
+    limit = NOTEBOOK_NOTICE_LIST_LIMIT
+    # One ran cell, then (limit + 1) never-run groups of 3 cells split by
+    # single ran cells so each group stays a separate run.
+    cells = [_code_cell("ran", 1)]
+    for group in range(limit + 1):
+        cells.extend(_code_cell(f"g{group}_{i}", None) for i in range(3))
+        cells.append(_code_cell(f"sep{group}", group + 2))
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, cells)
+
+    _, notice = process_notebook(path)
+
+    assert notice is not None
+    assert "…(+3 more) never run" in notice
+
+
+def test_execution_notice_flags_duplicate_execution_counts(
+    tmp_path: Path,
+) -> None:
+    """Two cells sharing one count cannot be a clean run (a restored or
+    hand-edited notebook): equal neighbours count as out of order."""
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell("a", 1), _code_cell("b", 1)])
+
+    _, notice = process_notebook(path)
+
+    assert notice is not None
+    assert "cells ran in order" in notice
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        {"output_type": "execute_result", "execution_count": 1, "metadata": {},
+         "data": {"text/plain": ["\x1b[1;32mvalue\x1b[0m"]}},
+        {"output_type": "display_data", "metadata": {},
+         "data": {"text/plain": ["\x1b[1;32mvalue\x1b[0m"]}},
+    ],
+    ids=["execute_result", "display_data"],
+)
+def test_ansi_is_stripped_from_rich_text_outputs(
+    tmp_path: Path, output: dict
+) -> None:
+    path = _single_output_notebook(tmp_path, output)
+
+    cells, _ = process_notebook(path)
+
+    assert "\x1b" not in (cells[0].outputs or "")
+    assert "value" in (cells[0].outputs or "")
+
+
 @pytest.mark.parametrize(
     "counts",
     [[1, 2, 3], [None, None]],

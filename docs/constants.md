@@ -276,7 +276,8 @@ syntax differs) across four parts:
    fenced `sql` block / `<ddl>` element), the notebook
    `-- [Execution state: ...] --` notice under the file header (cells in the
    order they ran, cells never run, missing execution counts: hidden kernel
-   state is possible) and the `-- [Output omitted: <mime types>] --` line for
+   state is possible; it may also name the first cell with an error output,
+   which alone does not suggest the outputs differ from a clean run) and the `-- [Output omitted: <mime types>] --` line for
    dropped non-text outputs, schema blocks (full-dataset stats; the rows
    shown may be a sample flagged by a `-- [Sample: ...] --` notice or cut
    short by a `-- [Table truncated: ...] --` notice), table-cell conventions (in sample rows an empty cell is a

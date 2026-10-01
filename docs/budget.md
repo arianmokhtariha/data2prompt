@@ -274,7 +274,8 @@ record's `result.stats_update` exactly once per attempt makes every attempt's
 been re-parsed so far.
 
 Included records populate both `files_data` (the dict shape `main.py` builds
-on the budget-less path: `path`, `content`, `type`, `tokens`, `status`) and
+on the budget-less path: `path`, `content`, `type`, `tokens`, `status`,
+`file_note`) and
 `summaries` (the TUI row: `name`, `type`, `tokens`, `status`). Omitted records
 are dropped from `files_data` entirely but kept in `summaries` with
 `"tokens": 0` and `"status": "Omitted (Budget)"` — tokens **must** be 0 there

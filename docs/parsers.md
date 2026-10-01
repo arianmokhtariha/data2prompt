@@ -102,8 +102,8 @@ class NotebookCellIR:
 
 Represents a single cell in a Jupyter Notebook, capturing:
 - **Cell number** for sequential ordering (matches the cell's position in the
-  notebook; `0` is reserved for file-level pseudo-cells: the execution-state
-  notice, the empty-notebook note, and the unreadable-notebook error)
+  notebook; `0` is reserved for the placeholder cells that stand in for absent
+  cells: the empty-notebook note and the unreadable-notebook error)
 - **Cell type** (code/markdown)
 - **Source content** with line truncation applied
 - **Outputs** (for code cells) with truncation and filtering
@@ -265,8 +265,9 @@ def flatten_ir(
 ```
 
 - **String content**: Returned as-is
-- **NotebookCellIR list**: The file-level `file_note` (when given), then
-  each cell's source and outputs
+- **File-level note**: `file_note`, when given, is prepended for any content
+  type (the generators print it under the file header for any file)
+- **NotebookCellIR list**: Each cell's source and outputs
 - **TableIR list**: Sub-section label, DDL and schema block (when gated in),
   then the notes and sample rows from [`render_table_text()`](#table-text-helpers),
   the same text the generators emit
@@ -496,14 +497,17 @@ Every cell reference is a **cell number** matching the `Cell {n}` headers;
 raw execution counts appear only in the clause explicitly labeled
 `execution counts`, so the two numbering systems are never mixed in one list.
 Each list is capped at `NOTEBOOK_NOTICE_LIST_LIMIT` (8) items, where an item
-is one collapsed run (`4`, `6-8`); the rest become `…(+N more)`, so a 100-cell
+is one collapsed run (`4`, `6-8`); the rest become `…(+N more)`, where N is the
+number of hidden cells (or counts), not runs, so a 100-cell
 notebook cannot produce an 800-character notice. A notebook with no executed
 code cell (never run, or saved with outputs cleared) carries no hidden state
 and gets no notice, and so does a clean top-to-bottom run. The notice appears
 only when there is something to report. The error and empty-notebook
 placeholders keep their `number=0` cell: they stand in for absent cells, not
 for a file-level remark. The meaning is taught in the notebooks bullet of both
-preambles (`PREAMBLE_OPTIONAL_SEGMENTS`, trigger `notebooks`).
+preambles: the notice may name the first cell with an error output, and only
+the order, never-run and missing-count clauses suggest the saved outputs may
+not match a clean top-to-bottom run (an error-only notice does not) (`PREAMBLE_OPTIONAL_SEGMENTS`, trigger `notebooks`).
 
 **Error Handling:**
 - JSON decode errors → Single error cell with malformed notebook message
@@ -634,9 +638,10 @@ installed] --`), `type="Excel"`, raw status `Skipped (No xlrd)` (folded into
 `Skipped` by the `Skipped (` prefix rule, a warn status in the terminal
 report) and no stats update. The TUI shows a warning panel with the pip / pipx
 install commands. `process_excel()` keeps its own `ImportError` handler (a
-single `TableIR` with the `reading legacy .xls files requires the optional
-'xlrd' package` note, `error=True`) as a fallback for an engine that fails to
-import despite being found. (Previously `.xls` was
+single `TableIR` with a `-- [Error reading Excel: xlrd failed to import:
+<reason>] --` note and no install hint, `error=True`, status `Error`) as a
+fallback for an engine that is installed but fails to import (broken or too
+old). (Previously `.xls` was
 routed through `openpyxl`, which cannot read the BIFF format at all — every
 `.xls` file produced a generic read error.)
 
@@ -1066,6 +1071,7 @@ Current notices:
 | `-- [Env file skipped (--no-env-keys): content not included] --` | `EnvParser` |
 | `-- [Skipped: file.parquet requires pyarrow, which is not installed] --` | `ArrowParser` |
 | `-- [Skipped: old.xls requires xlrd to read legacy .xls files, which is not installed] --` | `ExcelParser` |
+| `-- [Error reading Excel: xlrd failed to import: <reason>] --` | `process_excel` (xlrd installed but broken or too old) |
 | `-- [Error: Malformed Jupyter Notebook (Invalid JSON)] --` | `process_notebook` |
 | `-- [Note: notebook contains no cells] --` | `process_notebook` on a valid, genuinely empty `"cells": []` notebook |
 | `-- [Error reading CSV/SQL/Excel/DB/...: message] --` | error paths (sanitized); `DB` covers both a connection-open failure and a database that passes the magic-byte sniff but fails on the discovery query |

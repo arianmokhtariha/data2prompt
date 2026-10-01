@@ -554,7 +554,7 @@ The output module consumes two types of Intermediate Representations produced by
 ```python
 @dataclass
 class NotebookCellIR:
-    number: int          # Cell index (1-based; 0 = file-level notice/placeholder)
+    number: int          # Cell index (1-based; 0 = empty/unreadable-notebook placeholder)
     type: str           # 'code' or 'markdown'
     source: str         # Cell content
     outputs: Optional[str] = None  # Captured outputs for code cells

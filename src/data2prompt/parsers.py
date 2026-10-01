@@ -359,6 +359,20 @@ def flatten_ir(
     ``file_note`` is the file-level notice the generators print under the
     file header.
     """
+    body = _flatten_content(
+        content, schema_only, stats_summary, table_limit, table_truncate
+    )
+    return "\n".join([file_note, body]) if file_note else body
+
+
+def _flatten_content(
+    content: ParserContent,
+    schema_only: bool,
+    stats_summary: bool,
+    table_limit: Optional[int],
+    table_truncate: Optional[int],
+) -> str:
+    """Flatten the content of ``flatten_ir`` without the file-level note."""
     if isinstance(content, str):
         return content
 
@@ -366,7 +380,7 @@ def flatten_ir(
         return ""
 
     if isinstance(content[0], NotebookCellIR):
-        parts = [file_note] if file_note else []
+        parts: List[str] = []
         for cell in content:
             parts.append(cell.source)
             if cell.outputs:
@@ -462,10 +476,9 @@ def enforce_table_limit(
     if kept_count == len(rows):
         return text
 
-    plural = noun if len(rows) == 1 else f"{noun}s"
     notice = (
         f"-- [Table truncated: showing first {kept_count:,} of "
-        f"{len(rows):,} {plural}; the table exceeded {limit:,} characters] --"
+        f"{len(rows):,} {_pluralize(noun, len(rows))}; the table exceeded {limit:,} characters] --"
     )
     return "\n".join(header + rows[:kept_count] + [notice])
 
@@ -667,13 +680,16 @@ def _format_runs(runs: Sequence[Tuple[int, int]]) -> str:
     """Render runs compactly: ``[(1, 3), (7, 7)]`` → ``1-3,7``.
 
     At most ``NOTEBOOK_NOTICE_LIST_LIMIT`` runs are shown; the rest collapse
-    into ``…(+N more)`` so a large notebook cannot bloat its notice.
+    into ``…(+N more)``, N being the number of hidden cells or counts, so a
+    large notebook cannot bloat its notice.
     """
     shown = ",".join(
         str(first) if first == last else f"{first}-{last}"
         for first, last in runs[:NOTEBOOK_NOTICE_LIST_LIMIT]
     )
-    hidden = len(runs) - NOTEBOOK_NOTICE_LIST_LIMIT
+    hidden = sum(
+        last - first + 1 for first, last in runs[NOTEBOOK_NOTICE_LIST_LIMIT:]
+    )
     return f"{shown}…(+{hidden} more)" if hidden > 0 else shown
 
 
@@ -1028,14 +1044,16 @@ def process_excel(
     # context manager guarantees the handle is released even on error paths.
     try:
         excel_file = pd.ExcelFile(file_path)
-    except ImportError:
-        # pandas imports the format's engine lazily; legacy .xls needs xlrd.
+    except ImportError as e:
+        # pandas imports the format's engine lazily. The parser already skips
+        # .xls when xlrd is absent, so reaching this means the engine is
+        # installed but broken or too old.
         return [TableIR(
             name=fp.name,
             df=pd.DataFrame(),
             footer_note=(
-                f"-- [Skipped: reading legacy {ext} files requires the "
-                "optional 'xlrd' package (pip install xlrd)] --"
+                "-- [Error reading Excel: xlrd failed to import: "
+                f"{_sanitize_error(e, fp)}] --"
             ),
             error=True,
         )]
