@@ -37,7 +37,8 @@ degrades the product.
    formats render identically has one shared renderer in `parsers.py`
    (`render_schema_block()` for schema blocks, `render_table_text()` for a
    table's notes and sample rows), also used by `flatten_ir()` so per-file
-   token estimates count the same text; never re-implement it per generator.
+   token estimates count the same text (including the table-size cap);
+   never re-implement it per generator.
 
 2. **The document teaches the LLM how to read itself.** The preambles
    (`SYSTEM_INSTRUCTIONS_MARKDOWN` / `SYSTEM_INSTRUCTIONS_XML` in
@@ -53,12 +54,16 @@ degrades the product.
    `SYSTEM_INSTRUCTIONS_XML` still hold the full, canonical wording — that
    text is never edited by this mechanism, only conditionally trimmed.
    `PREAMBLE_OPTIONAL_SEGMENTS` in `constants.py` lists the reading-convention
-   bullets that describe one specific file type (Notebooks, Excel, SQLite,
-   the tabular schema block, Env files), each tagged with a `trigger` key.
+   bullets that describe one specific file type or rendered element
+   (Notebooks, Excel, SQLite, the tabular schema block, the table-cell
+   conventions, Env files), each tagged with a `trigger` key.
    At `generate()` time, `output.py`'s `_active_preamble_triggers(stats,
-   env_keys_enabled)` inspects the run's `stats` dict (plus `config.env_keys`
-   for the env case, since `--no-env-keys` changes what actually happens to
-   `.env` files without changing `env_count`) and `_prune_preamble()` deletes
+   env_keys_enabled, cells_rendered)` inspects the run's `stats` dict (plus
+   `config.env_keys` for the env case, since `--no-env-keys` changes what
+   actually happens to `.env` files without changing `env_count`, and
+   whether any table cell is rendered, for the cell-convention bullet, which
+   is absent under `--schema-only` without stats and for empty tables) and
+   `_prune_preamble()` deletes
    every *inactive* segment's exact substring from a working copy of the
    preamble before it's spliced into the document. A codebase with zero
    `.ipynb`/`.xlsx`/`.db`/`.env` files therefore never sees those bullets —
@@ -129,13 +134,16 @@ degrades the product.
    previously generated output — nothing may precede it). The preamble sits
    at the top, the File Index before all content, and the end-of-codebase
    recap is the final section — nothing renders after it. Run-varying
-   content (today only the generation timestamp) lives inside the end anchor,
-   never before it: everything above the anchor must be byte-identical across
-   runs of an unchanged project, so the document prefix can hit a provider
-   prompt cache. The token
-   placeholders `{{TOTAL_TOKENS}}` / `{{TOKEN_METHOD}}` are substituted by
-   `main.py` *after* generation; new sections must be fully known at
-   `generate()` time and must never emit those literal placeholder strings.
+   content (the generation timestamp and the token total, which changes on
+   any edit anywhere) lives inside the end anchor, never before it:
+   everything above the anchor must be byte-identical across runs of an
+   unchanged project, and after a one-line edit identical up to the edited
+   file's section, so the document prefix can hit a provider prompt cache.
+   The token placeholders `{{TOTAL_TOKENS}}` / `{{TOKEN_METHOD}}` sit in the
+   end anchor and are substituted by `main.py` *after* generation (a plain
+   string replace, so their position does not matter to it); new sections
+   must be fully known at `generate()` time and must never emit those
+   literal placeholder strings.
 
 ## Integration Checklists
 

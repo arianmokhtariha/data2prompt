@@ -58,7 +58,7 @@ other direction would create a cycle. See
 [budget.md § Import-cycle design](budget.md#import-cycle-design).
 
 Generators no longer receive a pre-computed token count. They emit
-`{{TOTAL_TOKENS}}` and `{{TOKEN_METHOD}}` placeholders in their metadata block;
+`{{TOTAL_TOKENS}}` and `{{TOKEN_METHOD}}` placeholders in their end anchor;
 [`main.py`](../src/data2prompt/main.py#L1) counts the fully rendered output and
 substitutes the real values. See [Token Estimation](#token-estimation) below.
 
@@ -97,11 +97,11 @@ The [`MarkdownGenerator`](../src/data2prompt/output.py) produces structured Mark
 | Generation Flag | `<!-- DATA2PROMPT_GENERATED_CONTENT -->` marker for recursive scanning prevention (always line 1) |
 | Header | `# codebase: {project_name}` |
 | System Instructions | LLM reading contract from [`SYSTEM_INSTRUCTIONS_MARKDOWN`](../src/data2prompt/constants.py) — document layout, structural conventions, tool-notice grammar, and anti-hallucination accuracy rules. **Dynamically pruned per run** — see [System Instructions: Preamble Pruning](#system-instructions-preamble-pruning) below |
-| Metadata | `> Tokens:` (via [`o200k_base`](../src/data2prompt/utils.py)) and `> Contents:` — a content summary built from the `stats` dict (see [Stats Summary](#document-level-stats-summary)). The generation timestamp is **not** here; it lives in the end anchor (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
+| Metadata | `> Contents:` — a content summary built from the `stats` dict (see [Stats Summary](#document-level-stats-summary)). The run-varying values (generation timestamp and token total) are **not** here; they live in the end anchor (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
 | Budget Report | `# Budget Report` — present only when `--budget` was requested (see [Budget Report](#budget-report)) |
 | File Index | `# File Index` — a `\| Path \| Type \| Status \|` table, one row per file (see [File Index](#file-index)) |
 | Files | Individual files with `## File: {path}` headers, in File Index order |
-| End Anchor | `# End of codebase: {project_name}`, `> Generated on: {timestamp}`, and a one-sentence recap (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
+| End Anchor | `# End of codebase: {project_name}`, `> Generated on: {timestamp}`, `> Tokens:` (via [`o200k_base`](../src/data2prompt/utils.py)), and a one-sentence recap (see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
 
 All paths in the output (index rows, `## File:` headers, cell/sheet labels) use
 **forward slashes on every platform** — they are one exact string, the canonical
@@ -123,8 +123,13 @@ Two module-level helpers in `output.py` implement the mechanism, called once
 per `generate()` invocation on each generator:
 
 ```python
+def _cells_rendered(
+    files_data: List[FileData], schema_only: bool, stats_summary: bool
+) -> bool:
+    """Whether any table cell (sample row or describe() value) is rendered."""
+
 def _active_preamble_triggers(
-    stats: Dict[str, int], env_keys_enabled: bool
+    stats: Dict[str, int], env_keys_enabled: bool, cells_rendered: bool
 ) -> Set[str]:
     """Which optional segments apply, based on this run's `stats`."""
 
@@ -132,8 +137,9 @@ def _prune_preamble(base: str, active: Set[str], xml: bool) -> str:
     """Delete every inactive segment's exact fragment from `base`."""
 ```
 
-`_active_preamble_triggers()` derives five trigger keys from the `stats` dict
-already threaded into `generate()`:
+`_active_preamble_triggers()` derives six trigger keys: five from the `stats`
+dict already threaded into `generate()`, plus `cells` from `_cells_rendered()`
+(a scan of `files_data`):
 
 | Trigger | Condition |
 |---|---|
@@ -141,6 +147,7 @@ already threaded into `generate()`:
 | `excel` | `stats["excel_count"] > 0` |
 | `sqlite` | `stats["sqlite_count"] > 0` |
 | `tabular` | any of `csv_count`/`excel_count`/`parquet_count`/`feather_count`/`arrow_count`/`sqlite_count` > 0 |
+| `cells` | table cells are rendered: sample rows exist (`not schema_only` and a non-empty df) or a stats-summary schema block with describe() values is shown |
 | `env` | `stats["env_count"] > 0` **and** `env_keys_enabled` |
 
 `env` needs the extra `env_keys_enabled` condition (`config.env_keys`,
@@ -173,7 +180,7 @@ requirement on `PREAMBLE_OPTIONAL_SEGMENTS`'s declaration order.
 
 Because every fragment is an exact, verified substring of the base constant
 (`tests/test_output.py` asserts `frag in SYSTEM_INSTRUCTIONS_*` and
-`.count(frag) == 1` for all seven entries) and deletion never rewrites
+`.count(frag) == 1` for all eight entries) and deletion never rewrites
 surrounding text, **a run where every trigger is active reproduces the base
 preamble byte-for-byte** — pruning only ever subtracts, never rewords. This
 also composes transparently with `--budget`: `fit_to_budget()` rebuilds
@@ -235,13 +242,18 @@ table with no alignment padding:
 | id | note | score |
 |---|---|---|
 | 1 | a \| b | 102479.81746 |
-| 2 | line1↵line2 |  |
+| 2 | line1↵line2 | |
+| 3 | "" | 0.5 |
 ```
 
 `|` inside a value is escaped as `\|`, a line break inside a value becomes
-`↵` (`TABLE_CELL_NEWLINE_MARKER`), a missing value is an empty cell, and values
-are never rounded. The tabular preamble bullet teaches the empty-cell and `↵`
-conventions. When a `Config` is given, `config.table_limit` /
+`↵` (`TABLE_CELL_NEWLINE_MARKER`), a missing value is an empty cell (`| |`),
+an empty or whitespace-only string is quoted (`""`, `"  "`) so it cannot pass
+for a missing value, and values are never rounded. The same cell rules apply to
+describe() values in the schema block. A `cells`-triggered preamble bullet
+teaches these conventions and is emitted only when table cells are actually
+rendered (not under `--schema-only` without stats, and not for empty tables).
+When a `Config` is given, `config.table_limit` /
 `config.table_truncate` cap the **rows only**, cut at a row boundary; the
 header and footer notes are always kept (see
 [Configuration Integration](#configuration-integration)).
@@ -292,8 +304,8 @@ produced.
 
 Requested budget: 50,000 tokens.
 
-Data-cap parameters tightened to fit the budget (the Tokens line above is
-the final count):
+Data-cap parameters tightened to fit the budget (the Tokens line in the end
+section is the final count):
 
 | Parameter | Requested | Adjusted | Scope |
 |---|---|---|---|
@@ -338,7 +350,7 @@ for exactly which adjustment scope strings can appear.
 
 The block **never** contains the literal placeholder strings
 `{{TOTAL_TOKENS}}` or `{{TOKEN_METHOD}}` (output-contract invariant 7) — the
-final, verified token count lives only in the metadata `> Tokens:` /
+final, verified token count lives only in the end anchor's `> Tokens:` /
 `<total_tokens>` line, never restated inside the Budget Report itself.
 
 Files a `--budget` run omitted entirely are **not** listed by path inside the
@@ -416,20 +428,31 @@ model the document is complete and restating the core accuracy rule:
 - Markdown: `# End of codebase: {project_name}`, then
   `> Generated on: YYYY-MM-DD HH:MM`, then the recap sentence.
 - XML: `<end_of_codebase>` + `<generated_on>YYYY-MM-DD HH:MM</generated_on>` +
-  recap + `</end_of_codebase>`, immediately before `</codebase>`.
+  `<total_tokens method="...">N</total_tokens>` + recap + `</end_of_codebase>`,
+  immediately before `</codebase>`.
+
+Markdown also carries `> Tokens: N (est. via o200k_base)` between the
+timestamp and the recap.
 
 The recap: *"This concludes the data2prompt snapshot of {name}. The File Index
 above lists all {N} files; content marked sampled, truncated, or omitted is not
 fully included in this document."*
 
-**Why the timestamp is here, not in the metadata.** It is the only part of the
-document that changes on every run. Placed after the preamble (as it used to
-be), it capped the byte-stable prefix at ~550 tokens, below the ~1,024-token
-minimum most providers need for prompt caching, so a regenerated prompt for an
-unchanged project never got a cache hit. At the end, everything before the end
-anchor (preamble, metadata, File Index, unchanged file sections) is identical
-across runs of an unchanged project and can be served from the cache. The
-recap sentence stays the last line, so the recency anchor is unchanged.
+**Why the timestamp and token total are here, not in the metadata.** They are
+the parts of the document that change on every run (the timestamp) or on any
+edit anywhere in the project (the token total). Placed after the preamble (as
+they used to be), they capped the byte-stable prefix at 711 (Markdown) / 721
+(XML) tokens on the test fixture, below the ~1,024-token minimum most
+providers need for prompt caching, so a regenerated or slightly edited prompt
+never got a cache hit. At the end, everything before the end anchor (preamble,
+metadata, File Index, and every file section before the first changed one) is
+byte-identical across runs of an unchanged project, and after a one-line edit
+to a file it is identical up to that file's section. Measured on the fixture
+(o200k_base), a one-line edit to the last file keeps 42,671 of 42,748
+(Markdown) / 43,213 of 43,305 (XML) tokens as a common prefix. Whether a
+provider actually serves a cache hit also depends on its own minimum and
+expiry rules; the document only guarantees the stable prefix. The recap
+sentence stays the last line, so the recency anchor is unchanged.
 
 #### Scope of `--no-stats-summary`
 
@@ -465,7 +488,7 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 |-----|-------------|
 | `<codebase name={quoteattr}>` | Root element |
 | `<purpose>` | System instructions ([`SYSTEM_INSTRUCTIONS_XML`](constants.md)) |
-| `<metadata>` | Token count and `<stats/>` content summary (no timestamp; see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
+| `<metadata>` | `<stats/>` content summary (no timestamp or token total; see [End-of-Codebase Anchor](#end-of-codebase-anchor)) |
 | `<budget_report requested_tokens="...">` | Present only when `--budget` was requested (see [Budget Report](#budget-report)) |
 | `<file_index>` | One `<entry path type status/>` per file (see [File Index](#file-index)) |
 | `<files>` | Container for file entries (no prose inside — the former stray "This section contains..." line was removed) |
@@ -474,7 +497,7 @@ The output is **structural XML for LLM anchoring, not strict parseable XML**
 | `<sheet name={quoteattr} sheet_number="" path={quoteattr}>` | Excel sheet encapsulation |
 | `<table name={quoteattr} table_number="" path={quoteattr}>` | SQLite table/view encapsulation (tag + `{tag}_number` derived from `section_label`) |
 | `<ddl>` | SQLite table's `CREATE`-statement DDL (verbatim; gated by `render_block`) |
-| `<end_of_codebase>` | Terminal element holding `<generated_on>` and the recap, immediately before `</codebase>` |
+| `<end_of_codebase>` | Terminal element holding `<generated_on>`, `<total_tokens>` and the recap, immediately before `</codebase>` |
 
 #### Notebook XML Rendering
 
@@ -565,14 +588,14 @@ escaping). To achieve this without counting a string before it exists, generatio
 and counting are split via placeholders:
 
 1. `generate()` emits the literal placeholders `{{TOTAL_TOKENS}}` and
-   `{{TOKEN_METHOD}}` in its metadata block (plain, non-f-string lines so the
+   `{{TOKEN_METHOD}}` in its end anchor (plain, non-f-string lines so the
    double braces survive).
 2. [`main.py`](../src/data2prompt/main.py#L1) calls `count_tokens()` on the returned
    string, then `str.replace()`s both placeholders with the real values before
    writing or copying.
 
 The count runs **once** on the placeholder string; inserting the digits shifts the
-true total by a token or two, which is acceptable since the metadata labels it an
+true total by a token or two, which is acceptable since the output labels it an
 estimate. No fixed-point iteration is performed.
 
 ### Methods
@@ -586,7 +609,7 @@ which returns both the count and the method used:
 | `regex_fallback` | Custom regex pattern | ~95-98% for code |
 | `word_count` | Simple split | Baseline fallback |
 
-The method string doubles as the label substituted into the metadata
+The method string doubles as the label substituted into the end anchor
 (`{{TOKEN_METHOD}}`), which renders as:
 
 ```markdown
@@ -645,7 +668,7 @@ All shared by both generators (single source of truth for the scaffolding):
 | `IndexEntry` (frozen dataclass) | One File Index row: `path`, `type`, `status` |
 | `_display_path(rel_path) -> str` | Canonical forward-slash path key (`rel_path.replace("\\", "/")`) |
 | `resolve_inclusion_status(status) -> str` | Raw parser status → index vocabulary; `Skipped (...)` prefix fallback, then verbatim passthrough — never raises |
-| `_active_preamble_triggers(stats, env_keys_enabled) -> Set[str]` | Which optional preamble segments apply this run (see [System Instructions: Preamble Pruning](#system-instructions-preamble-pruning)) |
+| `_active_preamble_triggers(stats, env_keys_enabled, cells_rendered) -> Set[str]` | Which optional preamble segments apply this run (see [System Instructions: Preamble Pruning](#system-instructions-preamble-pruning)) |
 | `_prune_preamble(base, active, xml) -> str` | Deletes every inactive `PREAMBLE_OPTIONAL_SEGMENTS` fragment from a preamble constant, longest-first |
 | `build_file_index(tree_text, files_data) -> List[IndexEntry]` | Rendered files in document order + tree-only leftovers as `Omitted` |
 | `summarize_stats(stats, file_total) -> List[Tuple[str, int]]` | Ordered (label, count) pairs; `Total files` always present, zero counts dropped |

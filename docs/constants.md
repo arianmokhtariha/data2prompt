@@ -266,15 +266,16 @@ syntax differs) across four parts:
    Index, and is present only when a token budget was requested (see
    [`budget.md`](budget.md)); the remaining items renumber accordingly
    (File Index is 3, Files is 4, End of codebase is 5). Metadata is described
-   as token estimate + content summary; the generation timestamp is described
-   under End of codebase, where it now renders (it was moved there so the
+   as a content summary only; the generation timestamp and token estimate are
+   described under End of codebase, where they now render (moved there so the
    document prefix stays byte-stable for provider prompt caching, see
    [output.md](output.md#end-of-codebase-anchor)).
 3. **Reading conventions** — dynamic backtick fencing, notebook cell / Excel
    sheet / SQLite table labeling (the latter with `CREATE TABLE` DDL in a
    fenced `sql` block / `<ddl>` element), schema blocks (full-dataset stats vs.
-   sampled rows), sample-row cell conventions (an empty cell is a missing
-   value; `↵` marks a line break inside a value), the `-- [...] --`
+   sampled rows), table-cell conventions (an empty cell is a missing
+   value; `""` is an empty string and a quoted blank is whitespace-only
+   text; `↵` marks a line break inside a value; `\|` is a literal pipe), the `-- [...] --`
    tool-notice grammar, and env-value redaction.
 4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted
    content is not included and must not be invented; samples illustrate
@@ -298,7 +299,7 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
     ("sqlite", ...),      # "SQLite databases are split into tables..." bullet
     ("tabular", ...),     # whole "Tabular data files..." schema-block bullet
     ("sqlite", ...),      # SQLite "large table" tail sentence, tail-only
-    ("tabular", ...),     # sample-row cell conventions (empty cell, ↵) bullet
+    ("cells", ...),       # table-cell conventions bullet; only when cells render
     ("env", ...),
     ("tabular", ...),     # accuracy-rules "Use the schema block..." bullet
 ]
@@ -311,10 +312,12 @@ fragment, xml_fragment)`.
 `SYSTEM_INSTRUCTIONS_MARKDOWN` / `SYSTEM_INSTRUCTIONS_XML` stay the
 byte-for-byte canonical text; this table names the exact substrings inside
 them that describe one specific file type's reading convention (Notebooks,
-Excel, SQLite, the tabular schema block, Env files). At `generate()` time,
+Excel, SQLite, the tabular schema block, Env files, the table-cell
+conventions). At `generate()` time,
 [`output.py`](../src/data2prompt/output.py)'s `_active_preamble_triggers()`
 computes which triggers apply to the current run (from the `stats` dict, plus
-`config.env_keys` for the `env` trigger), and `_prune_preamble()` deletes
+`config.env_keys` for the `env` trigger and whether table cells are rendered
+for the `cells` trigger), and `_prune_preamble()` deletes
 every inactive entry's fragment from a working copy of the preamble before
 it's spliced into the document — so a codebase with no `.ipynb`/`.xlsx`/`.db`/
 `.env` files never sees those bullets. Full design rationale, the deliberately

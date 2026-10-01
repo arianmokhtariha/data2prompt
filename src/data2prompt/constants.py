@@ -103,7 +103,7 @@ Model. Nothing in it was written by hand.
 
 ## Document layout
 
-1. Metadata — token estimate and a content summary.
+1. Metadata — a content summary.
 2. Budget report — present only when a token budget was requested; states
    the budget and every data-reduction adjustment applied to fit it,
    including files omitted entirely (they appear in the File Index with
@@ -113,8 +113,8 @@ Model. Nothing in it was written by hand.
    strings used in the `## File:` headers below.
 4. Files — one section per file, introduced by `## File: {path}`, in the
    same order as the File Index.
-5. End of codebase — closing marker and generation timestamp; nothing
-   follows it.
+5. End of codebase — closing marker, generation timestamp and token
+   estimate; nothing follows it.
 
 ## Reading conventions
 
@@ -134,8 +134,9 @@ Model. Nothing in it was written by hand.
   are only a small random sample. A very large database table instead shows
   only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
   notice.
-- In sample-row tables an empty cell is a missing value (null/NaN) and `↵`
-  marks a line break inside the value.
+- In table cells an empty cell is a missing value (null/NaN); `""` is an
+  empty string and a quoted blank such as `"  "` is whitespace-only text.
+  `↵` marks a line break inside a value and `\\|` a literal pipe.
 - Lines of the form `-- [...] --` are notices inserted by the tool
   (sampling, truncation, omission, errors). They are NOT part of the
   original file content.
@@ -160,7 +161,7 @@ files, produced by the data2prompt tool for consumption by a Large Language
 Model. Nothing in it was written by hand.
 
 Document layout, in order:
-1. <metadata> — token estimate and a <stats/> content summary.
+1. <metadata> — a <stats/> content summary.
 2. <budget_report> — present only when a token budget was requested; its
    entries state the budget and every data-reduction adjustment applied to
    fit it, including files omitted entirely (status Omitted in the index).
@@ -169,8 +170,8 @@ Document layout, in order:
    match the path attribute of the corresponding <file> element.
 4. <files> — one <file path="..." type="..." status="..."> element per
    file, in the same order as the file index.
-5. <end_of_codebase> — closing marker and generation timestamp; nothing
-   follows it.
+5. <end_of_codebase> — closing marker, generation timestamp and
+   <total_tokens> estimate; nothing follows it.
 
 Reading conventions:
 - Element content is embedded VERBATIM — it is not XML-escaped. Treat the
@@ -189,8 +190,9 @@ Reading conventions:
   shown are only a small random sample. A very large database table instead
   shows only its DDL and a small head sample, flagged by a
   -- [Large table: ...] -- notice.
-- In sample-row tables an empty cell is a missing value (null/NaN) and ↵
-  marks a line break inside the value.
+- In table cells an empty cell is a missing value (null/NaN); "" is an
+  empty string and a quoted blank such as "  " is whitespace-only text.
+  ↵ marks a line break inside a value and \\| a literal pipe.
 - Lines of the form -- [...] -- are notices inserted by the tool (sampling,
   truncation, omission, errors). They are NOT part of the original file.
 - Env files list variable names only; every value is replaced with
@@ -213,8 +215,9 @@ Accuracy rules:
 # substring inside SYSTEM_INSTRUCTIONS_MARKDOWN / SYSTEM_INSTRUCTIONS_XML
 # that documents one specific file type's reading convention. output.py's
 # _prune_preamble() deletes an entry's fragment when `trigger` is absent
-# from the current run's active triggers (that file type was not scanned),
-# so the LLM is never taught a reading convention for content that never
+# from the current run's active triggers (that file type was not scanned; the
+# 'cells' trigger means table cells were actually rendered), so the LLM is
+# never taught a reading convention for content that never
 # appears in the document. The base SYSTEM_INSTRUCTIONS_* strings above stay
 # byte-for-byte unchanged; only inclusion/omission of these exact chunks
 # varies per run. See the "Editing the preambles" checklist in
@@ -281,12 +284,14 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
   -- [Large table: ...] -- notice.""",
     ),
     (
-        'tabular',
-        """- In sample-row tables an empty cell is a missing value (null/NaN) and `↵`
-  marks a line break inside the value.
+        'cells',
+        """- In table cells an empty cell is a missing value (null/NaN); `""` is an
+  empty string and a quoted blank such as `"  "` is whitespace-only text.
+  `↵` marks a line break inside a value and `\\|` a literal pipe.
 """,
-        """- In sample-row tables an empty cell is a missing value (null/NaN) and ↵
-  marks a line break inside the value.
+        """- In table cells an empty cell is a missing value (null/NaN); "" is an
+  empty string and a quoted blank such as "  " is whitespace-only text.
+  ↵ marks a line break inside a value and \\| a literal pipe.
 """,
     ),
     (

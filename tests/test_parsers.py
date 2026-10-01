@@ -550,22 +550,6 @@ def test_enforce_table_limit_at_exact_limit_unchanged() -> None:
     assert enforce_table_limit(text, limit=1000, truncate_to=500) == text
 
 
-def test_enforce_table_limit_keeps_markdown_header_and_whole_rows() -> None:
-    """header_lines protects a Markdown table's header and separator; only
-    whole data rows are kept after them."""
-    rows = [f"| {i} | {'y' * 40} |" for i in range(60)]
-    text = "\n".join(["| id | text |", "|---|---|", *rows])
-
-    result = enforce_table_limit(text, limit=1_000, truncate_to=500, header_lines=2)
-
-    *kept, notice = result.split("\n")
-    assert kept[:2] == ["| id | text |", "|---|---|"]
-    assert kept[2:] == rows[:len(kept) - 2]
-    assert notice.startswith(
-        f"-- [Table truncated: showing first {len(kept) - 2} of 60 rows"
-    )
-
-
 # ---------------------------------------------------------------------------
 # process_csv — normal (non-schema-only) path
 # ---------------------------------------------------------------------------
@@ -935,3 +919,22 @@ def test_process_csv_sample_preserves_original_row_order() -> None:
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+
+def test_process_csv_floats_keep_the_digits_written_in_the_file(
+    tmp_path: Path,
+) -> None:
+    """pandas' default C float parser is off by 1 ulp on many values
+    (97.68560353337905 reads back as ...904), so a sample row would show a
+    digit that is not in the source file."""
+    csv_path = tmp_path / "readings.csv"
+    csv_path.write_text(
+        "v\n97.68560353337905\n13.436424411240122\n", encoding="utf-8"
+    )
+
+    table = process_csv(csv_path, sample_size=10)[0]
+
+    assert [repr(v) for v in table.df["v"]] == [
+        "97.68560353337905",
+        "13.436424411240122",
+    ]

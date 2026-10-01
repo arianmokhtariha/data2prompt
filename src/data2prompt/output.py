@@ -75,8 +75,29 @@ def resolve_inclusion_status(status: str) -> str:
     return status
 
 
+def _cells_rendered(
+    files_data: List[FileData], schema_only: bool, stats_summary: bool
+) -> bool:
+    """Whether any table cell appears in the document body.
+
+    Cells come from sample rows (absent under ``--schema-only`` and for empty
+    tables) or from the describe() values of a stats-summary schema block.
+    """
+    for file_info in files_data:
+        content = file_info['content']
+        if not (isinstance(content, list) and content
+                and isinstance(content[0], TableIR)):
+            continue
+        for table in content:
+            if not schema_only and not table.df.empty:
+                return True
+            if stats_summary and table.schema is not None:
+                return True
+    return False
+
+
 def _active_preamble_triggers(
-    stats: Dict[str, int], env_keys_enabled: bool
+    stats: Dict[str, int], env_keys_enabled: bool, cells_rendered: bool
 ) -> Set[str]:
     """Which optional preamble segments apply to this run's scanned content.
 
@@ -85,7 +106,9 @@ def _active_preamble_triggers(
     file types actually present in the document. ``env`` additionally
     requires ``env_keys_enabled``: with ``--no-env-keys`` every ``.env``
     file is skipped-not-redacted, so the "variable names, redacted values"
-    bullet would misdescribe the real output.
+    bullet would misdescribe the real output. ``cells`` requires that table
+    cells were actually rendered (see ``_cells_rendered``), so the cell
+    conventions are only taught when there are cells to read.
     """
     active: Set[str] = set()
     if stats.get("notebook_count", 0) > 0:
@@ -100,6 +123,8 @@ def _active_preamble_triggers(
     )
     if any(stats.get(key, 0) > 0 for key in tabular_keys):
         active.add("tabular")
+    if cells_rendered:
+        active.add("cells")
     if stats.get("env_count", 0) > 0 and env_keys_enabled:
         active.add("env")
     return active
@@ -213,7 +238,7 @@ def _budget_block_markdown(report: 'BudgetReport') -> List[str]:
     if report.adjustments:
         lines.append(
             "Data-cap parameters tightened to fit the budget (the Tokens "
-            "line above is the final count):"
+            "line in the end section is the final count):"
         )
         lines.append("")
         lines.append("| Parameter | Requested | Adjusted | Scope |")
@@ -315,7 +340,11 @@ class MarkdownGenerator(OutputGenerator):
         # the LLM is never taught a reading convention for content that
         # never appears in the document (see PREAMBLE_OPTIONAL_SEGMENTS).
         env_keys_enabled = bool(config and config.env_keys)
-        active_triggers = _active_preamble_triggers(stats, env_keys_enabled)
+        active_triggers = _active_preamble_triggers(
+            stats,
+            env_keys_enabled,
+            _cells_rendered(files_data, schema_only, stats_summary),
+        )
         preamble = _prune_preamble(
             SYSTEM_INSTRUCTIONS_MARKDOWN, active_triggers, xml=False
         )
@@ -331,8 +360,6 @@ class MarkdownGenerator(OutputGenerator):
             "",
             preamble,
             "",
-            # Placeholders substituted by main.py once the full output is counted.
-            "> Tokens: {{TOTAL_TOKENS}} (est. via {{TOKEN_METHOD}})",
             f"> Contents: {contents_line}",
             "",
         ]
@@ -434,11 +461,15 @@ class MarkdownGenerator(OutputGenerator):
 
         # Recency anchor: an explicit terminal section so the model knows the
         # document is complete and nothing was cut off mid-file. The timestamp
-        # lives here, not in the metadata, so everything above stays
-        # byte-stable across runs (a reusable provider prompt-cache prefix).
+        # and token total live here, not in the metadata, so everything above
+        # stays byte-stable across runs and edits (a reusable provider
+        # prompt-cache prefix).
         lines.append(f"# End of codebase: {project_name}")
         lines.append("")
         lines.append(f"> Generated on: {timestamp}")
+        # Placeholders substituted by main.py once the full output is counted.
+        # The total changes on any edit, so it sits here with the timestamp.
+        lines.append("> Tokens: {{TOTAL_TOKENS}} (est. via {{TOKEN_METHOD}})")
         lines.append("")
         lines.append(_end_recap(project_name, len(index_entries)))
 
@@ -467,7 +498,11 @@ class XMLGenerator(OutputGenerator):
         # the LLM is never taught a reading convention for content that
         # never appears in the document (see PREAMBLE_OPTIONAL_SEGMENTS).
         env_keys_enabled = bool(config and config.env_keys)
-        active_triggers = _active_preamble_triggers(stats, env_keys_enabled)
+        active_triggers = _active_preamble_triggers(
+            stats,
+            env_keys_enabled,
+            _cells_rendered(files_data, schema_only, stats_summary),
+        )
         preamble = _prune_preamble(
             SYSTEM_INSTRUCTIONS_XML, active_triggers, xml=True
         )
@@ -487,8 +522,6 @@ class XMLGenerator(OutputGenerator):
             preamble,
             "",
             "<metadata>",
-            # Placeholders substituted by main.py once the full output is counted.
-            '    <total_tokens method="{{TOKEN_METHOD}}">{{TOTAL_TOKENS}}</total_tokens>',
             f"    <stats {stats_attrs}/>",
             "</metadata>",
             "",
@@ -592,10 +625,16 @@ class XMLGenerator(OutputGenerator):
         lines.append("")
         # Recency anchor: an explicit terminal element so the model knows the
         # document is complete and nothing was cut off mid-file. The timestamp
-        # lives here, not in <metadata>, so everything above stays byte-stable
-        # across runs (a reusable provider prompt-cache prefix).
+        # and token total live here, not in <metadata>, so everything above
+        # stays byte-stable across runs and edits (a reusable provider
+        # prompt-cache prefix).
         lines.append(f"<{TAG_END_OF_CODEBASE}>")
         lines.append(f"<generated_on>{timestamp}</generated_on>")
+        # Placeholders substituted by main.py once the full output is counted.
+        # The total changes on any edit, so it sits here with the timestamp.
+        lines.append(
+            '<total_tokens method="{{TOKEN_METHOD}}">{{TOTAL_TOKENS}}</total_tokens>'
+        )
         lines.append(_end_recap(project_name, len(index_entries)))
         lines.append(f"</{TAG_END_OF_CODEBASE}>")
         lines.append("</codebase>")

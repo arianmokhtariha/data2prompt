@@ -232,6 +232,8 @@ def flatten_ir(
     *,
     schema_only: bool = False,
     stats_summary: bool = False,
+    table_limit: Optional[int] = None,
+    table_truncate: Optional[int] = None,
 ) -> str:
     """
     Flattens the Intermediate Representation (IR) into a string for token counting.
@@ -251,9 +253,12 @@ block is included when either flag is set, and data rows are dropped under `sche
 Defaults are `False`, keeping legacy callers unaffected; the parser classes and `main.py`
 pass the real `Config` flags.
 
-`flatten_ir()` does **not** apply the `table_limit` cap (it receives no limits),
-so for a table over `config.table_limit` characters the per-file estimate counts
-all sample rows while the document shows only the rows that fit.
+The optional `table_limit` / `table_truncate` are forwarded to
+`render_table_text()`, so a table over `config.table_limit` characters is
+estimated at the capped size the document actually carries. The per-file
+estimate feeds the terminal ranking and the `--budget` omission order, so an
+uncapped estimate would misrank files. Every parser class passes the
+`Config` values.
 
 ### Schema Helpers
 
@@ -316,7 +321,7 @@ def render_sample_table(df: pd.DataFrame) -> str: ...
   limits are given it caps the **rows alone** with
   [`enforce_table_limit(..., header_lines=2)`](#table-size-enforcement), so a
   cut lands on a row boundary and both notes always survive. The generators
-  pass `config.table_limit` / `config.table_truncate`; `flatten_ir()` passes none.
+  and `flatten_ir()` pass `config.table_limit` / `config.table_truncate`.
 - `render_sample_table()` writes a compact Markdown table, one line per row,
   with **no alignment padding** (padding costs tokens and tells a model
   nothing). It replaced `DataFrame.to_markdown()` (tabulate), which had four
@@ -324,8 +329,13 @@ def render_sample_table(df: pd.DataFrame) -> str: ...
   row into two, a missing value printed as `nan` (indistinguishable from the
   string "nan"), and the default `floatfmt="g"` rounded real data to 6
   significant digits (`102479.81746` → `102480`).
-- Cell rules (`_format_sample_cell()` / `_escape_table_cell()`):
+- Cell rules (`_format_cell()` / `_escape_table_cell()`), shared by the sample
+  rows and the schema block's describe() values (so a `top` value follows the
+  same rules). Cells are joined by `_join_row()` with single spaces, and an
+  empty cell is one space (`| |`, not `|  |`):
   - missing (`None`, `NaN`, `NaT`, `pd.NA`) → empty cell;
+  - an empty or whitespace-only string → quoted, `""` or `"   "`, so it is
+    never mistaken for a missing value;
   - any other value → `str(value)`, which for floats is the shortest
     round-trip form, so sample values are never rounded (rounding belongs to
     computed stats only). Values are read from each column's own array
@@ -338,10 +348,11 @@ def render_sample_table(df: pd.DataFrame) -> str: ...
     ~2 tokens and only appears where a value really had a line break;
   - `|` → `\|` (standard GFM escape). Backslashes are not escaped, to keep
     Windows paths cheap.
-- The empty-cell and `↵` conventions are taught by a `tabular`-triggered
-  preamble bullet (see [constants.md](constants.md)). An empty string and a
-  missing value render the same; CSV/Excel reads already turn empty fields into
-  `NaN`, so this only matters for SQLite `''` values.
+- The cell conventions (empty = missing, quoted blanks, `↵`, `\|`) are taught
+  by a `cells`-triggered preamble bullet that appears only when table cells
+  are rendered (see [constants.md](constants.md)). Empty strings really occur
+  in SQLite and Parquet/Arrow text columns and in whitespace-only CSV fields
+  (a bare empty CSV field is parsed as `NaN`, hence missing).
 
 ## Parser Implementations
 
@@ -353,7 +364,10 @@ class CSVParser:
 ```
 
 Uses [`process_csv()`](../src/data2prompt/parsers.py#L149) to:
-1. Read CSV into a pandas DataFrame
+1. Read CSV into a pandas DataFrame with `float_precision="round_trip"`:
+   pandas' default C float parser is off by 1 ulp on many values
+   (`97.68560353337905` reads back as `...904`), and since sample values are
+   rendered faithfully the last digit would not be in the source file
 2. Compute a [`TableSchema`](#columnschema--tableschema) on the **full** df when
    `config.stats_summary` or `config.schema_only` is set (before sampling)
 3. If `config.schema_only`: return an empty-df `TableIR` carrying only the schema (no rows)
@@ -420,7 +434,7 @@ Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
 2. Detect `CREATE TABLE` and `BEGIN TABLE` blocks
 3. Buffer `INSERT INTO` statements and data rows
 4. Sample `config.sql_sample_size` rows per table using seeded random selection
-5. Apply secondary truncation via [`enforce_table_limit()`](#table-size-enforcement) if the data block exceeds `config.table_limit`: whole lines are kept up to `config.table_truncate` characters, never a line cut in half
+5. Apply secondary truncation via [`enforce_table_limit()`](#table-size-enforcement) (counted in lines) if the data block exceeds `config.table_limit`: whole lines are kept up to `config.table_truncate` characters, never a line cut in half
 6. Preserve schema keywords (`ALTER`, `CONSTRAINT`, `VIEW`, `DROP`, `INDEX`, `TABLE`)
 7. Cap total non-data lines at `config.sql_max_lines`; when non-blank lines are
    dropped by the cap, a trailing
@@ -771,6 +785,7 @@ def enforce_table_limit(
     truncate_to: int,
     *,
     header_lines: int = 0,
+    noun: str = "row",
 ) -> str:
     """Cap an oversized block of table rows at the last row that fits."""
 ```
@@ -781,10 +796,15 @@ def enforce_table_limit(
   within `truncate_to` characters, then one notice:
   `-- [Table truncated: showing first 4 of 15 rows; the table exceeded 50,000 characters] --`.
   A row is never cut in half, and the notice cites kept and total rows
-  (output-contract invariant 3).
+  (output-contract invariant 3), with `:,` thousands separators and a
+  singular noun for a total of 1 (`0 of 1 row`). When every row fits within
+  `truncate_to` (e.g. `--table-truncate` >= `--table-limit`) nothing was cut,
+  so the text is returned unchanged with no notice.
 - Two callers: [`render_table_text()`](#table-text-helpers) passes
   `header_lines=2` so a Markdown table keeps its header and separator row;
-  `process_sql()` passes raw SQL data lines with the default `0`.
+  `process_sql()` passes raw SQL data lines with the default `0` and
+  `noun="line"`: those lines include non-row text such as the `INSERT ...
+  VALUES` header, so the notice says `of 14 lines`, not rows.
 - The cap is applied to the rows **only**, never to the notes around them.
   Formerly the generators sliced header note + table + footer note together at
   a character offset, which left a half row and cut the footer note (and with
@@ -852,7 +872,7 @@ Current notices:
 | `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --` | `process_sql` line cap |
 | `-- [Output truncated: Showing first 40 lines] --` | notebook outputs |
 | `-- [Line truncated: showing first 1000 characters] --` | `truncate_long_lines` |
-| `-- [Table truncated: showing first 4 of 15 rows; the table exceeded 50,000 characters] --` | `enforce_table_limit` (rendered sample rows and SQL data blocks) |
+| `-- [Table truncated: showing first 4 of 15 rows; the table exceeded 50,000 characters] --` | `enforce_table_limit` (rendered sample rows; says `lines` for SQL data blocks) |
 | `-- [File truncated: Showing first 10KB ...] --` | `DefaultParser` size cap |
 | `-- [Binary content detected (.bin): content not included] --` | `DefaultParser` |
 | `-- [Content skipped: (.png) files are excluded by exclusion rules] --` | `process_target_file` (main.py) |

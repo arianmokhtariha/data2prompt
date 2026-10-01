@@ -4,7 +4,9 @@ import sqlite3
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Union, Dict, Protocol, Optional, TypedDict, TYPE_CHECKING
+from typing import (
+    List, Union, Dict, Protocol, Optional, Sequence, TypedDict, TYPE_CHECKING
+)
 
 if TYPE_CHECKING:
     from data2prompt.cli import Config
@@ -204,7 +206,7 @@ def render_schema_block(
                 stats_row = desc.iloc[i]
                 for stat in stat_cols:
                     val = stats_row[stat]
-                    row.append("" if pd.isna(val) else _escape_table_cell(str(val)))
+                    row.append(_format_cell(val))
             else:
                 row += [""] * len(stat_cols)
             lines.append("| " + " | ".join(row) + " |")
@@ -233,27 +235,36 @@ def render_schema_block(
 _SAMPLE_TABLE_HEADER_LINES = 2
 
 
-def _format_sample_cell(value: object) -> str:
-    """Render one sample value faithfully: missing values as an empty cell.
+def _format_cell(value: object) -> str:
+    """Render one table cell faithfully; only a missing value is left empty.
 
-    ``str()`` gives a float's shortest round-trip form, so sample data is
-    never rounded.
+    ``str()`` gives a float's shortest round-trip form, so values are never
+    rounded. An empty or whitespace-only string is quoted (``""``, ``"  "``)
+    so it cannot be mistaken for a missing value.
     """
     if pd.api.types.is_scalar(value) and pd.isna(value):
         return ""
-    return _escape_table_cell(str(value))
+    text = str(value)
+    if not text.strip():
+        return f'"{_escape_table_cell(text)}"'
+    return _escape_table_cell(text)
+
+
+def _join_row(cells: Sequence[str]) -> str:
+    """Join cells into one Markdown table row; an empty cell is a single space."""
+    return "|" + "|".join(f" {cell} " if cell else " " for cell in cells) + "|"
 
 
 def render_sample_table(df: pd.DataFrame) -> str:
     """Render sample rows as a compact Markdown table, one line per row.
 
     No alignment padding: it costs tokens and tells a model nothing. Cell
-    conventions (empty = missing, the newline marker) are taught in the
-    tabular preamble bullet.
+    conventions (empty = missing, quoted blanks, the newline marker) are
+    taught in the tabular preamble bullet.
     """
     header = [_escape_table_cell(str(name)) for name in df.columns]
     lines = [
-        "| " + " | ".join(header) + " |",
+        _join_row(header),
         "|" + "|".join(["---"] * len(header)) + "|",
     ]
     # Iterate each column's own array, not itertuples(): itertuples widens
@@ -261,8 +272,7 @@ def render_sample_table(df: pd.DataFrame) -> str:
     # Positional access keeps duplicate column labels apart.
     columns = [df.iloc[:, i].array for i in range(df.shape[1])]
     for row in zip(*columns):
-        cells = [_format_sample_cell(value) for value in row]
-        lines.append("| " + " | ".join(cells) + " |")
+        lines.append(_join_row([_format_cell(value) for value in row]))
     return "\n".join(lines)
 
 
@@ -304,6 +314,8 @@ def flatten_ir(
     *,
     schema_only: bool = False,
     stats_summary: bool = False,
+    table_limit: Optional[int] = None,
+    table_truncate: Optional[int] = None,
 ) -> str:
     """
     Flattens the Intermediate Representation (IR) into a string for token counting.
@@ -312,6 +324,8 @@ def flatten_ir(
     ``schema_only`` and ``stats_summary`` mirror the rendering decisions in
     ``output.py`` so the token estimate tracks the real output: the schema block is
     included when either flag is set, and data rows are dropped under ``schema_only``.
+    ``table_limit``/``table_truncate`` apply the same sample-row cap as the
+    generators, so the estimate counts the text the document carries.
     """
     if isinstance(content, str):
         return content
@@ -349,7 +363,12 @@ def flatten_ir(
                 ))
 
             # The same notes + rows text the generators emit.
-            table_text = render_table_text(table, include_rows=not schema_only)
+            table_text = render_table_text(
+                table,
+                include_rows=not schema_only,
+                table_limit=table_limit,
+                table_truncate=table_truncate,
+            )
             if table_text:
                 parts.append(table_text)
         return "\n".join(parts)
@@ -367,6 +386,7 @@ def enforce_table_limit(
     truncate_to: int,
     *,
     header_lines: int = 0,
+    noun: str = "row",
 ) -> str:
     """Cap an oversized block of table rows at the last row that fits.
 
@@ -374,7 +394,9 @@ def enforce_table_limit(
     ever cut in half. When ``text`` exceeds ``limit`` characters, the first
     ``header_lines`` lines (a Markdown header and separator) are always kept,
     then whole rows while the kept text stays within ``truncate_to``
-    characters, then a notice citing kept and total rows.
+    characters, then a notice citing kept and total rows. Nothing cut means
+    no notice. ``noun`` names what the lines are (``"line"`` for raw SQL,
+    whose lines include non-row text such as an ``INSERT`` header).
     """
     if len(text) <= limit:
         return text
@@ -389,9 +411,13 @@ def enforce_table_limit(
             break
         kept_count += 1
 
+    if kept_count == len(rows):
+        return text
+
+    plural = noun if len(rows) == 1 else f"{noun}s"
     notice = (
-        f"-- [Table truncated: showing first {kept_count} of {len(rows)} rows; "
-        f"the table exceeded {limit:,} characters] --"
+        f"-- [Table truncated: showing first {kept_count:,} of "
+        f"{len(rows):,} {plural}; the table exceeded {limit:,} characters] --"
     )
     return "\n".join(header + rows[:kept_count] + [notice])
 
@@ -446,7 +472,9 @@ def process_csv(
     schema_only: bool = False
 ) -> List[TableIR]:
     try:
-        df = pd.read_csv(file_path, low_memory=False)
+        # round_trip: the default C float parser is off by 1 ulp on many
+        # values, which would show digits that are not in the source file.
+        df = pd.read_csv(file_path, low_memory=False, float_precision="round_trip")
 
         # Column metadata is always computed on the FULL df, before sampling.
         schema = None
@@ -617,7 +645,9 @@ def process_sql(
                 sampled_text = "".join(sampled_rows)
                 
                 # Apply secondary truncation if the sampled block is still too large
-                sampled_text = enforce_table_limit(sampled_text, table_limit, table_truncate)
+                sampled_text = enforce_table_limit(
+                    sampled_text, table_limit, table_truncate, noun="line"
+                )
                 
                 processed_lines.append(sampled_text)
                 if not sampled_text.endswith("\n"):
@@ -630,7 +660,9 @@ def process_sql(
                 )
             else:
                 data_text = "".join(table_data_buffer)
-                data_text = enforce_table_limit(data_text, table_limit, table_truncate)
+                data_text = enforce_table_limit(
+                    data_text, table_limit, table_truncate, noun="line"
+                )
                 processed_lines.append(data_text)
                 if not data_text.endswith("\n"):
                     processed_lines.append("\n")
@@ -852,7 +884,9 @@ class CSVParser:
         tokens, _ = count_tokens(flatten_ir(
             content,
             schema_only=config.schema_only,
-            stats_summary=config.stats_summary
+            stats_summary=config.stats_summary,
+            table_limit=config.table_limit,
+            table_truncate=config.table_truncate,
         ))
         return ParserResult(
             content=content,
@@ -923,7 +957,9 @@ class ExcelParser:
         tokens, _ = count_tokens(flatten_ir(
             content,
             schema_only=config.schema_only,
-            stats_summary=config.stats_summary
+            stats_summary=config.stats_summary,
+            table_limit=config.table_limit,
+            table_truncate=config.table_truncate,
         ))
         return ParserResult(
             content=content,
@@ -1054,6 +1090,8 @@ class ArrowParser:
             content,
             schema_only=config.schema_only,
             stats_summary=config.stats_summary,
+            table_limit=config.table_limit,
+            table_truncate=config.table_truncate,
         ))
         return ParserResult(
             content=content,
@@ -1533,6 +1571,8 @@ class SQLiteParser:
             content,
             schema_only=config.schema_only,
             stats_summary=config.stats_summary,
+            table_limit=config.table_limit,
+            table_truncate=config.table_truncate,
         ))
         return ParserResult(
             content=content,

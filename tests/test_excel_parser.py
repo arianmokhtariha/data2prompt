@@ -39,6 +39,8 @@ def _make_config(
         seed=seed,
         stats_summary=stats_summary,
         schema_only=schema_only,
+        table_limit=50_000,
+        table_truncate=20_000,
     )
 
 

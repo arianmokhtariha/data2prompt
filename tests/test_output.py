@@ -47,6 +47,17 @@ def _sample_files() -> FilesData:
     ]
 
 
+def _sample_files_with_rows() -> FilesData:
+    """A source file plus a CSV whose sample rows render table cells."""
+    return _sample_files() + [{
+        "path": "data/t.csv",
+        "content": [TableIR(name="t.csv", df=pd.DataFrame({"a": [1]}))],
+        "type": "CSV",
+        "tokens": 0,
+        "status": "Sampled",
+    }]
+
+
 def _render(generator: OutputGenerator) -> str:
     """Render a minimal project with the given generator (config defaults to None)."""
     # tree_text is a flat list of real relative paths (the ProjectScanner
@@ -557,13 +568,12 @@ def test_markdown_preamble_tabular_without_sqlite_keeps_general_sentence_only() 
     but the SQLite-specific 'large table' tail sentence must not appear."""
     output = MarkdownGenerator().generate(
         project_name="demo", tree_text="src/app.py",
-        files_data=_sample_files(), stats={"csv_count": 1},
+        files_data=_sample_files_with_rows(), stats={"csv_count": 1},
     )
     assert "Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite)" in output
-    # The sample-cell conventions are taught with the marker actually used.
+    # The cell conventions are taught with the marker actually used.
     assert (
-        "an empty cell is a missing value (null/NaN) and "
-        f"`{TABLE_CELL_NEWLINE_MARKER}`"
+        f"`{TABLE_CELL_NEWLINE_MARKER}` marks a line break inside a value"
     ) in output
     assert "very large database table" not in output
     assert "SQLite databases are split into tables" not in output
@@ -611,7 +621,8 @@ def test_markdown_preamble_matches_base_constant_when_all_types_scanned() -> Non
     wording itself was never touched, only conditional inclusion."""
     output = MarkdownGenerator().generate(
         project_name="demo", tree_text="src/app.py",
-        files_data=_sample_files(), stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
+        files_data=_sample_files_with_rows(),
+        stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
     )
     assert SYSTEM_INSTRUCTIONS_MARKDOWN in output
 
@@ -620,6 +631,7 @@ def test_xml_preamble_matches_base_constant_when_all_types_scanned() -> None:
     """XML mirror of the byte-identical-when-everything-present regression."""
     output = XMLGenerator().generate(
         project_name="demo", tree_text="src/app.py",
-        files_data=_sample_files(), stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
+        files_data=_sample_files_with_rows(),
+        stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
     )
     assert SYSTEM_INSTRUCTIONS_XML in output
