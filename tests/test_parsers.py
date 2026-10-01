@@ -3,7 +3,7 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 import pytest
@@ -1336,8 +1336,9 @@ def test_execution_notice_flags_duplicate_execution_counts(
     ids=["execute_result", "display_data"],
 )
 def test_ansi_is_stripped_from_rich_text_outputs(
-    tmp_path: Path, output: dict
+    tmp_path: Path, output: Dict[str, object]
 ) -> None:
+    """ANSI colour codes in text/plain outputs must not reach the prompt."""
     path = _single_output_notebook(tmp_path, output)
 
     cells, _ = process_notebook(path)

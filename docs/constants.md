@@ -277,15 +277,16 @@ syntax differs) across four parts:
    `-- [Execution state: ...] --` notice under the file header (cells in the
    order they ran, cells never run, missing execution counts: hidden kernel
    state is possible; it may also name the first cell with an error output,
-   which alone does not suggest the outputs differ from a clean run) and the `-- [Output omitted: <mime types>] --` line for
-   dropped non-text outputs, schema blocks (full-dataset stats; the rows
-   shown may be a sample flagged by a `-- [Sample: ...] --` notice or cut
-   short by a `-- [Table truncated: ...] --` notice), table-cell conventions (in sample rows an empty cell is a
-   missing value, in schema and stats blocks an empty statistic means not
-   applicable to that column; `""` is an empty string and a quoted blank is
-   whitespace-only
-   text; `↵` marks a line break inside a value; `\|` is a literal pipe), the `-- [...] --`
-   tool-notice grammar, and env-value redaction.
+   which alone does not suggest the outputs differ from a clean run) and
+   the `-- [Output omitted: <mime types>] --` line for dropped non-text
+   outputs, schema blocks (full-dataset stats; the rows shown may be a
+   sample flagged by a `-- [Sample: ...] --` notice or cut short by a
+   `-- [Table truncated: ...] --` notice), table-cell conventions (in
+   sample rows an empty cell is a missing value, in schema and stats
+   blocks an empty statistic means not applicable to that column; `""` is
+   an empty string and a quoted blank is whitespace-only text; `↵` marks
+   a line break inside a value; `\|` is a literal pipe), the
+   `-- [...] --` tool-notice grammar, and env-value redaction.
 4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted
    content is not included and must not be invented; samples illustrate
    structure only; the File Index `Status` is authoritative, with the full

@@ -478,7 +478,8 @@ def enforce_table_limit(
 
     notice = (
         f"-- [Table truncated: showing first {kept_count:,} of "
-        f"{len(rows):,} {_pluralize(noun, len(rows))}; the table exceeded {limit:,} characters] --"
+        f"{len(rows):,} {_pluralize(noun, len(rows))}; "
+        f"the table exceeded {limit:,} characters] --"
     )
     return "\n".join(header + rows[:kept_count] + [notice])
 
