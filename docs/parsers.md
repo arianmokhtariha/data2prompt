@@ -256,8 +256,8 @@ def flatten_ir(
     stats_summary: bool = False,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
-    stats_decimals: int = DEFAULT_STATS_DECIMALS,
-    data_decimals: int = DEFAULT_DATA_DECIMALS,
+    stats_decimals: int,
+    data_decimals: int,
     file_note: Optional[str] = None,
 ) -> str:
     """
@@ -297,7 +297,7 @@ Two module-level helpers back the schema/stats features:
 def build_table_schema(df: pd.DataFrame, include_describe: bool) -> TableSchema: ...
 def render_schema_block(
     schema, *, show_missing: bool, show_describe: bool,
-    stats_decimals: int = DEFAULT_STATS_DECIMALS,
+    stats_decimals: int,
 ) -> str: ...
 ```
 
@@ -344,11 +344,9 @@ def render_table_text(
     include_rows: bool,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
-    data_decimals: int = DEFAULT_DATA_DECIMALS,
+    data_decimals: int,
 ) -> str: ...
-def render_sample_table(
-    df: pd.DataFrame, data_decimals: int = DEFAULT_DATA_DECIMALS
-) -> str: ...
+def render_sample_table(df: pd.DataFrame, *, data_decimals: int) -> str: ...
 ```
 
 - `render_table_text()` joins, one per line: `header_note`, the sample rows
@@ -400,11 +398,20 @@ def format_float(value: float, decimals: int) -> str: ...
 ```
 
 [`format_float()`](../src/data2prompt/parsers.py) is the single source of truth
-for rounding a float. A value is rounded to
-`max(decimals, MIN_SIGNIFICANT_DIGITS - 1 - floor(log10(|value|)))` decimal
-places and printed with the shortest `repr`, so there are no trailing zeros.
-The second term is the significance guard: small magnitudes get extra places so
-at least `MIN_SIGNIFICANT_DIGITS` (4) significant digits survive.
+for rounding a float. The rule, then the shortest `repr` (no trailing zeros):
+
+```python
+places = decimals
+if abs(value) < 1:
+    magnitude = math.floor(math.log10(abs(value)))
+    places = max(decimals, MIN_SIGNIFICANT_DIGITS - 1 - magnitude)
+return repr(round(value, places))
+```
+
+Values with `|value| >= 1` are rounded to exactly `decimals` places, so the cap
+is never weakened. The `abs(value) < 1` branch is the significance guard: small
+magnitudes get extra places so at least `MIN_SIGNIFICANT_DIGITS` (4)
+significant digits survive.
 
 | Value | Cap | Result |
 |---|---|---|
@@ -413,12 +420,19 @@ at least `MIN_SIGNIFICANT_DIGITS` (4) significant digits survive.
 | `102479.81746031746` | 4 | `102479.8175` |
 | `0.0000123456` | 4 | `1.235e-05` (not `0.0`) |
 | `2.0` | 4 | `2.0` |
+| `97.68560353337905` | 0 | `98.0` |
+| `3.14159` | 2 | `3.14` |
+| `0.99996` | 4 | `1.0` |
+| `0.00034` | 2 | `0.00034` |
+| `2.5` | 0 | `2.0` |
 
 Zero, NaN and infinities have no magnitude: zero and the infinities print as
 `repr` (`0.0`, `inf`), and a missing value never reaches the helper (it is an
-empty cell). Because of the guard, a cap below the significant-digit floor has
-no effect on mid-sized values (`--data-decimals 0` still prints `97.6856` as
-`97.69`); a large cap such as `17` effectively keeps full float64 precision.
+empty cell). Two behaviors are intended and must not be "fixed": a cap of 0
+prints `98.0`, not `98`, because `repr` keeps the float marker so a rounded
+float still reads as a float; and ties round half to even (`round(2.5, 0)` is
+`2.0`), Python's standard rounding. A cap below the floor only affects values
+below 1; to keep more digits of larger values, raise the cap.
 
 Only true float values are rounded: Python `float`, numpy floating (including
 `float32`) and pandas nullable `Float64`, detected with

@@ -7,6 +7,7 @@ placeholders resolved by the main.py substitution step), the File Index
 document-level stats summary, and the end-of-codebase anchor.
 """
 
+import re
 from pathlib import Path
 from typing import List, Tuple
 from types import SimpleNamespace
@@ -737,3 +738,26 @@ def test_xml_preamble_matches_base_constant_when_all_types_scanned() -> None:
         stats=_ALL_TRIGGERS_STATS, config=_ENV_KEYS_CFG,
     )
     assert _fill_preamble_slots(SYSTEM_INSTRUCTIONS_XML, 4, 6) in output
+
+
+@pytest.mark.parametrize(
+    ("generator", "preamble_end"),
+    [(MarkdownGenerator(), "# File Index"), (XMLGenerator(), "</purpose>")],
+    ids=["markdown", "xml"],
+)
+@pytest.mark.parametrize(
+    "stats", [_ALL_TRIGGERS_STATS, {}], ids=["all-segments", "pruned"]
+)
+def test_no_preamble_slot_survives_in_the_document(
+    generator: OutputGenerator, preamble_end: str, stats: dict
+) -> None:
+    """A named ``{SLOT}`` that ``_fill_preamble_slots`` does not know about
+    would leak into the document as literal text. Lowercase braces such as
+    ``{n}`` are legitimate preamble prose and are not matched."""
+    output = generator.generate(
+        project_name="demo", tree_text="src/app.py",
+        files_data=_sample_files_with_rows(), stats=stats, config=_ENV_KEYS_CFG,
+    )
+    preamble = output.split(preamble_end)[0]
+    assert len(preamble) > 500
+    assert re.findall(r"\{[A-Z_]+\}", preamble) == []

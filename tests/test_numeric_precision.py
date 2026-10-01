@@ -57,7 +57,13 @@ _SMALL_VALUE = 0.0000123456
         (float("inf"), 4, "inf"),
         (float("-inf"), 4, "-inf"),
         (97.68560353337905, 17, "97.68560353337905"),  # large cap: full float64
-        (97.68560353337905, 0, "97.69"),         # guard: 4 significant digits
+        (97.68560353337905, 0, "98.0"),     # cap applies to values >= 1
+        (3.14159, 2, "3.14"),               # the guard never weakens the cap
+        (1.0, 0, "1.0"),
+        (0.99996, 4, "1.0"),                # rounds up across the 1 boundary
+        (0.00034, 2, "0.00034"),            # guard: 4 significant digits
+        (-0.00034, 2, "-0.00034"),
+        (2.5, 0, "2.0"),                    # ties round half to even
     ],
 )
 def test_format_float_applies_cap_and_significance_guard(
@@ -188,9 +194,9 @@ def test_caps_change_the_output(
     coarse_stats = next(
         line for line in coarse.split("\n") if line.startswith("| x |")
     )
-    # Even at 0 decimals the guard keeps 4 significant digits.
-    assert "| 32.73 |" in coarse_stats
-    assert "| 97.69 |" in coarse
+    # At 0 decimals values >= 1 are rounded to whole numbers.
+    assert "| 33.0 |" in coarse_stats
+    assert "| 98.0 |" in coarse
 
 
 @pytest.mark.parametrize("generator", GENERATORS, ids=["markdown", "xml"])
@@ -222,8 +228,8 @@ def test_status_sees_the_rounded_row_width() -> None:
     depends on the data cap: rows that fit rounded must not report Sampled."""
     rng = np.random.default_rng(0)
     table = TableIR(name="t.csv", df=pd.DataFrame({"x": rng.random(200) * 100}))
-    short = len(render_sample_table(table.df, 2))
-    full = len(render_sample_table(table.df, 17))
+    short = len(render_sample_table(table.df, data_decimals=2))
+    full = len(render_sample_table(table.df, data_decimals=17))
     assert short < full
     limit = (short + full) // 2
     assert _tabular_status([table], False, "Sampled", limit, limit, 2) == "Read"
@@ -270,7 +276,8 @@ def test_preamble_states_the_configured_caps(
     preamble = " ".join(output.split(end)[0].split())
     assert (
         "Floats are rounded: data values to at most 9 decimals, statistics "
-        "to at most 3 (small values keep 4 significant digits)."
+        "to at most 3 (values below 1 keep at least 4 "
+        "significant digits)."
     ) in preamble
     assert "{DATA_DECIMALS}" not in output
     assert "{STATS_DECIMALS}" not in output
@@ -281,5 +288,6 @@ def test_preamble_states_the_configured_caps(
 def test_preamble_omits_the_sentence_when_no_cells_are_rendered(
     generator: OutputGenerator, tmp_path: Path
 ) -> None:
-    output = _render(generator, tmp_path, _config(schema_only=True, stats_summary=False))
+    config = _config(schema_only=True, stats_summary=False)
+    output = _render(generator, tmp_path, config)
     assert "Floats are rounded" not in output

@@ -51,9 +51,11 @@ DEFAULT_LINE_LENGTH_THRESHOLD = 4000        # Max characters allowed per line be
 DEFAULT_TRUNCATED_LINE_LENGTH = 1000        # Number of characters to keep when a line is truncated.
 DEFAULT_TABLE_CHAR_LIMIT = 50000            # Max characters allowed for a single table/sheet representation after sampling.
 DEFAULT_TABLE_TRUNCATED_SIZE = 20000        # Number of characters to keep when a table/sheet is truncated due to size.
-DEFAULT_STATS_DECIMALS = 4                  # Max decimals for computed statistics (describe() values).
+# Float rounding caps (see format_float). Values below 1 keep at least
+# MIN_SIGNIFICANT_DIGITS significant digits even when the cap would round them away.
+DEFAULT_STATS_DECIMALS = 4                  # Max decimals for describe() statistics.
 DEFAULT_DATA_DECIMALS = 6                   # Max decimals for float values in sample rows.
-MIN_SIGNIFICANT_DIGITS = 4                  # A rounded float always keeps at least this many significant digits.
+MIN_SIGNIFICANT_DIGITS = 4                  # Significance floor for values below 1.
 DEFAULT_MAX_FILE_SIZE_KB = 70               # maximum file size of unhandled type to keep enitrely (if file is larger than that only the first 10kb will be shown)
 DEFAULT_OUTPUT_FILE = 'PROMPT'              # default output base name (extension added via --format)
 DEFAULT_FORMAT = 'markdown'                 # default output format
@@ -158,8 +160,8 @@ Model. Nothing in it was written by hand.
   is an empty string and a quoted blank such as `"  "` is whitespace-only
   text. `↵` marks a line break inside a value and `\\|` a literal pipe.
   Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
-  statistics to at most {STATS_DECIMALS} (small values keep
-  {SIGNIFICANT_DIGITS} significant digits).
+  statistics to at most {STATS_DECIMALS} (values below 1 keep at
+  least {SIGNIFICANT_DIGITS} significant digits).
 - Lines of the form `-- [...] --` are notices inserted by the tool
   (sampling, truncation, omission, errors). They are NOT part of the
   original file content.
@@ -226,8 +228,8 @@ Reading conventions:
   is an empty string and a quoted blank such as "  " is whitespace-only
   text. ↵ marks a line break inside a value and \\| a literal pipe.
   Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
-  statistics to at most {STATS_DECIMALS} (small values keep
-  {SIGNIFICANT_DIGITS} significant digits).
+  statistics to at most {STATS_DECIMALS} (values below 1 keep at
+  least {SIGNIFICANT_DIGITS} significant digits).
 - Lines of the form -- [...] -- are notices inserted by the tool (sampling,
   truncation, omission, errors). They are NOT part of the original file.
 - Env files list variable names only; every value is replaced with
@@ -341,16 +343,16 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
   is an empty string and a quoted blank such as `"  "` is whitespace-only
   text. `↵` marks a line break inside a value and `\\|` a literal pipe.
   Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
-  statistics to at most {STATS_DECIMALS} (small values keep
-  {SIGNIFICANT_DIGITS} significant digits).
+  statistics to at most {STATS_DECIMALS} (values below 1 keep at
+  least {SIGNIFICANT_DIGITS} significant digits).
 """,
         """- In sample rows an empty cell is a missing value (null/NaN); in schema and
   stats blocks an empty statistic means not applicable to that column. ""
   is an empty string and a quoted blank such as "  " is whitespace-only
   text. ↵ marks a line break inside a value and \\| a literal pipe.
   Floats are rounded: data values to at most {DATA_DECIMALS} decimals,
-  statistics to at most {STATS_DECIMALS} (small values keep
-  {SIGNIFICANT_DIGITS} significant digits).
+  statistics to at most {STATS_DECIMALS} (values below 1 keep at
+  least {SIGNIFICANT_DIGITS} significant digits).
 """,
     ),
     (

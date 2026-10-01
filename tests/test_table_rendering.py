@@ -104,7 +104,11 @@ def test_sample_rows_render_faithfully(generator: OutputGenerator) -> None:
 def test_flatten_ir_counts_the_rendered_table_text() -> None:
     """The per-file token estimate must count the same table text the
     generators emit, not a differently formatted stand-in."""
-    flattened = flatten_ir([TableIR(name="t.csv", df=_TRICKY_DF)])
+    flattened = flatten_ir(
+        [TableIR(name="t.csv", df=_TRICKY_DF)],
+        stats_decimals=4,
+        data_decimals=6,
+    )
     assert _TRICKY_TABLE_TEXT in flattened
 
 
@@ -113,7 +117,7 @@ def test_empty_and_blank_strings_are_distinct_from_missing() -> None:
     whitespace-only STRING must render differently from NaN, in sample rows
     and in the schema block's describe() `top` value alike."""
     df = pd.DataFrame({"s": ["", "   ", np.nan, "x"], "t": ["", "", "", ""]})
-    sample = render_sample_table(df).split("\n")
+    sample = render_sample_table(df, data_decimals=6).split("\n")
     assert sample[2:] == [
         '| "" | "" |',
         '| "   " | "" |',
@@ -122,7 +126,9 @@ def test_empty_and_blank_strings_are_distinct_from_missing() -> None:
     ]
 
     schema = build_table_schema(df, include_describe=True)
-    block = render_schema_block(schema, show_missing=True, show_describe=True)
+    block = render_schema_block(
+        schema, show_missing=True, show_describe=True, stats_decimals=4
+    )
     t_row = next(line for line in block.split("\n") if line.startswith("| t |"))
     assert '| "" |' in t_row  # top of the all-empty column is "", not missing
 
@@ -133,7 +139,9 @@ def test_schema_block_escapes_pipes_in_names_and_values() -> None:
     df = pd.DataFrame({"a|b": ["x | y", "x | y", "z"]})
     schema = build_table_schema(df, include_describe=True)
 
-    block = render_schema_block(schema, show_missing=True, show_describe=True)
+    block = render_schema_block(
+        schema, show_missing=True, show_describe=True, stats_decimals=4
+    )
 
     table_rows = [line for line in block.split("\n") if line.startswith("|")]
     unescaped_pipes = [len(re.findall(r"(?<!\\)\|", row)) for row in table_rows]
@@ -233,8 +241,14 @@ def test_per_file_estimate_applies_the_table_cap() -> None:
         name="t.csv",
         df=pd.DataFrame({"id": range(50), "text": ["x" * 100] * 50}),
     )
-    uncapped = flatten_ir([table])
-    capped = flatten_ir([table], table_limit=1_000, table_truncate=500)
+    uncapped = flatten_ir([table], stats_decimals=4, data_decimals=6)
+    capped = flatten_ir(
+        [table],
+        table_limit=1_000,
+        table_truncate=500,
+        stats_decimals=4,
+        data_decimals=6,
+    )
 
     assert "Table truncated" not in uncapped
     assert "Table truncated" in capped

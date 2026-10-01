@@ -37,6 +37,8 @@ class Config:
     truncated_line_length: int           # Truncation target length
     table_limit: int                     # Max chars per table after sampling
     table_truncate: int                  # Truncation target for tables
+    stats_decimals: int                  # Max decimals for float statistics
+    data_decimals: int                   # Max decimals for float sample values
     ignore_folders: Set[str]             # Folders to exclude
     ignore_files: Set[str]               # File patterns to exclude (gitignore-style)
     max_file_size: int                   # Max file size (KB) for full read
@@ -47,8 +49,6 @@ class Config:
     stats_summary: bool                  # Include the per-table stats metadata block
     env_keys: bool                       # List .env variable names (redacted values)
     budget: Optional[int]                # Target token budget for --budget (None = off)
-    stats_decimals: int = 4              # Max decimals for float statistics
-    data_decimals: int = 6               # Max decimals for float sample values
 ```
 
 ## CLI Arguments Reference
@@ -129,17 +129,19 @@ and the infeasible-outcome contract.
 | Argument | Type | Default | Description |
 |:---------|:----:|:--------|:------------|
 | `--stats-decimals` | `int` | `4` | Maximum decimals for float values in the schema block's describe() statistics (mean, std, min, quartiles, max, ...). |
-| `--data-decimals` | `int` | `6` | Maximum decimals for float values in sample rows. A large value such as `17` effectively keeps full float64 precision. |
+| `--data-decimals` | `int` | `6` | Maximum decimals for float values in sample rows. Raise it to keep more digits. |
 
 Only true float values are rounded (Python/numpy floats, `float32` and pandas
 nullable `Float64`). Integers, booleans, dates and times, strings (including
 numeric-looking text), bytes and decimals render untouched, and raw-text
-formats (SQL dumps, notebooks, plain files) are never rewritten. A significance
-guard stops small values from collapsing: each value is rounded to
+formats (SQL dumps, notebooks, plain files) are never rewritten. Values with
+`|value| >= 1` are rounded to exactly the cap (`--data-decimals 0` renders
+`97.6856` as `98.0`). A significance guard stops values below 1 from
+collapsing: they are rounded to
 `max(decimals, 4 - 1 - floor(log10(|value|)))` places
-(`MIN_SIGNIFICANT_DIGITS = 4`), so `0.0000123456` renders as `1.235e-05`, and
-because of the guard even `--data-decimals 0` keeps 4 significant digits of a
-value like `97.6856`. The preamble states the configured caps to the model.
+(`MIN_SIGNIFICANT_DIGITS = 4`), so `0.0000123456` renders as `1.235e-05`. The
+preamble states the configured caps to the model. `Config` has no defaults for
+these two fields: `setup_cli()` always fills them from the flags.
 
 ### Exclusion Settings
 

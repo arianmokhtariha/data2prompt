@@ -155,7 +155,9 @@ def test_build_table_schema_duplicate_column_names_does_not_crash():
 
     # render_schema_block must not crash either, and must keep both
     # same-named columns' describe() rows distinct.
-    result = render_schema_block(schema, show_missing=True, show_describe=True)
+    result = render_schema_block(
+        schema, show_missing=True, show_describe=True, stats_decimals=4
+    )
     a_lines = [l for l in result.splitlines() if l.startswith("| a |")]
     assert len(a_lines) == 2
     assert a_lines != [a_lines[0], a_lines[0]]  # the two rows are not identical
@@ -292,7 +294,9 @@ def test_render_schema_block_merged_table():
         "label": ["a", "b", "a"],
     })
     schema = build_table_schema(df, include_describe=True)
-    result = render_schema_block(schema, show_missing=True, show_describe=True)
+    result = render_schema_block(
+        schema, show_missing=True, show_describe=True, stats_decimals=4
+    )
 
     # No separate summary statistics section.
     assert "**Summary statistics**" not in result
@@ -319,7 +323,9 @@ def test_render_schema_block_no_describe_fallback():
     """When show_describe=False, only column/dtype columns are rendered."""
     df = pd.DataFrame({"x": [1, 2, 3]})
     schema = build_table_schema(df, include_describe=False)
-    result = render_schema_block(schema, show_missing=False, show_describe=False)
+    result = render_schema_block(
+        schema, show_missing=False, show_describe=False, stats_decimals=4
+    )
 
     assert "| column | dtype |" in result
     assert "count" not in result
@@ -333,7 +339,9 @@ def test_render_schema_block_nan_becomes_empty_string():
         "cat": ["x", "y", "x"],
     })
     schema = build_table_schema(df, include_describe=True)
-    result = render_schema_block(schema, show_missing=True, show_describe=True)
+    result = render_schema_block(
+        schema, show_missing=True, show_describe=True, stats_decimals=4
+    )
 
     assert "nan" not in result.lower()
 
@@ -785,11 +793,11 @@ def test_process_notebook_malformed_json_returns_error_cell() -> None:
 # ---------------------------------------------------------------------------
 
 def test_flatten_ir_string_content() -> None:
-    assert flatten_ir("hello world") == "hello world"
+    assert flatten_ir("hello world", stats_decimals=4, data_decimals=6) == "hello world"
 
 
 def test_flatten_ir_empty_list() -> None:
-    assert flatten_ir([]) == ""
+    assert flatten_ir([], stats_decimals=4, data_decimals=6) == ""
 
 
 def test_flatten_ir_notebook_cells_joins_source_and_outputs() -> None:
@@ -797,7 +805,7 @@ def test_flatten_ir_notebook_cells_joins_source_and_outputs() -> None:
         NotebookCellIR(number=1, type="code", source="x = 1", outputs="1"),
         NotebookCellIR(number=2, type="markdown", source="# Header", outputs=None),
     ]
-    result = flatten_ir(cells)
+    result = flatten_ir(cells, stats_decimals=4, data_decimals=6)
     assert "x = 1" in result
     assert "1" in result
     assert "# Header" in result
@@ -805,7 +813,9 @@ def test_flatten_ir_notebook_cells_joins_source_and_outputs() -> None:
 
 def test_flatten_ir_table_normal_includes_data_rows() -> None:
     df = pd.DataFrame({"col": ["alpha", "beta"]})
-    result = flatten_ir([TableIR(name="t.csv", df=df)])
+    result = flatten_ir(
+        [TableIR(name="t.csv", df=df)], stats_decimals=4, data_decimals=6
+    )
     assert "alpha" in result
     assert "beta" in result
 
@@ -813,7 +823,12 @@ def test_flatten_ir_table_normal_includes_data_rows() -> None:
 def test_flatten_ir_table_schema_only_drops_data_rows() -> None:
     df = pd.DataFrame({"col": ["SENTINEL_A", "SENTINEL_B"]})
     schema = build_table_schema(df, include_describe=False)
-    result = flatten_ir([TableIR(name="t.csv", df=df, schema=schema)], schema_only=True)
+    result = flatten_ir(
+        [TableIR(name="t.csv", df=df, schema=schema)],
+        schema_only=True,
+        stats_decimals=4,
+        data_decimals=6,
+    )
     assert "**Schema**" in result
     assert "SENTINEL_A" not in result
     assert "SENTINEL_B" not in result
@@ -822,7 +837,12 @@ def test_flatten_ir_table_schema_only_drops_data_rows() -> None:
 def test_flatten_ir_table_stats_summary_includes_schema() -> None:
     df = pd.DataFrame({"score": [1.0, 2.0, 3.0]})
     schema = build_table_schema(df, include_describe=True)
-    result = flatten_ir([TableIR(name="t.csv", df=df, schema=schema)], stats_summary=True)
+    result = flatten_ir(
+        [TableIR(name="t.csv", df=df, schema=schema)],
+        stats_summary=True,
+        stats_decimals=4,
+        data_decimals=6,
+    )
     assert "**Schema**" in result
     assert "score" in result
 
@@ -1409,6 +1429,7 @@ def test_csv_status_agrees_with_render_time_table_cap(
         include_rows=True,
         table_limit=table_limit,
         table_truncate=table_truncate,
+        data_decimals=6,
     )
 
     assert result.status == expected_status
@@ -1527,5 +1548,7 @@ def test_notebook_token_estimate_includes_the_file_note(tmp_path: Path) -> None:
     result = NotebookParser().parse(path, _status_config())
 
     assert result.file_note is not None
-    cells_only, _ = count_tokens(flatten_ir(result.content))
+    cells_only, _ = count_tokens(
+        flatten_ir(result.content, stats_decimals=4, data_decimals=6)
+    )
     assert result.tokens > cells_only

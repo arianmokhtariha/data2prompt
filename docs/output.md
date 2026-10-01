@@ -148,8 +148,9 @@ three named slots (`{DATA_DECIMALS}`, `{STATS_DECIMALS}`,
 `{SIGNIFICANT_DIGITS}`, see [constants.md](constants.md)) so the rounding
 sentence states the real `config.data_decimals`, `config.stats_decimals` and
 `MIN_SIGNIFICANT_DIGITS`; both generators call it with the values from
-`_rounding_caps(config)` (the defaults when `config` is `None`), so Markdown and
-XML always agree.
+`_rounding_caps(config)`, so Markdown and XML always agree. The defaults appear
+only there, as the documented no-config fallback (mirroring `table_limit=None`);
+every parser-side renderer takes the caps as required keyword-only arguments.
 
 `_active_preamble_triggers()` derives six trigger keys: five from the `stats`
 dict already threaded into `generate()`, plus `cells` from `_cells_rendered()`

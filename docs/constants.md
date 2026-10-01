@@ -120,7 +120,7 @@ All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and 
 | `DEFAULT_TABLE_TRUNCATED_SIZE` | `20000` | Characters retained when table is size-truncated |
 | `DEFAULT_STATS_DECIMALS` | `4` | Max decimals for float statistics (describe() values); `--stats-decimals` |
 | `DEFAULT_DATA_DECIMALS` | `6` | Max decimals for float values in sample rows; `--data-decimals` |
-| `MIN_SIGNIFICANT_DIGITS` | `4` | Significance guard: a rounded float keeps at least this many significant digits (not a CLI option) |
+| `MIN_SIGNIFICANT_DIGITS` | `4` | Significance floor: a float below 1 keeps at least this many significant digits (not a CLI option) |
 | `DEFAULT_MAX_FILE_SIZE_KB` | `70` | Max file size (KB) for unhandled types to be read entirely |
 | `DEFAULT_OUTPUT_FILE` | `'PROMPT'` | Default output base name |
 | `DEFAULT_FORMAT` | `'markdown'` | Default output format |
@@ -302,13 +302,16 @@ The XML variant additionally states that element content is embedded verbatim
 
 **Rounding slots.** The cell-convention bullet ends with one sentence stating
 the run's float caps: "Floats are rounded: data values to at most
-{DATA_DECIMALS} decimals, statistics to at most {STATS_DECIMALS} (small values
-keep {SIGNIFICANT_DIGITS} significant digits)." The three `{...}` tokens are
-named slots (`PREAMBLE_SLOT_DATA_DECIMALS`, `PREAMBLE_SLOT_STATS_DECIMALS`,
-`PREAMBLE_SLOT_SIGNIFICANT_DIGITS`), not `str.format` fields (the preambles
-contain literal braces such as `{n}`). `output.py`'s `_fill_preamble_slots()`
-replaces them with `config.data_decimals`, `config.stats_decimals` and
-`MIN_SIGNIFICANT_DIGITS` after pruning, identically in both formats.
+{DATA_DECIMALS} decimals, statistics to at most {STATS_DECIMALS} (values below
+1 keep at least {SIGNIFICANT_DIGITS} significant digits)." The three `{...}`
+tokens are named slots (`PREAMBLE_SLOT_DATA_DECIMALS`,
+`PREAMBLE_SLOT_STATS_DECIMALS`, `PREAMBLE_SLOT_SIGNIFICANT_DIGITS`), not
+`str.format` fields (the preambles contain literal braces such as `{n}`).
+`output.py`'s `_fill_preamble_slots()` replaces them with
+`config.data_decimals`, `config.stats_decimals` and `MIN_SIGNIFICANT_DIGITS`
+after pruning, identically in both formats. The slot list lives in two places
+(these constants and the tuple in `_fill_preamble_slots()`), so a test asserts
+that no `{UPPER_CASE}` placeholder survives in a rendered preamble.
 
 **Consumed by:**
 - [`output.py`](../src/data2prompt/output.py) — spliced into both outputs

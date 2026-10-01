@@ -92,6 +92,8 @@ class Config:
     truncated_line_length: int
     table_limit: int
     table_truncate: int
+    stats_decimals: int
+    data_decimals: int
     ignore_folders: Set[str] = field(default_factory=set)
     ignore_files: Set[str] = field(default_factory=set)
     max_file_size: int = 0
@@ -102,8 +104,6 @@ class Config:
     stats_summary: bool = True
     env_keys: bool = True
     budget: Optional[int] = None
-    stats_decimals: int = DEFAULT_STATS_DECIMALS
-    data_decimals: int = DEFAULT_DATA_DECIMALS
 
 def setup_cli() -> Config:
     """Configures the Command Line Interface (CLI) for the tool.
@@ -171,10 +171,16 @@ def setup_cli() -> Config:
                         help=f'Length to truncate large tables to (default: {DEFAULT_TABLE_TRUNCATED_SIZE})')
 
     # Numeric precision settings
-    parser.add_argument('--stats-decimals', type=_non_negative_int, default=DEFAULT_STATS_DECIMALS,
-                        help=f'Max decimals for float statistics; small values keep {MIN_SIGNIFICANT_DIGITS} significant digits (default: {DEFAULT_STATS_DECIMALS})')
-    parser.add_argument('--data-decimals', type=_non_negative_int, default=DEFAULT_DATA_DECIMALS,
-                        help=f'Max decimals for float values in sample rows; 17 keeps full float64 precision (default: {DEFAULT_DATA_DECIMALS})')
+    parser.add_argument('--stats-decimals', type=_non_negative_int,
+                        default=DEFAULT_STATS_DECIMALS,
+                        help='Max decimals for float statistics; values below 1 '
+                             f'keep {MIN_SIGNIFICANT_DIGITS} significant digits '
+                             f'(default: {DEFAULT_STATS_DECIMALS})')
+    parser.add_argument('--data-decimals', type=_non_negative_int,
+                        default=DEFAULT_DATA_DECIMALS,
+                        help='Max decimals for float values in sample rows; '
+                             'raise it to keep more digits '
+                             f'(default: {DEFAULT_DATA_DECIMALS})')
 
     # Exclusions
     parser.add_argument('--ignore-folders', nargs='+', default=[],
@@ -237,6 +243,8 @@ def setup_cli() -> Config:
         truncated_line_length=args.truncated_line_length,
         table_limit=args.table_limit,
         table_truncate=args.table_truncate,
+        stats_decimals=args.stats_decimals,
+        data_decimals=args.data_decimals,
         ignore_folders=set(args.ignore_folders) | CORE_IGNORES,
         ignore_files=set(args.ignore_files) | CORE_IGNORE_FILES,
         max_file_size=args.max_file_size,
@@ -250,6 +258,4 @@ def setup_cli() -> Config:
         stats_summary=args.stats_summary,
         env_keys=args.env_keys,
         budget=args.budget,
-        stats_decimals=args.stats_decimals,
-        data_decimals=args.data_decimals,
     )
