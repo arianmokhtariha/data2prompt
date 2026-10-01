@@ -81,7 +81,8 @@ def _cells_rendered(
     """Whether any table cell appears in the document body.
 
     Cells come from sample rows (absent under ``--schema-only`` and for empty
-    tables) or from the describe() values of a stats-summary schema block.
+    tables) or from the describe() values of a stats-summary schema block
+    (absent when the table has no data to describe, e.g. a header-only CSV).
     """
     for file_info in files_data:
         content = file_info['content']
@@ -91,7 +92,9 @@ def _cells_rendered(
         for table in content:
             if not schema_only and not table.df.empty:
                 return True
-            if stats_summary and table.schema is not None:
+            if (stats_summary and table.schema is not None
+                    and table.schema.describe_df is not None
+                    and not table.schema.describe_df.empty):
                 return True
     return False
 

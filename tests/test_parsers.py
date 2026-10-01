@@ -938,3 +938,34 @@ def test_process_csv_floats_keep_the_digits_written_in_the_file(
         "97.68560353337905",
         "13.436424411240122",
     ]
+
+
+def test_process_sql_sampling_notice_counts_data_rows_not_header(
+    tmp_path: Path,
+) -> None:
+    """The INSERT header line is not a row: with a bare 'INSERT ... VALUES'
+    header, 6 tuples and sample_size=3 keep 2 tuples beside the header."""
+    path = tmp_path / "dump.sql"
+    path.write_text(
+        "CREATE TABLE t (id int);\n"
+        "INSERT INTO t VALUES\n"
+        + "".join(f"({i}),\n" for i in range(1, 7)),
+        encoding="utf-8",
+    )
+    result = process_sql(path, sample_size=3)
+    assert "Showing random 2 of 6 rows" in result
+
+
+def test_process_sql_sampling_notice_counts_inline_first_row(
+    tmp_path: Path,
+) -> None:
+    """A header that already carries the first tuple is a data row."""
+    path = tmp_path / "dump.sql"
+    path.write_text(
+        "CREATE TABLE t (id int);\n"
+        "INSERT INTO t VALUES (1)\n"
+        + "".join(f", ({i})\n" for i in range(2, 7)),
+        encoding="utf-8",
+    )
+    result = process_sql(path, sample_size=3)
+    assert "Showing random 3 of 6 rows" in result

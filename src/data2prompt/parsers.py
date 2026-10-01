@@ -600,6 +600,11 @@ def process_notebook(
         )]
 
 
+def _is_bare_insert_header(line: str) -> bool:
+    """Whether a buffered SQL line is an ``INSERT ... VALUES`` header with no row."""
+    return line.strip().upper().endswith("VALUES")
+
+
 def process_sql(
     file_path: Union[str, Path],
     sample_size: int = DEFAULT_SQL_SAMPLE_SIZE,
@@ -652,11 +657,14 @@ def process_sql(
                 processed_lines.append(sampled_text)
                 if not sampled_text.endswith("\n"):
                     processed_lines.append("\n")
-                # "buffered rows" — the buffer includes the INSERT header line,
-                # so the count must not overclaim an exact data-row total.
+                # A bare "INSERT ... VALUES" header line holds no row; exclude
+                # it so the notice counts data rows only.
+                header_lines = int(_is_bare_insert_header(first_line))
+                shown_rows = len(sampled_rows) - header_lines
+                total_rows = len(table_data_buffer) - header_lines
                 processed_lines.append(
-                    f"-- [Table data truncated: Showing random {sample_size} of "
-                    f"{len(table_data_buffer)} buffered rows to save context] --\n"
+                    f"-- [Table data truncated: Showing random {shown_rows:,} of "
+                    f"{total_rows:,} rows to save context] --\n"
                 )
             else:
                 data_text = "".join(table_data_buffer)

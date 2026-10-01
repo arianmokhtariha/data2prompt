@@ -62,7 +62,8 @@ degrades the product.
    `config.env_keys` for the env case, since `--no-env-keys` changes what
    actually happens to `.env` files without changing `env_count`, and
    whether any table cell is rendered, for the cell-convention bullet, which
-   is absent under `--schema-only` without stats and for empty tables) and
+   is absent under `--schema-only` without stats, for empty tables and for
+   header-only files) and
    `_prune_preamble()` deletes
    every *inactive* segment's exact substring from a working copy of the
    preamble before it's spliced into the document. A codebase with zero

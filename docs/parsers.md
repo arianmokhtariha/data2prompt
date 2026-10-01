@@ -444,9 +444,10 @@ Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
 **Key Algorithm:**
 - First line (INSERT header) is always preserved
 - Remaining rows are randomly sampled; the truncation note reports
-  `random N of M buffered rows` — "buffered" because the buffer includes the
-  INSERT header line, so the count deliberately does not overclaim an exact
-  data-row total
+  `random N of M rows` with `:,` separators, counting data rows only: a bare
+  `INSERT ... VALUES` header line (no tuple on it) is excluded from both
+  numbers, while a header that already carries the first tuple counts as a
+  row
 - Secondary truncation ensures large sampled blocks don't exceed character limits
 
 **Schema-only mode:** when `config.schema_only` is set, `process_sql()` drops all buffered
@@ -868,7 +869,7 @@ Current notices:
 | `-- [Skipped: file.db is not a SQLite database (header check failed)] --` | `SQLiteParser` magic-byte sniff |
 | `-- [Note: database contains no user tables] --` | `process_sqlite` empty database |
 | `-- [N data row(s) omitted: schema-only] --` | `process_sql` under `--schema-only` |
-| `-- [Table data truncated: Showing random 15 of 200 buffered rows to save context] --` | `process_sql` sampling |
+| `-- [Table data truncated: Showing random 15 of 200 rows to save context] --` | `process_sql` sampling |
 | `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --` | `process_sql` line cap |
 | `-- [Output truncated: Showing first 40 lines] --` | notebook outputs |
 | `-- [Line truncated: showing first 1000 characters] --` | `truncate_long_lines` |

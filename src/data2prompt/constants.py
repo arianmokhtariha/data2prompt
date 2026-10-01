@@ -134,9 +134,10 @@ Model. Nothing in it was written by hand.
   are only a small random sample. A very large database table instead shows
   only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
   notice.
-- In table cells an empty cell is a missing value (null/NaN); `""` is an
-  empty string and a quoted blank such as `"  "` is whitespace-only text.
-  `↵` marks a line break inside a value and `\\|` a literal pipe.
+- In sample rows an empty cell is a missing value (null/NaN); in schema and
+  stats blocks an empty statistic means not applicable to that column. `""`
+  is an empty string and a quoted blank such as `"  "` is whitespace-only
+  text. `↵` marks a line break inside a value and `\\|` a literal pipe.
 - Lines of the form `-- [...] --` are notices inserted by the tool
   (sampling, truncation, omission, errors). They are NOT part of the
   original file content.
@@ -190,9 +191,10 @@ Reading conventions:
   shown are only a small random sample. A very large database table instead
   shows only its DDL and a small head sample, flagged by a
   -- [Large table: ...] -- notice.
-- In table cells an empty cell is a missing value (null/NaN); "" is an
-  empty string and a quoted blank such as "  " is whitespace-only text.
-  ↵ marks a line break inside a value and \\| a literal pipe.
+- In sample rows an empty cell is a missing value (null/NaN); in schema and
+  stats blocks an empty statistic means not applicable to that column. ""
+  is an empty string and a quoted blank such as "  " is whitespace-only
+  text. ↵ marks a line break inside a value and \\| a literal pipe.
 - Lines of the form -- [...] -- are notices inserted by the tool (sampling,
   truncation, omission, errors). They are NOT part of the original file.
 - Env files list variable names only; every value is replaced with
@@ -285,13 +287,15 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
     ),
     (
         'cells',
-        """- In table cells an empty cell is a missing value (null/NaN); `""` is an
-  empty string and a quoted blank such as `"  "` is whitespace-only text.
-  `↵` marks a line break inside a value and `\\|` a literal pipe.
+        """- In sample rows an empty cell is a missing value (null/NaN); in schema and
+  stats blocks an empty statistic means not applicable to that column. `""`
+  is an empty string and a quoted blank such as `"  "` is whitespace-only
+  text. `↵` marks a line break inside a value and `\\|` a literal pipe.
 """,
-        """- In table cells an empty cell is a missing value (null/NaN); "" is an
-  empty string and a quoted blank such as "  " is whitespace-only text.
-  ↵ marks a line break inside a value and \\| a literal pipe.
+        """- In sample rows an empty cell is a missing value (null/NaN); in schema and
+  stats blocks an empty statistic means not applicable to that column. ""
+  is an empty string and a quoted blank such as "  " is whitespace-only
+  text. ↵ marks a line break inside a value and \\| a literal pipe.
 """,
     ),
     (

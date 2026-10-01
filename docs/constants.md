@@ -273,8 +273,10 @@ syntax differs) across four parts:
 3. **Reading conventions** — dynamic backtick fencing, notebook cell / Excel
    sheet / SQLite table labeling (the latter with `CREATE TABLE` DDL in a
    fenced `sql` block / `<ddl>` element), schema blocks (full-dataset stats vs.
-   sampled rows), table-cell conventions (an empty cell is a missing
-   value; `""` is an empty string and a quoted blank is whitespace-only
+   sampled rows), table-cell conventions (in sample rows an empty cell is a
+   missing value, in schema and stats blocks an empty statistic means not
+   applicable to that column; `""` is an empty string and a quoted blank is
+   whitespace-only
    text; `↵` marks a line break inside a value; `\|` is a literal pipe), the `-- [...] --`
    tool-notice grammar, and env-value redaction.
 4. **Accuracy rules** — anti-hallucination guardrails: truncated/omitted

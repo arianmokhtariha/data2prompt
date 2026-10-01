@@ -24,6 +24,7 @@ from data2prompt.parsers import (
     build_table_schema,
     enforce_table_limit,
     flatten_ir,
+    process_csv,
     process_sql,
     render_sample_table,
     render_schema_block,
@@ -355,6 +356,51 @@ def test_cell_convention_bullet_follows_rendered_sample_rows(
         files_data=[{
             "path": "data/t.csv",
             "content": [TableIR(name="t.csv", df=df)],
+            "type": "CSV",
+            "tokens": 0,
+            "status": "Sampled",
+        }],
+        stats={"csv_count": 1},
+        config=config,
+    )
+    end_of_preamble = "</purpose>" if "<purpose>" in output else "# File Index"
+    preamble = output.split(end_of_preamble)[0]
+    assert (_CELL_BULLET in preamble) is expected
+    # Empty stat cells in schema blocks mean "not applicable", not "missing".
+    assert ("not applicable to that column" in preamble) is expected
+
+
+@pytest.mark.parametrize("generator", GENERATORS, ids=["markdown", "xml"])
+@pytest.mark.parametrize(
+    ("csv_text", "schema_only", "expected"),
+    [
+        ("a,b\n", False, False),
+        ("a,b\n1,2\n3,4\n", True, True),
+    ],
+    ids=["header-only-with-stats", "schema-only-with-stats"],
+)
+def test_cell_convention_bullet_follows_describe_values_from_real_csv(
+    generator: OutputGenerator,
+    tmp_path: Path,
+    csv_text: str,
+    schema_only: bool,
+    expected: bool,
+) -> None:
+    """A header-only CSV has a schema but no describe() values, so no cell is
+    rendered; --schema-only with stats still renders describe() values."""
+    csv_path = tmp_path / "t.csv"
+    csv_path.write_text(csv_text, encoding="utf-8")
+    config = _config()
+    config.stats_summary = True
+    config.schema_only = schema_only
+    output = generator.generate(
+        project_name="demo",
+        tree_text="data/t.csv",
+        files_data=[{
+            "path": "data/t.csv",
+            "content": process_csv(
+                csv_path, stats_summary=True, schema_only=schema_only
+            ),
             "type": "CSV",
             "tokens": 0,
             "status": "Sampled",

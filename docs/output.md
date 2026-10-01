@@ -147,7 +147,7 @@ dict already threaded into `generate()`, plus `cells` from `_cells_rendered()`
 | `excel` | `stats["excel_count"] > 0` |
 | `sqlite` | `stats["sqlite_count"] > 0` |
 | `tabular` | any of `csv_count`/`excel_count`/`parquet_count`/`feather_count`/`arrow_count`/`sqlite_count` > 0 |
-| `cells` | table cells are rendered: sample rows exist (`not schema_only` and a non-empty df) or a stats-summary schema block with describe() values is shown |
+| `cells` | table cells are rendered: sample rows exist (`not schema_only` and a non-empty df) or a stats-summary schema block carries non-empty describe() values (a header-only CSV has a schema but none, so it does not trigger) |
 | `env` | `stats["env_count"] > 0` **and** `env_keys_enabled` |
 
 `env` needs the extra `env_keys_enabled` condition (`config.env_keys`,
@@ -251,8 +251,11 @@ table with no alignment padding:
 an empty or whitespace-only string is quoted (`""`, `"  "`) so it cannot pass
 for a missing value, and values are never rounded. The same cell rules apply to
 describe() values in the schema block. A `cells`-triggered preamble bullet
-teaches these conventions and is emitted only when table cells are actually
-rendered (not under `--schema-only` without stats, and not for empty tables).
+teaches these conventions (in sample rows an empty cell is a missing value; in
+schema and stats blocks an empty statistic means not applicable to that column,
+e.g. `top`/`freq` for a numeric column) and is emitted only when table cells
+are actually rendered (not under `--schema-only` without stats, and not for
+empty tables or header-only files).
 When a `Config` is given, `config.table_limit` /
 `config.table_truncate` cap the **rows only**, cut at a row boundary; the
 header and footer notes are always kept (see
