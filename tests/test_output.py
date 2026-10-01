@@ -645,7 +645,45 @@ def test_preamble_teaches_execution_state_notice_when_notebooks_scanned(
         files_data=_sample_files(), stats={"notebook_count": 1},
     )
     assert "-- [Execution state: ...] --" in output
-    assert "hidden kernel state" in output
+    assert "directly under" in output
+    assert "hidden kernel" in output
+    assert "-- [Output omitted: <mime types>] --" in output
+
+
+def test_preambles_do_not_call_every_shown_row_a_sample() -> None:
+    """A Full table shows every row, so no preamble copy may say the rows
+    are only a small random sample; they point at the Sample notice."""
+    copies = [SYSTEM_INSTRUCTIONS_MARKDOWN, SYSTEM_INSTRUCTIONS_XML]
+    for _, md_frag, xml_frag in PREAMBLE_OPTIONAL_SEGMENTS:
+        copies.extend([md_frag, xml_frag])
+    assert not any("only a small random sample" in copy for copy in copies)
+    assert "-- [Sample: ...] --" in SYSTEM_INSTRUCTIONS_MARKDOWN
+    assert "-- [Sample: ...] --" in SYSTEM_INSTRUCTIONS_XML
+
+
+@pytest.mark.parametrize("generator_cls", [MarkdownGenerator, XMLGenerator])
+def test_file_note_renders_under_the_file_header_not_as_a_cell(
+    generator_cls: type,
+) -> None:
+    """The execution-state notice is file-level: directly after the file
+    header, before the first cell, and no `Cell 0` / index="0" is invented."""
+    notice = "-- [Execution state: cells ran in order 2,1] --"
+    files = _notebook_files()
+    files[0]["file_note"] = notice
+
+    output = generator_cls().generate(
+        project_name="demo", tree_text="analysis.ipynb",
+        files_data=files, stats={},
+    )
+
+    marker = "# Files" if generator_cls is MarkdownGenerator else "<files>"
+    files_section = output.rsplit(marker, 1)[1]
+    lines = [line for line in files_section.splitlines() if line.strip()]
+    assert lines[0].startswith(("## File: analysis.ipynb", "<file "))
+    assert lines[1] == notice
+    assert files_section.count(notice) == 1
+    assert "Cell 0" not in output
+    assert 'index="0"' not in output
 
 
 def test_markdown_preamble_env_bullet_omitted_with_no_env_keys() -> None:

@@ -42,7 +42,8 @@ class OutputGenerator(ABC):
 ```
 
 `FileData` is a `TypedDict` defined in [`parsers.py`](parsers.md) describing a
-processed file (`path`, `content`, `type`, `tokens`, `status`); it replaces the
+processed file (`path`, `content`, `type`, `tokens`, `status`, plus the optional
+`file_note`); it replaces the
 former loosely-typed `Dict[str, Any]` and gives key-name safety across the
 main → output boundary. `stats` is a plain `Dict[str, int]` of running counts.
 
@@ -208,10 +209,13 @@ Jupyter Notebooks are rendered using [`NotebookCellIR`](../src/data2prompt/parse
 ````
 
 Cell outputs are displayed in text code blocks when present. A notebook whose
-saved run history is noteworthy opens with a `Cell 0 (markdown)` holding one
-`-- [Execution state: ...] --` notice (`<cell index="0">` in XML). The parser
-emits it as an ordinary `NotebookCellIR`, so both generators render it with no
-special case (see [parsers.md](parsers.md#execution-state-notice)).
+saved run history is noteworthy carries a file-level
+`-- [Execution state: ...] --` notice. It travels as `FileData["file_note"]`
+(from `ParserResult.file_note`), and both generators print it on its own line
+directly under the file header: after `## File: {path}` in Markdown, after the
+`<file ...>` opening tag in XML. It is not a cell, so cell numbering and counts
+stay exact (see [parsers.md](parsers.md#execution-state-notice)). Any file type
+can use the same slot; generators emit it only when present.
 
 #### Table Rendering
 

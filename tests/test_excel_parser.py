@@ -335,3 +335,34 @@ def test_excel_parser_one_failed_sheet_keeps_normal_status(
 
     assert result.status == "Extracted"
     assert "unreadable sheet" in (result.content[1].footer_note or "")
+
+
+# ---------------------------------------------------------------------------
+# Missing xlrd is a skipped file, not a broken one
+# ---------------------------------------------------------------------------
+
+def test_xls_without_xlrd_is_skipped_not_error(tmp_path: Path) -> None:
+    """The file is fine; an optional package is missing. Status must be a
+    Skipped variant (mirrors ArrowParser's pyarrow guard), without reading."""
+    path = tmp_path / "legacy.xls"
+    path.write_bytes(b"\xd0\xcf\x11\xe0 fake BIFF header")
+
+    with patch("data2prompt.parsers.importlib.util.find_spec", return_value=None), \
+            patch("data2prompt.parsers.process_excel") as read_excel:
+        result = ExcelParser().parse(path, _make_config())
+
+    read_excel.assert_not_called()
+    assert result.status == "Skipped (No xlrd)"
+    assert "xlrd" in result.content
+    assert result.stats_update == {}
+    assert result.tokens > 0
+
+
+def test_xlsx_is_unaffected_when_xlrd_is_missing(tmp_path: Path) -> None:
+    path = tmp_path / "modern.xlsx"
+    _write_workbook(path, {"A": [["x"], [1]]})
+
+    with patch("data2prompt.parsers.importlib.util.find_spec", return_value=None):
+        result = ExcelParser().parse(path, _make_config())
+
+    assert result.status == "Read"

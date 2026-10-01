@@ -41,6 +41,7 @@ DEFAULT_CSV_SAMPLE_SIZE = 15                # Controls the number of rows per cs
 DEFAULT_SQL_SAMPLE_SIZE = 15                # Controls the number of INSERT/data rows kept per table in SQL files.
 DEFAULT_SQL_MAX_LINES = 50                  # Caps the total number of non-data lines (comments, setup, etc.) in SQL files.
 DEFAULT_MAX_LINES = 40                      # Max lines of text output to keep per notebook cell.
+NOTEBOOK_NOTICE_LIST_LIMIT = 8              # Max items in each list of a notebook's execution-state notice; the rest become "…(+N more)".
 DEFAULT_MAX_SHEETS = 10                     # Max number of sheets to process in Excel files.
 DEFAULT_MAX_TABLES = 25                     # Max tables/views to process per SQLite database.
 DEFAULT_DB_FULL_SCAN_MAX_ROWS = 100_000     # Above this row count, tables are LIMIT-sampled instead of fully read.
@@ -122,11 +123,13 @@ Model. Nothing in it was written by hand.
   backticks when the content itself contains backticks; the fence length is
   chosen so the block never terminates early.
 - Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
-  each with a fenced source block and an optional **Outputs:** block. A
-  Cell 0 holding an `-- [Execution state: ...] --` notice means the saved
-  outputs may not match a clean top-to-bottom run: "run order" lists
-  execution counts in cell order, and missing counts mean cells were re-run
-  or deleted, so hidden kernel state is likely.
+  each with a fenced source block and an optional **Outputs:** block. An
+  `-- [Execution state: ...] --` notice directly under the file header means
+  the saved outputs may not match a clean top-to-bottom run: it names cell
+  numbers in the order the cells ran and cells never run, and says which
+  execution counts are missing (cells re-run or deleted, so hidden kernel
+  state is possible). An `-- [Output omitted: <mime types>] --` line in an
+  Outputs block marks an image, HTML or other non-text output left out.
 - Excel workbooks are split into sheets: `### Sheet {n}: {name} - {path}`,
   each closed by a `---` line.
 - SQLite databases are split into tables: `### Table {n}: {name} - {path}`,
@@ -135,7 +138,9 @@ Model. Nothing in it was written by hand.
 - Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
   schema block (row/column counts, dtypes, missing values, describe() stats).
   Schema statistics are computed on the FULL dataset; the data rows shown
-  are only a small random sample. A very large database table instead shows
+  may be only a random sample (flagged by a `-- [Sample: ...] --` notice) or
+  cut short (`-- [Table truncated: ...] --`); with no such notice every row
+  is shown. A very large database table instead shows
   only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
   notice.
 - In sample rows an empty cell is a missing value (null/NaN); in schema and
@@ -183,11 +188,13 @@ Reading conventions:
   tags as structural markers, not strict XML; content may legally contain
   <, >, and & characters. Attribute values ARE quoted and escaped.
 - Notebooks (.ipynb) are split into <cell path="..." index="..."
-  type="..."> elements holding <content> and optional <outputs>. A cell
-  with index="0" holding an -- [Execution state: ...] -- notice means the
-  saved outputs may not match a clean top-to-bottom run: "run order" lists
-  execution counts in cell order, and missing counts mean cells were re-run
-  or deleted, so hidden kernel state is likely.
+  type="..."> elements holding <content> and optional <outputs>. An
+  -- [Execution state: ...] -- notice directly under the <file> tag means
+  the saved outputs may not match a clean top-to-bottom run: it names cell
+  numbers in the order the cells ran and cells never run, and says which
+  execution counts are missing (cells re-run or deleted, so hidden kernel
+  state is possible). An -- [Output omitted: <mime types>] -- line in an
+  <outputs> element marks an image, HTML or other non-text output left out.
 - Excel workbooks are split into <sheet name="..." sheet_number="..."
   path="..."> elements.
 - SQLite databases are split into <table name="..." table_number="..."
@@ -196,7 +203,9 @@ Reading conventions:
 - Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
   <schema> block (row/column counts, dtypes, missing values, describe()
   stats). Schema statistics are computed on the FULL dataset; the data rows
-  shown are only a small random sample. A very large database table instead
+  shown may be only a random sample (flagged by a -- [Sample: ...] --
+  notice) or cut short (-- [Table truncated: ...] --); with no such notice
+  every row is shown. A very large database table instead
   shows only its DDL and a small head sample, flagged by a
   -- [Large table: ...] -- notice.
 - In sample rows an empty cell is a missing value (null/NaN); in schema and
@@ -241,18 +250,22 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
     (
         'notebooks',
         """- Notebooks (.ipynb) are split into cells: `### Cell {n} ({type}) - {path}`,
-  each with a fenced source block and an optional **Outputs:** block. A
-  Cell 0 holding an `-- [Execution state: ...] --` notice means the saved
-  outputs may not match a clean top-to-bottom run: "run order" lists
-  execution counts in cell order, and missing counts mean cells were re-run
-  or deleted, so hidden kernel state is likely.
+  each with a fenced source block and an optional **Outputs:** block. An
+  `-- [Execution state: ...] --` notice directly under the file header means
+  the saved outputs may not match a clean top-to-bottom run: it names cell
+  numbers in the order the cells ran and cells never run, and says which
+  execution counts are missing (cells re-run or deleted, so hidden kernel
+  state is possible). An `-- [Output omitted: <mime types>] --` line in an
+  Outputs block marks an image, HTML or other non-text output left out.
 """,
         """- Notebooks (.ipynb) are split into <cell path="..." index="..."
-  type="..."> elements holding <content> and optional <outputs>. A cell
-  with index="0" holding an -- [Execution state: ...] -- notice means the
-  saved outputs may not match a clean top-to-bottom run: "run order" lists
-  execution counts in cell order, and missing counts mean cells were re-run
-  or deleted, so hidden kernel state is likely.
+  type="..."> elements holding <content> and optional <outputs>. An
+  -- [Execution state: ...] -- notice directly under the <file> tag means
+  the saved outputs may not match a clean top-to-bottom run: it names cell
+  numbers in the order the cells ran and cells never run, and says which
+  execution counts are missing (cells re-run or deleted, so hidden kernel
+  state is possible). An -- [Output omitted: <mime types>] -- line in an
+  <outputs> element marks an image, HTML or other non-text output left out.
 """,
     ),
     (
@@ -280,14 +293,18 @@ PREAMBLE_OPTIONAL_SEGMENTS: List[Tuple[str, str, str]] = [
         """- Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
   schema block (row/column counts, dtypes, missing values, describe() stats).
   Schema statistics are computed on the FULL dataset; the data rows shown
-  are only a small random sample. A very large database table instead shows
+  may be only a random sample (flagged by a `-- [Sample: ...] --` notice) or
+  cut short (`-- [Table truncated: ...] --`); with no such notice every row
+  is shown. A very large database table instead shows
   only its DDL and a small head sample, flagged by a `-- [Large table: ...] --`
   notice.
 """,
         """- Tabular data files (CSV/Excel/Parquet/Feather/Arrow/SQLite) may include a
   <schema> block (row/column counts, dtypes, missing values, describe()
   stats). Schema statistics are computed on the FULL dataset; the data rows
-  shown are only a small random sample. A very large database table instead
+  shown may be only a random sample (flagged by a -- [Sample: ...] --
+  notice) or cut short (-- [Table truncated: ...] --); with no such notice
+  every row is shown. A very large database table instead
   shows only its DDL and a small head sample, flagged by a
   -- [Large table: ...] -- notice.
 """,

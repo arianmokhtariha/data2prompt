@@ -8,6 +8,8 @@ from typing import List, Optional
 import pandas as pd
 import pytest
 
+from data2prompt.constants import NOTEBOOK_NOTICE_LIST_LIMIT
+from data2prompt.utils import count_tokens
 from data2prompt.parsers import (
     CSVParser,
     NotebookParser,
@@ -22,6 +24,8 @@ from data2prompt.parsers import (
     truncate_long_lines,
     enforce_table_limit,
     flatten_ir,
+    fit_table_rows,
+    render_table_text,
     NotebookCellIR,
     TableIR,
 )
@@ -427,7 +431,7 @@ def test_process_notebook_missing_source_key_does_not_abort():
         path = tmp.name
 
     try:
-        cells = process_notebook(path)
+        cells, _ = process_notebook(path)
         # Both cells must be returned; the global error cell has number=0.
         assert len(cells) == 2
         assert all(c.number != 0 for c in cells)
@@ -452,7 +456,7 @@ def test_process_notebook_empty_cells_list_does_not_render_as_bare_list():
         path = tmp.name
 
     try:
-        cells = process_notebook(path)
+        cells, _ = process_notebook(path)
         assert len(cells) == 1
         assert "no cells" in cells[0].source
     finally:
@@ -493,12 +497,11 @@ def test_process_notebook_error_output_captured():
         path = tmp.name
 
     try:
-        cells = process_notebook(path)
-        # Cell 0 is the execution-state notice the error output triggers.
-        assert len(cells) == 2
-        assert cells[1].outputs is not None
-        assert "Error output" in cells[1].outputs
-        assert "ValueError: boom" in cells[1].outputs
+        cells, _ = process_notebook(path)
+        assert len(cells) == 1
+        assert cells[0].outputs is not None
+        assert "Error output" in cells[0].outputs
+        assert "ValueError: boom" in cells[0].outputs
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -617,7 +620,7 @@ def test_tool_notices_use_bracket_grammar() -> None:
         tmp.write("{not valid json")
         nb_path = tmp.name
     try:
-        cells = process_notebook(nb_path)
+        cells, _ = process_notebook(nb_path)
         assert cells[0].source.startswith("-- [")
         assert "*Error" not in cells[0].source
     finally:
@@ -675,7 +678,7 @@ def test_process_notebook_stream_output_captured() -> None:
         json.dump(nb, tmp)
         path = tmp.name
     try:
-        cells = process_notebook(path)
+        cells, _ = process_notebook(path)
         assert cells[0].outputs is not None
         assert "hello" in cells[0].outputs
     finally:
@@ -702,7 +705,7 @@ def test_process_notebook_execute_result_captured() -> None:
         json.dump(nb, tmp)
         path = tmp.name
     try:
-        cells = process_notebook(path)
+        cells, _ = process_notebook(path)
         assert cells[0].outputs is not None
         assert "2" in cells[0].outputs
     finally:
@@ -711,7 +714,8 @@ def test_process_notebook_execute_result_captured() -> None:
 
 
 def test_process_notebook_base64_display_data_skipped() -> None:
-    """display_data whose text/plain contains 'base64' must be silently dropped."""
+    """display_data whose text/plain contains 'base64' is dropped, but the
+    cell still says an output was omitted (never a silent drop)."""
     nb = {
         "nbformat": 4, "nbformat_minor": 5, "metadata": {},
         "cells": [{
@@ -729,8 +733,8 @@ def test_process_notebook_base64_display_data_skipped() -> None:
         json.dump(nb, tmp)
         path = tmp.name
     try:
-        cells = process_notebook(path)
-        assert cells[0].outputs is None
+        cells, _ = process_notebook(path)
+        assert cells[0].outputs == "-- [Output omitted: text/plain, image/png] --"
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -752,7 +756,7 @@ def test_process_notebook_stream_output_truncated_at_max_lines() -> None:
         json.dump(nb, tmp)
         path = tmp.name
     try:
-        cells = process_notebook(path, max_lines=5)
+        cells, _ = process_notebook(path, max_lines=5)
         assert cells[0].outputs is not None
         assert "Output truncated" in cells[0].outputs
         kept_lines = [l for l in cells[0].outputs.split("\n") if l.startswith("line")]
@@ -767,7 +771,7 @@ def test_process_notebook_malformed_json_returns_error_cell() -> None:
         tmp.write("{ this is not valid json }")
         path = tmp.name
     try:
-        cells = process_notebook(path)
+        cells, _ = process_notebook(path)
         assert len(cells) == 1
         assert cells[0].number == 0
         assert "Malformed" in cells[0].source or "Invalid" in cells[0].source
@@ -1076,6 +1080,8 @@ def _status_config(
     csv_sample_size: int = 15,
     schema_only: bool = False,
     max_lines: int = 40,
+    table_limit: int = 50_000,
+    table_truncate: int = 20_000,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         csv_sample_size=csv_sample_size,
@@ -1085,6 +1091,8 @@ def _status_config(
         max_lines=max_lines,
         line_length_threshold=4000,
         truncated_line_length=1000,
+        table_limit=table_limit,
+        table_truncate=table_truncate,
     )
 
 
@@ -1200,7 +1208,7 @@ def test_process_notebook_strips_ansi_from_traceback(tmp_path: Path) -> None:
     path = tmp_path / "nb.ipynb"
     _write_notebook(path, [_code_cell("f()", 1, [error])])
 
-    cells = process_notebook(path)
+    cells, _ = process_notebook(path)
 
     outputs = cells[-1].outputs or ""
     assert "\x1b" not in outputs
@@ -1209,9 +1217,10 @@ def test_process_notebook_strips_ansi_from_traceback(tmp_path: Path) -> None:
 
 
 def test_process_notebook_reports_execution_state(tmp_path: Path) -> None:
-    """Run order 1,5,2 + a never-run cell + missing counts 3-4 + an error:
-    one compact notice in a leading Cell 0, with cell numbers matching the
-    `Cell {n}` headers."""
+    """Out-of-order run + a never-run cell + missing counts + an error: one
+    compact file-level notice, cell numbers throughout (matching the
+    `Cell {n}` headers), counts only in the clause labeled as counts. No
+    pseudo-cell carries it."""
     error = {"output_type": "error", "ename": "ValueError", "evalue": "x",
              "traceback": ["ValueError: x"]}
     path = tmp_path / "nb.ipynb"
@@ -1223,15 +1232,27 @@ def test_process_notebook_reports_execution_state(tmp_path: Path) -> None:
         _code_cell("df.merge(other)", None),
     ])
 
-    cells = process_notebook(path)
+    cells, notice = process_notebook(path)
 
-    assert cells[0].number == 0
-    assert cells[0].source == (
-        "-- [Execution state: run order 1,5,2; cell 5 never run; "
-        "execution counts 3-4 missing (hidden state likely); "
+    assert notice == (
+        "-- [Execution state: cells ran in order 2,4,3; cell 5 never run; "
+        "execution counts 3-4 missing (hidden state possible); "
         "first error in cell 3: ValueError] --"
     )
-    assert [c.number for c in cells[1:]] == [1, 2, 3, 4, 5]
+    assert [c.number for c in cells] == [1, 2, 3, 4, 5]
+
+
+def test_execution_notice_orders_cells_not_counts(tmp_path: Path) -> None:
+    """Cell 2 ran first (count 1), then cell 3, then cell 1 (count 3): the
+    order is cell numbers `2,3,1`, never the raw counts `3,1,2`."""
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [
+        _code_cell("c", 3), _code_cell("a", 1), _code_cell("b", 2),
+    ])
+
+    _, notice = process_notebook(path)
+
+    assert notice == "-- [Execution state: cells ran in order 2-3,1] --"
 
 
 def test_process_notebook_execution_state_collapses_ranges(
@@ -1242,9 +1263,33 @@ def test_process_notebook_execution_state_collapses_ranges(
     path = tmp_path / "nb.ipynb"
     _write_notebook(path, [_code_cell(f"x{c}", c) for c in counts])
 
-    cells = process_notebook(path)
+    _, notice = process_notebook(path)
 
-    assert cells[0].source == "-- [Execution state: run order 1-3,7-8,4-6] --"
+    assert notice == "-- [Execution state: cells ran in order 1-3,6-8,4-5] --"
+
+
+def test_execution_notice_lists_are_capped(tmp_path: Path) -> None:
+    """A 100-cell notebook must not produce a 800-character notice: each list
+    stops at NOTEBOOK_NOTICE_LIST_LIMIT items and says how many were cut."""
+    # Alternating pattern: every other cell never run, plus swapped pairs so
+    # the run order has many separate runs.
+    cells = []
+    for i in range(1, 101):
+        if i % 2 == 0:
+            cells.append(_code_cell(f"x{i}", None))
+        else:
+            cells.append(_code_cell(f"x{i}", 101 - i))
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, cells)
+
+    _, notice = process_notebook(path)
+
+    assert notice is not None
+    assert len(notice) < 400
+    limit = NOTEBOOK_NOTICE_LIST_LIMIT
+    assert notice.count("…(+") >= 2
+    # 50 never-run cells make 50 single-cell runs: limit shown, rest counted.
+    assert f"…(+{50 - limit} more) never run" in notice
 
 
 @pytest.mark.parametrize(
@@ -1260,7 +1305,170 @@ def test_process_notebook_no_execution_notice_when_unremarkable(
     path = tmp_path / "nb.ipynb"
     _write_notebook(path, [_code_cell("pass", c) for c in counts])
 
-    cells = process_notebook(path)
+    cells, notice = process_notebook(path)
 
+    assert notice is None
     assert all(c.number != 0 for c in cells)
-    assert not any("Execution state" in c.source for c in cells)
+
+
+# ---------------------------------------------------------------------------
+# Table character cap vs. inclusion status (one source of truth)
+# ---------------------------------------------------------------------------
+
+def _wide_csv(rows: int, cell_chars: int) -> bytes:
+    body = "".join(f"{i}," + "x" * cell_chars + "\n" for i in range(rows))
+    return ("id,blob\n" + body).encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    ("table_limit", "table_truncate", "expected_status", "expect_notice"),
+    [
+        # 8 rows x 9,000 chars blow the cap: the body is cut, so not Full.
+        (50_000, 20_000, "Sampled", True),
+        # Cap far above the text: every row shown, Full.
+        (500_000, 200_000, "Read", False),
+        # Over the limit but the kept-size budget still holds every row: no
+        # cut happens, so the file stays Full.
+        (1_000, 10_000_000, "Read", False),
+    ],
+    ids=["cut-at-render", "fits", "over-limit-but-nothing-cut"],
+)
+def test_csv_status_agrees_with_render_time_table_cap(
+    tmp_path: Path,
+    table_limit: int,
+    table_truncate: int,
+    expected_status: str,
+    expect_notice: bool,
+) -> None:
+    """The cap is applied when rendering, after the parser has decided the
+    status; the status must still match what the document body shows."""
+    path = tmp_path / "wide.csv"
+    path.write_bytes(_wide_csv(rows=8, cell_chars=9_000))
+    config = _status_config(table_limit=table_limit, table_truncate=table_truncate)
+
+    result = CSVParser().parse(path, config)
+    body = render_table_text(
+        result.content[0],
+        include_rows=True,
+        table_limit=table_limit,
+        table_truncate=table_truncate,
+    )
+
+    assert result.status == expected_status
+    assert ("Table truncated" in body) is expect_notice
+
+
+def test_fit_table_rows_is_what_enforce_table_limit_cuts_with() -> None:
+    """enforce_table_limit and the status check share one row-fit helper, so
+    the kept count it reports is exactly what the rendered text keeps."""
+    text = "\n".join(["| h |", "|---|"] + [f"| {'y' * 40} |" for _ in range(10)])
+
+    header, rows, kept = fit_table_rows(text, 200, 150, 2)
+    cut = enforce_table_limit(text, 200, 150, header_lines=2)
+
+    assert 0 < kept < len(rows) == 10
+    assert cut.split("\n")[: 2 + kept] == header + rows[:kept]
+    assert f"showing first {kept} of 10 rows" in cut
+
+
+# ---------------------------------------------------------------------------
+# Notebook outputs dropped without a text form leave a notice
+# ---------------------------------------------------------------------------
+
+def _single_output_notebook(tmp_path: Path, output: dict) -> Path:
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell("show()", 1, [output])])
+    return path
+
+
+def test_image_only_output_leaves_an_omitted_notice(tmp_path: Path) -> None:
+    """An image/HTML-only output used to vanish: no Outputs block at all, yet
+    the status said Cleaned. The cell now names what was left out."""
+    path = _single_output_notebook(tmp_path, {
+        "output_type": "display_data", "metadata": {},
+        "data": {"image/png": "iVBORw0K", "text/html": ["<img>"]},
+    })
+
+    cells, _ = process_notebook(path)
+
+    assert cells[0].outputs == "-- [Output omitted: image/png, text/html] --"
+    assert cells[0].trimmed is True
+
+
+def test_dropping_redundant_rich_data_beside_text_needs_no_notice(
+    tmp_path: Path,
+) -> None:
+    """text/plain was kept, so nothing the reader could use is missing."""
+    path = _single_output_notebook(tmp_path, {
+        "output_type": "execute_result", "metadata": {}, "execution_count": 1,
+        "data": {"text/plain": ["   a  b"], "text/html": ["<table>"]},
+    })
+
+    cells, _ = process_notebook(path)
+
+    assert cells[0].outputs == "a  b"
+    assert cells[0].trimmed is True
+
+
+def test_output_with_empty_data_is_not_reported_as_omitted(
+    tmp_path: Path,
+) -> None:
+    path = _single_output_notebook(tmp_path, {
+        "output_type": "display_data", "metadata": {}, "data": {},
+    })
+
+    cells, _ = process_notebook(path)
+
+    assert cells[0].outputs is None
+    assert cells[0].trimmed is False
+
+
+# ---------------------------------------------------------------------------
+# ANSI coverage (ECMA-48 CSI + OSC)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "noisy",
+    [
+        "\x1b[?25lhidden cursor\x1b[?25h",
+        "\x1b[38;5;208morange\x1b[0m",
+        "\x1b[2K\x1b[1Gredraw",
+        "\x1b]0;window title\x07shown",
+        "\x1b]8;;http://example.com\x1b\\shown\x1b]8;;\x1b\\",
+    ],
+    ids=["private-mode", "256-color", "erase-line", "osc-bel", "osc-hyperlink"],
+)
+def test_ansi_stripping_covers_csi_and_osc(tmp_path: Path, noisy: str) -> None:
+    path = _single_output_notebook(tmp_path, {
+        "output_type": "stream", "name": "stdout", "text": [noisy],
+    })
+
+    cells, _ = process_notebook(path)
+
+    assert "\x1b" not in (cells[0].outputs or "")
+    assert cells[0].trimmed is False  # stripping alone is not trimming
+
+
+def test_text_without_escape_is_never_treated_as_ansi(tmp_path: Path) -> None:
+    """Every pattern requires ESC: a literal `[1;31m` or `]0;x` stays."""
+    path = _single_output_notebook(tmp_path, {
+        "output_type": "stream", "name": "stdout",
+        "text": ["arr[1;31m] and ]0;x"],
+    })
+
+    cells, _ = process_notebook(path)
+
+    assert cells[0].outputs == "arr[1;31m] and ]0;x"
+
+
+def test_notebook_token_estimate_includes_the_file_note(tmp_path: Path) -> None:
+    """The note is printed in the document, so the per-file count (which the
+    budget ladder trusts) must include it."""
+    path = tmp_path / "nb.ipynb"
+    _write_notebook(path, [_code_cell("b", 2), _code_cell("a", 1)])
+
+    result = NotebookParser().parse(path, _status_config())
+
+    assert result.file_note is not None
+    cells_only, _ = count_tokens(flatten_ir(result.content))
+    assert result.tokens > cells_only

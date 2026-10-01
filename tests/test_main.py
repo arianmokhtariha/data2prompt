@@ -8,6 +8,7 @@ End-to-end _run() tests cover the terminal report's paths and the large-output
 warning.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -151,3 +152,40 @@ def test_large_output_warning_suggests_budget() -> None:
     messages = [call.args[0] for call in warning.call_args_list]
     assert any("--budget" in message for message in messages)
 
+
+
+@pytest.mark.parametrize("budget_args", [[], ["--budget", "200000"]])
+def test_notebook_execution_notice_survives_the_pipeline(
+    budget_args: List[str],
+) -> None:
+    """The file-level note travels parser -> files_data -> generator, also
+    through the budget path that rebuilds files_data."""
+    cells = [
+        {"cell_type": "code", "execution_count": count, "metadata": {},
+         "source": [f"x = {count}"], "outputs": []}
+        for count in (2, 1)
+    ]
+    notebook = {"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": cells}
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        (project / "nb.ipynb").write_text(json.dumps(notebook), encoding="utf-8")
+        _run_in(project, ["-o", "OUT", *budget_args])
+        document = (project / "OUT.md").read_text(encoding="utf-8")
+
+    files_section = document.rsplit("# Files", 1)[1].splitlines()
+    header_at = files_section.index("## File: nb.ipynb")
+    assert files_section[header_at + 1] == (
+        "-- [Execution state: cells ran in order 2,1] --"
+    )
+
+
+def test_missing_xlrd_shows_install_hint_panel() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        (project / "old.xls").write_bytes(b"\xd0\xcf\x11\xe0 fake")
+        with patch("data2prompt.parsers.importlib.util.find_spec", return_value=None):
+            with patch.object(ui, "print_warning_panel") as warning:
+                _run_in(project, ["-o", "OUT"])
+
+    messages = [call.args[0] for call in warning.call_args_list]
+    assert any("pip install xlrd" in message for message in messages)

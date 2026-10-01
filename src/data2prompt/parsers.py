@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import random
 import re
@@ -40,6 +41,7 @@ from data2prompt.constants import (
     DEFAULT_TABLE_TRUNCATED_SIZE,
     ENV_VALUE_PLACEHOLDER,
     GENERATION_FLAG,
+    NOTEBOOK_NOTICE_LIST_LIMIT,
     TABLE_CELL_NEWLINE_MARKER,
 )
 from data2prompt.utils import count_tokens, is_binary
@@ -106,15 +108,25 @@ class ParserResult:
     status: str
     stats_update: Dict[str, int] = field(default_factory=dict)
     skip_file: bool = False
+    # A notice about the file as a whole (not any one cell/table), rendered
+    # directly under the file header by both generators.
+    file_note: Optional[str] = None
 
 
-class FileData(TypedDict):
-    """A processed file handed from the orchestrator to an output generator."""
+class _FileDataRequired(TypedDict):
     path: str
     content: ParserContent
     type: str
     tokens: int
     status: str
+
+
+class FileData(_FileDataRequired, total=False):
+    """A processed file handed from the orchestrator to an output generator.
+
+    ``file_note`` is optional: absent means the file has no file-level notice.
+    """
+    file_note: Optional[str]
 
 
 class FileSummary(TypedDict):
@@ -333,6 +345,7 @@ def flatten_ir(
     stats_summary: bool = False,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
+    file_note: Optional[str] = None,
 ) -> str:
     """
     Flattens the Intermediate Representation (IR) into a string for token counting.
@@ -343,6 +356,8 @@ def flatten_ir(
     included when either flag is set, and data rows are dropped under ``schema_only``.
     ``table_limit``/``table_truncate`` apply the same sample-row cap as the
     generators, so the estimate counts the text the document carries.
+    ``file_note`` is the file-level notice the generators print under the
+    file header.
     """
     if isinstance(content, str):
         return content
@@ -351,7 +366,7 @@ def flatten_ir(
         return ""
 
     if isinstance(content[0], NotebookCellIR):
-        parts = []
+        parts = [file_note] if file_note else []
         for cell in content:
             parts.append(cell.source)
             if cell.outputs:
@@ -397,6 +412,32 @@ class BaseParser(Protocol):
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
         ...
 
+def fit_table_rows(
+    text: str, limit: int, truncate_to: int, header_lines: int
+) -> Tuple[List[str], List[str], int]:
+    """Split ``text`` into header lines and rows, and count the rows that fit.
+
+    Single source of truth for the table character cap: both the cut
+    (``enforce_table_limit``) and the inclusion status (``_rows_were_cut``)
+    ask this function. Text within ``limit`` characters keeps every row;
+    otherwise rows are kept while the kept text stays within ``truncate_to``
+    characters. Returns ``(header, rows, kept_row_count)``.
+    """
+    lines = text.rstrip("\n").split("\n")
+    header, rows = lines[:header_lines], lines[header_lines:]
+    if len(text) <= limit:
+        return header, rows, len(rows)
+
+    kept_length = len("\n".join(header))
+    kept_count = 0
+    for row in rows:
+        kept_length += len(row) + 1  # +1 for the joining newline
+        if kept_length > truncate_to:
+            break
+        kept_count += 1
+    return header, rows, kept_count
+
+
 def enforce_table_limit(
     text: str,
     limit: int,
@@ -415,19 +456,9 @@ def enforce_table_limit(
     no notice. ``noun`` names what the lines are (``"line"`` for raw SQL,
     whose lines include non-row text such as an ``INSERT`` header).
     """
-    if len(text) <= limit:
-        return text
-
-    lines = text.rstrip("\n").split("\n")
-    header, rows = lines[:header_lines], lines[header_lines:]
-    kept_length = len("\n".join(header))
-    kept_count = 0
-    for row in rows:
-        kept_length += len(row) + 1  # +1 for the joining newline
-        if kept_length > truncate_to:
-            break
-        kept_count += 1
-
+    header, rows, kept_count = fit_table_rows(
+        text, limit, truncate_to, header_lines
+    )
     if kept_count == len(rows):
         return text
 
@@ -538,9 +569,15 @@ def process_csv(
 # no static schema, so every field is read defensively with .get() + default.
 NotebookNode = Dict[str, Any]
 
-# CSI escape sequences (colors, cursor moves). IPython stores tracebacks with
-# them verbatim; to an LLM they are pure token noise.
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# ECMA-48 control sequences: CSI (colors, cursor moves; parameter,
+# intermediate and final bytes) and OSC (window titles, hyperlinks; BEL or ST
+# terminated). IPython stores tracebacks with them verbatim; to an LLM they are
+# pure token noise. Every alternative starts with ESC, so plain text is never
+# touched.
+_ANSI_ESCAPE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+)
 
 
 def _pluralize(noun: str, count: int) -> str:
@@ -577,9 +614,12 @@ def _render_notebook_output(
 ) -> Tuple[Optional[str], bool]:
     """Render one code-cell output as plain text.
 
-    Returns the text (``None`` when nothing textual is kept) and whether
-    anything was trimmed: a long line cut, lines clipped at ``max_lines``, or
-    non-text content (images, HTML, base64 payloads) dropped.
+    Returns the text (``None`` when the output holds nothing to show) and
+    whether anything was trimmed: a long line cut, lines clipped at
+    ``max_lines``, or non-text content (images, HTML, base64 payloads)
+    dropped. An output whose every representation was dropped is replaced by
+    an ``-- [Output omitted: <mime types>] --`` notice, so it never vanishes
+    silently; dropping only redundant rich data beside kept text needs none.
     """
     output_type = output.get("output_type")
 
@@ -591,11 +631,11 @@ def _render_notebook_output(
 
     if output_type in ("execute_result", "display_data"):
         data = output.get("data", {})
-        if "text/plain" not in data:
-            return None, bool(data)
-        text = "".join(data["text/plain"])
-        if "base64" in text:
-            return None, True
+        if not data:
+            return None, False
+        text = "".join(data.get("text/plain", []))
+        if "text/plain" not in data or "base64" in text:
+            return f"-- [Output omitted: {', '.join(data)}] --", True
         dropped_rich = any(mime != "text/plain" for mime in data)
         text = _ANSI_ESCAPE.sub("", text)
         text, cut = _cut_long_lines(text, line_threshold, truncate_to)
@@ -624,11 +664,17 @@ def _consecutive_runs(numbers: Sequence[int]) -> List[Tuple[int, int]]:
 
 
 def _format_runs(runs: Sequence[Tuple[int, int]]) -> str:
-    """Render runs compactly: ``[(1, 3), (7, 7)]`` → ``1-3,7``."""
-    return ",".join(
+    """Render runs compactly: ``[(1, 3), (7, 7)]`` → ``1-3,7``.
+
+    At most ``NOTEBOOK_NOTICE_LIST_LIMIT`` runs are shown; the rest collapse
+    into ``…(+N more)`` so a large notebook cannot bloat its notice.
+    """
+    shown = ",".join(
         str(first) if first == last else f"{first}-{last}"
-        for first, last in runs
+        for first, last in runs[:NOTEBOOK_NOTICE_LIST_LIMIT]
     )
+    hidden = len(runs) - NOTEBOOK_NOTICE_LIST_LIMIT
+    return f"{shown}…(+{hidden} more)" if hidden > 0 else shown
 
 
 def _missing_counts(counts: Sequence[int]) -> List[Tuple[int, int]]:
@@ -649,10 +695,11 @@ def _execution_state_notice(cells: Sequence[NotebookNode]) -> Optional[str]:
     order, code cells never run beside ones that ran, execution counts
     missing from the sequence (cells re-run or deleted, so the kernel held
     state the notebook no longer shows), or an error output. A notebook saved
-    without ever running carries no hidden state and gets no notice. Cell
-    numbers match the ``Cell {n}`` headers.
+    without ever running carries no hidden state and gets no notice. Every
+    cell reference is a cell number matching the ``Cell {n}`` headers; only
+    the clause labeled "execution counts" speaks of counts.
     """
-    counts: List[int] = []
+    ran: List[Tuple[int, int]] = []  # (execution count, cell number)
     never_run: List[int] = []
     first_error: Optional[str] = None
     for number, cell in enumerate(cells, 1):
@@ -661,7 +708,7 @@ def _execution_state_notice(cells: Sequence[NotebookNode]) -> Optional[str]:
         count = cell.get("execution_count")
         source = "".join(cell.get("source", []) or [])
         if isinstance(count, int) and count >= 1:
-            counts.append(count)
+            ran.append((count, number))
         elif source.strip():
             never_run.append(number)
         for output in cell.get("outputs", []):
@@ -669,12 +716,15 @@ def _execution_state_notice(cells: Sequence[NotebookNode]) -> Optional[str]:
                 error_name = output.get("ename", "Error")
                 first_error = f"first error in cell {number}: {error_name}"
 
-    if not counts:
+    if not ran:
         return None
 
+    counts = [count for count, _ in ran]
     details: List[str] = []
     if any(later <= earlier for earlier, later in zip(counts, counts[1:])):
-        details.append(f"run order {_format_runs(_consecutive_runs(counts))}")
+        cells_in_run_order = [number for _, number in sorted(ran)]
+        order = _format_runs(_consecutive_runs(cells_in_run_order))
+        details.append(f"cells ran in order {order}")
     if never_run:
         cells_label = _pluralize("cell", len(never_run))
         runs = _format_runs(_consecutive_runs(never_run))
@@ -685,7 +735,7 @@ def _execution_state_notice(cells: Sequence[NotebookNode]) -> Optional[str]:
         counts_label = _pluralize("count", missing_total)
         details.append(
             f"execution {counts_label} {_format_runs(gaps)} missing "
-            "(hidden state likely)"
+            "(hidden state possible)"
         )
     if first_error is not None:
         details.append(first_error)
@@ -700,11 +750,13 @@ def process_notebook(
     max_lines: int = DEFAULT_MAX_LINES,
     line_threshold: int = DEFAULT_LINE_LENGTH_THRESHOLD,
     truncate_to: int = DEFAULT_TRUNCATED_LINE_LENGTH
-) -> List[NotebookCellIR]:
+) -> Tuple[List[NotebookCellIR], Optional[str]]:
     """Parse a notebook into cells with cleaned, size-capped text outputs.
 
-    A leading Cell 0 carries the execution-state notice when the saved run
-    history is noteworthy (see ``_execution_state_notice``).
+    Returns the cells and a file-level execution-state notice (``None``
+    unless the saved run history is noteworthy, see
+    ``_execution_state_notice``). The notice is not a cell: it travels beside
+    the cells so every ``Cell {n}`` header is a real notebook cell.
     """
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -748,24 +800,16 @@ def process_notebook(
                 number=0,
                 type="markdown",
                 source="-- [Note: notebook contains no cells] --",
-            )]
+            )], None
 
-        notice = _execution_state_notice(raw_cells)
-        if notice is not None:
-            # Cell 0 is the file-level slot (as for the placeholders here),
-            # so every real cell keeps the number it has in the notebook.
-            cells_ir.insert(0, NotebookCellIR(
-                number=0, type="markdown", source=notice,
-            ))
-
-        return cells_ir
+        return cells_ir, _execution_state_notice(raw_cells)
     except json.JSONDecodeError:
         return [NotebookCellIR(
             number=0,
             type="markdown",
             source="-- [Error: Malformed Jupyter Notebook (Invalid JSON)] --",
             error=True,
-        )]
+        )], None
     except Exception as e:
         return [NotebookCellIR(
             number=0,
@@ -775,7 +819,7 @@ def process_notebook(
                 f"{_sanitize_error(e, Path(file_path))}] --"
             ),
             error=True,
-        )]
+        )], None
 
 
 def _is_bare_insert_header(line: str) -> bool:
@@ -1099,22 +1143,51 @@ def process_excel(
 
 # --- Inclusion status from the parse outcome ---
 
+def _rows_were_cut(table: TableIR, limit: int, truncate_to: int) -> bool:
+    """Whether the table character cap will cut this table's sample rows.
+
+    Asks ``fit_table_rows`` about the very text the generators render, so
+    the status cannot disagree with the ``-- [Table truncated: ...] --``
+    notice.
+    """
+    if table.df.empty:
+        return False
+    _, rows, kept_count = fit_table_rows(
+        render_sample_table(table.df),
+        limit,
+        truncate_to,
+        _SAMPLE_TABLE_HEADER_LINES,
+    )
+    return kept_count < len(rows)
+
+
 def _tabular_status(
-    tables: Sequence[TableIR], schema_only: bool, partial_status: str
+    tables: Sequence[TableIR],
+    schema_only: bool,
+    partial_status: str,
+    table_limit: int,
+    table_truncate: int,
 ) -> str:
     """Derive a tabular file's raw status from its tables' parse outcomes.
 
     ``Error`` when every table failed (an unreadable file is not a schema
     either, so this wins over ``--schema-only``). Otherwise ``Schema Only``
     under ``--schema-only``; ``partial_status`` (the parser's own sampled
-    status) when any rows, sheets or tables were left out or failed; and
-    ``Read`` (Full) when every row of every table is shown.
+    status) when any rows, sheets or tables were left out or failed, or the
+    table character cap (``table_limit``/``table_truncate``) cuts a table's
+    rows at render time; and ``Read`` (Full) when every row of every table
+    is shown.
     """
     if all(table.error for table in tables):
         return "Error"
     if schema_only:
         return "Schema Only"
-    if any(table.partial or table.error for table in tables):
+    if any(
+        table.partial
+        or table.error
+        or _rows_were_cut(table, table_limit, table_truncate)
+        for table in tables
+    ):
         return partial_status
     return "Read"
 
@@ -1157,25 +1230,32 @@ class CSVParser:
             content=content,
             tokens=tokens,
             type="CSV",
-            status=_tabular_status(content, config.schema_only, "Sampled"),
+            status=_tabular_status(
+                content,
+                config.schema_only,
+                "Sampled",
+                config.table_limit,
+                config.table_truncate,
+            ),
             stats_update={"csv_count": 1}
         )
 
 class NotebookParser:
     def parse(self, file_path: Path, config: 'Config') -> ParserResult:
-        content = process_notebook(
+        content, file_note = process_notebook(
             file_path,
             config.max_lines,
             config.line_length_threshold,
             config.truncated_line_length
         )
-        tokens, _ = count_tokens(flatten_ir(content))
+        tokens, _ = count_tokens(flatten_ir(content, file_note=file_note))
         return ParserResult(
             content=content,
             tokens=tokens,
             type="Notebook",
             status=_notebook_status(content),
-            stats_update={"notebook_count": 1}
+            stats_update={"notebook_count": 1},
+            file_note=file_note,
         )
 
 class SQLParser:
@@ -1209,6 +1289,26 @@ class ExcelParser:
         except ValueError:
             display_path = file_path.as_posix()
 
+        # Legacy .xls needs the optional xlrd engine. A missing optional
+        # package is not a broken file, so skip with an install hint instead
+        # of reporting a read error (mirrors ArrowParser's pyarrow guard).
+        if (
+            file_path.suffix.lower() == ".xls"
+            and importlib.util.find_spec("xlrd") is None
+        ):
+            note = (
+                f"-- [Skipped: {file_path.name} requires xlrd to read legacy "
+                ".xls files, which is not installed] --\n"
+            )
+            tokens, _ = count_tokens(note)
+            return ParserResult(
+                content=note,
+                tokens=tokens,
+                type="Excel",
+                status="Skipped (No xlrd)",
+                stats_update={},
+            )
+
         content = process_excel(
             file_path,
             display_path,
@@ -1230,7 +1330,13 @@ class ExcelParser:
             content=content,
             tokens=tokens,
             type=f"Excel ({sheet_count} {_pluralize('sheet', sheet_count)})",
-            status=_tabular_status(content, config.schema_only, "Extracted"),
+            status=_tabular_status(
+                content,
+                config.schema_only,
+                "Extracted",
+                config.table_limit,
+                config.table_truncate,
+            ),
             stats_update={"excel_count": 1, "excel_sheets_count": sheet_count}
         )
 
@@ -1365,7 +1471,13 @@ class ArrowParser:
             content=content,
             tokens=tokens,
             type=type_name,
-            status=_tabular_status(content, config.schema_only, "Sampled"),
+            status=_tabular_status(
+                content,
+                config.schema_only,
+                "Sampled",
+                config.table_limit,
+                config.table_truncate,
+            ),
             stats_update={stat_key: 1},
         )
 
@@ -1854,7 +1966,13 @@ class SQLiteParser:
             content=content,
             tokens=tokens,
             type=f"SQLite ({table_count} {_pluralize('table', table_count)})",
-            status=_tabular_status(content, config.schema_only, "Sampled"),
+            status=_tabular_status(
+                content,
+                config.schema_only,
+                "Sampled",
+                config.table_limit,
+                config.table_truncate,
+            ),
             stats_update={"sqlite_count": 1, "db_tables_count": table_count},
         )
 

@@ -87,6 +87,7 @@ _WARN_STATUSES = frozenset({
     "Redacted",
     "Skipped (Env)",
     "Skipped (No pyarrow)",
+    "Skipped (No xlrd)",
     "Omitted (Budget)",
 })
 
@@ -625,10 +626,10 @@ class UIHandler:
             name = Text(
                 label, style=UI_CHROME if label == "other" else UI_DATA
             )
-            if label == "Excel" and stats.get("excel_sheets_count", 0) > 0:
-                name.append(
-                    f" · {stats['excel_sheets_count']} sheets", style=UI_CHROME
-                )
+            sheet_count = stats.get("excel_sheets_count", 0)
+            if label == "Excel" and sheet_count > 0:
+                noun = "sheet" if sheet_count == 1 else "sheets"
+                name.append(f" · {sheet_count} {noun}", style=UI_CHROME)
             chart.add_row(
                 name,
                 f"×{count}",

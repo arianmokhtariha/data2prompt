@@ -145,7 +145,8 @@ def _run() -> None:
                 "content": result.content,
                 "type": result.type,
                 "tokens": result.tokens,
-                "status": result.status
+                "status": result.status,
+                "file_note": result.file_note,
             })
 
             if config.budget is not None:
@@ -268,6 +269,14 @@ def _run() -> None:
             "[bold]pyarrow[/bold] is not installed.\n"
             "[bold]For pip users:[/bold] pip install pyarrow\n"
             "[bold]For pipx users:[/bold] pipx inject data2prompt pyarrow"
+        )
+
+    if any(info.get("status") == "Skipped (No xlrd)" for info in processed_files_info):
+        ui.print_warning_panel(
+            "One or more legacy .xls files were skipped because "
+            "[bold]xlrd[/bold] is not installed.\n"
+            "[bold]For pip users:[/bold] pip install xlrd\n"
+            "[bold]For pipx users:[/bold] pipx inject data2prompt xlrd"
         )
 
     if file_size_kb > OUTPUT_SIZE_WARNING_KB:

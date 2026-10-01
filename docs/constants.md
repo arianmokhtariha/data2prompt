@@ -108,6 +108,7 @@ All default values are imported by [`cli.py`](../src/data2prompt/cli.py#L7) and 
 | `DEFAULT_SQL_SAMPLE_SIZE` | `15` | INSERT/data rows kept per SQL table |
 | `DEFAULT_SQL_MAX_LINES` | `50` | Non-data lines (comments, setup) cap in SQL files |
 | `DEFAULT_MAX_LINES` | `40` | Max lines of text output per notebook cell |
+| `NOTEBOOK_NOTICE_LIST_LIMIT` | `8` | Max items per list in a notebook's execution-state notice; the rest become `…(+N more)` (not a CLI option) |
 | `DEFAULT_MAX_SHEETS` | `10` | Excel sheets processed per workbook |
 | `DEFAULT_MAX_TABLES` | `25` | SQLite tables/views processed per database |
 | `DEFAULT_DB_FULL_SCAN_MAX_ROWS` | `100000` | SQLite tables above this are `LIMIT`-sampled (no full-table scan); at or below, read fully for exact stats |
@@ -273,9 +274,12 @@ syntax differs) across four parts:
 3. **Reading conventions** — dynamic backtick fencing, notebook cell / Excel
    sheet / SQLite table labeling (the latter with `CREATE TABLE` DDL in a
    fenced `sql` block / `<ddl>` element), the notebook
-   `-- [Execution state: ...] --` notice (what "run order" and missing
-   execution counts mean: hidden kernel state), schema blocks (full-dataset stats vs.
-   sampled rows), table-cell conventions (in sample rows an empty cell is a
+   `-- [Execution state: ...] --` notice under the file header (cells in the
+   order they ran, cells never run, missing execution counts: hidden kernel
+   state is possible) and the `-- [Output omitted: <mime types>] --` line for
+   dropped non-text outputs, schema blocks (full-dataset stats; the rows
+   shown may be a sample flagged by a `-- [Sample: ...] --` notice or cut
+   short by a `-- [Table truncated: ...] --` notice), table-cell conventions (in sample rows an empty cell is a
    missing value, in schema and stats blocks an empty statistic means not
    applicable to that column; `""` is an empty string and a quoted blank is
    whitespace-only

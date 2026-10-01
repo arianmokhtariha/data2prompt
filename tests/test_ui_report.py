@@ -18,8 +18,14 @@ unseeded randomness can creep back in) and the wordmark silhouette must
 survive the churn. spaced_caps guards the section headers' word gap.
 """
 
+import io
+
+import pytest
+from rich.console import Console
+
 from data2prompt.parsers import FileSummary
 from data2prompt.ui import (
+    UIHandler,
     bar_cells,
     bar_glyphs,
     cipher_mask,
@@ -64,6 +70,7 @@ def test_known_statuses_map_to_expected_severity() -> None:
         "Redacted",
         "Skipped (Env)",
         "Skipped (No pyarrow)",
+        "Skipped (No xlrd)",
     ):
         assert status_severity(status) == "warn", status
     assert status_severity("Error") == "error"
@@ -219,3 +226,23 @@ def test_composition_folds_overflow_into_other() -> None:
     assert [tokens for _, _, tokens in rows[:-1]] == [800, 700, 600, 500, 400]
     # Types 5, 6, 7 fold together: 300 + 200 + 100 tokens across 3 files.
     assert rows[-1] == ("other", 3, 600)
+
+
+@pytest.mark.parametrize(
+    ("sheet_count", "expected"), [(1, "1 sheet"), (3, "3 sheets")]
+)
+def test_composition_chart_pluralizes_excel_sheets(
+    sheet_count: int, expected: str
+) -> None:
+    """`Excel · 1 sheets` read as a typo in the terminal report."""
+    files = [{"name": "a.xlsx", "type": "Excel", "tokens": 100, "status": "Read"}]
+    chart = UIHandler()._composition_chart(
+        files, {"excel_sheets_count": sheet_count}
+    )
+    console = Console(file=io.StringIO(), width=100, force_terminal=False)
+    console.print(chart)
+
+    rendered = console.file.getvalue()
+    assert f"· {expected}" in rendered
+    if sheet_count == 1:
+        assert "1 sheets" not in rendered

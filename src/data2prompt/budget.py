@@ -134,6 +134,7 @@ def _materialize(
             "type": result.type,
             "tokens": result.tokens,
             "status": result.status,
+            "file_note": result.file_note,
         })
         for key, value in result.stats_update.items():
             stats[key] = stats.get(key, 0) + value

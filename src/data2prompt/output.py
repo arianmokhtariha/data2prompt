@@ -389,6 +389,8 @@ class MarkdownGenerator(OutputGenerator):
             display_path = _display_path(rel_path)
 
             lines.append(f"## File: {display_path}")
+            if file_info.get("file_note"):
+                lines.extend([file_info["file_note"], ""])
 
             if isinstance(content, list) and content and isinstance(content[0], NotebookCellIR):
                 # Render Notebook IR
@@ -561,6 +563,8 @@ class XMLGenerator(OutputGenerator):
                 f'type={quoteattr(file_info["type"])} '
                 f'status={quoteattr(resolve_inclusion_status(file_info["status"]))}>'
             )
+            if file_info.get("file_note"):
+                lines.append(file_info["file_note"])
 
             if isinstance(content, list) and content and isinstance(content[0], NotebookCellIR):
                 # Render Notebook IR to XML

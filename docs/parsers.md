@@ -200,6 +200,7 @@ class ParserResult:
     status: str
     stats_update: Dict[str, int] = field(default_factory=dict)
     skip_file: bool = False
+    file_note: Optional[str] = None
 ```
 
 Standardized output container containing:
@@ -209,6 +210,10 @@ Standardized output container containing:
 - **status**: Processing status (e.g., "Sampled", "Cleaned", "Truncated")
 - **stats_update**: Dictionary for aggregating statistics
 - **skip_file**: Flag to exclude file from output entirely
+- **file_note**: An optional notice about the file as a whole (not any one
+  cell or table). Today only notebooks set it (the execution-state notice).
+  Both generators print it on its own line directly under the file header,
+  and `flatten_ir(file_note=...)` counts it in the per-file token estimate
 
 ### FileData / FileSummary
 
@@ -216,13 +221,14 @@ Two `TypedDict`s standardize the dict payloads that cross module boundaries,
 replacing the former `Dict[str, Any]` annotations and giving key-name safety:
 
 ```python
-class FileData(TypedDict):
+class FileData(TypedDict):  # file_note is optional (total=False subclass)
     """A processed file handed from the orchestrator to an output generator."""
     path: str
     content: ParserContent
     type: str
     tokens: int
     status: str
+    file_note: Optional[str]   # ParserResult.file_note; absent or None = none
 
 class FileSummary(TypedDict):
     """A processed file's row in the final summary table rendered by the UI."""
@@ -250,6 +256,7 @@ def flatten_ir(
     stats_summary: bool = False,
     table_limit: Optional[int] = None,
     table_truncate: Optional[int] = None,
+    file_note: Optional[str] = None,
 ) -> str:
     """
     Flattens the Intermediate Representation (IR) into a string for token counting.
@@ -258,7 +265,8 @@ def flatten_ir(
 ```
 
 - **String content**: Returned as-is
-- **NotebookCellIR list**: Concatenates source and outputs
+- **NotebookCellIR list**: The file-level `file_note` (when given), then
+  each cell's source and outputs
 - **TableIR list**: Sub-section label, DDL and schema block (when gated in),
   then the notes and sample rows from [`render_table_text()`](#table-text-helpers),
   the same text the generators emit
@@ -424,17 +432,29 @@ Uses [`process_notebook()`](../src/data2prompt/parsers.py#L178) to:
      `execute_result`/`display_data` plain text, and `error` tracebacks
      (joined from the `traceback` list, prefixed with `-- [Error output] --`).
      Other MIME types (images, HTML, JSON) are dropped, and a `text/plain`
-     payload containing `base64` drops the whole output
-   - Strip ANSI escape sequences (`\x1b[...m` colors and other CSI codes)
-     from all output text. IPython stores colored tracebacks verbatim, and
-     the codes are pure token noise. Stripping them loses no content, so it
-     does not count as trimming
+     payload containing `base64` drops the whole output. An output whose
+     every representation was dropped (an image-only figure, a base64
+     payload) is replaced by `-- [Output omitted: image/png, text/html] --`
+     listing the dropped MIME types, so it never vanishes silently
+     (output-contract invariant 3). Dropping redundant rich data beside a
+     kept `text/plain` (a figure's `<Figure ...>` label with its PNG) needs
+     no notice, but still counts as trimming. An output with an empty `data`
+     dict holds nothing and is not reported
+   - Strip ANSI escape sequences from all output text, per ECMA-48: CSI
+     sequences (`ESC [` + parameter bytes `0-?` + intermediate bytes ` -/` +
+     a final byte `@-~`: colors, cursor moves, private modes such as
+     `ESC[?25l`) and OSC sequences (`ESC ]` ... terminated by BEL or
+     `ESC \`: window titles, hyperlinks). Every pattern starts with ESC, so
+     a literal `[1;31m` in plain text is never touched. IPython stores
+     colored tracebacks verbatim, and the codes are pure token noise.
+     Stripping them loses no content, so it does not count as trimming
    - Apply max_lines limit per output block (`_clip_lines()`)
    - Record `trimmed=True` on the cell when a long line was cut, an output
      was clipped, or content was dropped
-3. Prepend a **Cell 0 execution-state notice** when the saved run history is
-   noteworthy (`_execution_state_notice()`, see below)
-4. Return a list of `NotebookCellIR` objects. A notebook with a valid but
+3. Compute the **execution-state notice** when the saved run history is
+   noteworthy (`_execution_state_notice()`, see below). It is not a cell
+4. Return `(cells, file_note)`: the list of `NotebookCellIR` objects and the
+   notice (or `None`). A notebook with a valid but
    empty `"cells": []` list returns a single placeholder cell
    (`-- [Note: notebook contains no cells] --`) instead of an empty list —
    an empty `ParserContent` list would fall through `output.py`'s
@@ -453,27 +473,37 @@ the notebook could not be read, and otherwise `Read` (Full). See
 bugs: cells run out of order, cells never run, or cells re-run or deleted so
 the kernel held state the saved notebook no longer shows.
 `_execution_state_notice()` reads the code cells' counts and, only when
-something is noteworthy, returns one compact line that `process_notebook()`
-places in a leading `NotebookCellIR(number=0, type="markdown")`:
+something is noteworthy, returns one compact line. `process_notebook()`
+returns it beside the cells, `ParserResult.file_note` carries it, and both
+generators print it on its own line directly under the file header (after
+`## File: {path}` in Markdown, after the `<file ...>` tag in XML), before the
+first cell. It is deliberately **not** a cell: an earlier design put it in a
+pseudo "Cell 0 (markdown)", which claimed a markdown cell the notebook does not
+have and made cell counts come out one too high.
 
 ```
--- [Execution state: run order 1,5,2; cell 5 never run; execution counts 3-4 missing (hidden state likely); first error in cell 3: ValueError] --
+-- [Execution state: cells ran in order 1,3,2; cell 4 never run; execution counts 3-4 missing (hidden state possible); first error in cell 3: ValueError] --
 ```
 
 | Part | Emitted when |
 |---|---|
-| `run order ...` | executed code cells' counts, in cell order, are not strictly increasing. Consecutive stretches collapse to ranges (`1-3,7-8,4-6`) |
+| `cells ran in order ...` | executed code cells' counts, in cell order, are not strictly increasing. The value is the cell numbers sorted by execution count (the order the cells actually ran). Consecutive stretches collapse to ranges (`1-3,6-8,4-5`) |
 | `cell(s) N never run` | a code cell with non-blank source has no count while others do |
-| `execution count(s) A-B missing (hidden state likely)` | numbers in `1..max(count)` appear on no cell: those runs belong to re-run or deleted cells |
+| `execution count(s) A-B missing (hidden state possible)` | numbers in `1..max(count)` appear on no cell: those runs belong to re-run or deleted cells |
 | `first error in cell N: {ename}` | a code cell holds an `error` output |
 
-Cell numbers match the `Cell {n}` headers. A notebook with no executed code
-cell (never run, or saved with outputs cleared) carries no hidden state and
-gets no notice, and so does a clean top-to-bottom run. The notice appears only
-when there is something to report. Cell 0 is the file-level slot the error
-and empty-notebook placeholders already use, so every real cell keeps its
-own number. The meaning is taught in the notebooks bullet of both preambles
-(`PREAMBLE_OPTIONAL_SEGMENTS`, trigger `notebooks`).
+Every cell reference is a **cell number** matching the `Cell {n}` headers;
+raw execution counts appear only in the clause explicitly labeled
+`execution counts`, so the two numbering systems are never mixed in one list.
+Each list is capped at `NOTEBOOK_NOTICE_LIST_LIMIT` (8) items, where an item
+is one collapsed run (`4`, `6-8`); the rest become `…(+N more)`, so a 100-cell
+notebook cannot produce an 800-character notice. A notebook with no executed
+code cell (never run, or saved with outputs cleared) carries no hidden state
+and gets no notice, and so does a clean top-to-bottom run. The notice appears
+only when there is something to report. The error and empty-notebook
+placeholders keep their `number=0` cell: they stand in for absent cells, not
+for a file-level remark. The meaning is taught in the notebooks bullet of both
+preambles (`PREAMBLE_OPTIONAL_SEGMENTS`, trigger `notebooks`).
 
 **Error Handling:**
 - JSON decode errors → Single error cell with malformed notebook message
@@ -596,10 +626,17 @@ at workbook level in the archive, so attribution is workbook-level).
 #### Legacy `.xls` files
 
 `pd.ExcelFile` selects the engine lazily; legacy `.xls` needs the optional
-`xlrd` package. When it is not installed, pandas raises `ImportError` and the
-parser returns a single `TableIR` with an actionable note
-(`-- [Skipped: reading legacy .xls files requires the optional 'xlrd' package
-(pip install xlrd)] --`) instead of a stack-trace error. (Previously `.xls` was
+`xlrd` package. Like `ArrowParser`'s pyarrow guard, `ExcelParser.parse()`
+checks first (`.xls` plus `importlib.util.find_spec("xlrd")`): when xlrd is
+missing the file is **skipped, not broken**. The result is a short inline note
+(`-- [Skipped: old.xls requires xlrd to read legacy .xls files, which is not
+installed] --`), `type="Excel"`, raw status `Skipped (No xlrd)` (folded into
+`Skipped` by the `Skipped (` prefix rule, a warn status in the terminal
+report) and no stats update. The TUI shows a warning panel with the pip / pipx
+install commands. `process_excel()` keeps its own `ImportError` handler (a
+single `TableIR` with the `reading legacy .xls files requires the optional
+'xlrd' package` note, `error=True`) as a fallback for an engine that fails to
+import despite being found. (Previously `.xls` was
 routed through `openpyxl`, which cannot read the BIFF format at all — every
 `.xls` file produced a generic read error.)
 
@@ -613,8 +650,9 @@ to the `ParserRegistry`, `budget.py`'s `EXTS_TABULAR`, and `main.py`'s
 - Empty sheets → Note indicating visual dashboard or empty
 - Sheet read errors → Empty DataFrame with sanitized error message (`error=True`)
 - Workbook open errors → single `TableIR` with sanitized error note
-  (`error=True`; this includes the missing-`xlrd` note, since the file cannot
-  be read either way)
+  (`error=True`; this includes the `process_excel` fallback for an engine that
+  fails to import. A plainly missing `xlrd` never gets this far: see
+  [Legacy `.xls` files](#legacy-xls-files))
 - `--max-sheets 0` → a standalone placeholder `TableIR` carrying the
   `-- [Workbook truncated: Only first 0 sheets processed] --` note, not an
   empty list (see step 3 above)
@@ -857,15 +895,24 @@ the process functions set on the IR (`TableIR.partial` / `TableIR.error`,
 not by string-matching the notice text. All outcomes map onto existing raw
 statuses in `INCLUSION_STATUS_MAP`, so no new vocabulary is involved.
 
-`_tabular_status(tables, schema_only, partial_status)` (CSV, Excel, Arrow,
-SQLite), evaluated in order:
+`_tabular_status(tables, schema_only, partial_status, table_limit,
+table_truncate)` (CSV, Excel, Arrow, SQLite), evaluated in order:
 
 | Outcome | Raw status | Index status |
 |---|---|---|
 | every table/sheet has `error` (unreadable file) | `Error` | Error |
 | `--schema-only` | `Schema Only` | Schema Only |
-| any table `partial` or `error` (sampled rows, a head sample, a sheet/table cap, or a failed sibling) | `partial_status`: `Sampled` (CSV/Arrow/SQLite), `Extracted` (Excel) | Sampled |
+| any table `partial` or `error` (sampled rows, a head sample, a sheet/table cap, or a failed sibling), **or** the table character cap cuts a table's rows at render time | `partial_status`: `Sampled` (CSV/Arrow/SQLite), `Extracted` (Excel) | Sampled |
 | every row of every table shown | `Read` | Full |
+
+The character cap (`--table-limit` / `--table-truncate`) is applied when the
+document is rendered, after the parser has set its flags, so the status asks
+the same question the renderer does. `_rows_were_cut(table, limit, truncate_to)`
+renders the table's sample rows and calls `fit_table_rows()`, the pure helper
+that `enforce_table_limit()` itself cuts with (see
+[Table Size Enforcement](#table-size-enforcement)); there is one piece of
+length arithmetic, so an 8-row CSV with 9,000-character cells can no longer be
+labeled `Full` while its body says "Table truncated".
 
 `Error` is checked before `Schema Only` deliberately: an unreadable file shows
 only an error note, which is not a schema either. A file where some sheets or
@@ -921,6 +968,11 @@ def enforce_table_limit(
     """Cap an oversized block of table rows at the last row that fits."""
 ```
 
+- The row-fit arithmetic lives in the pure helper
+  `fit_table_rows(text, limit, truncate_to, header_lines) -> (header, rows,
+  kept_row_count)`. `enforce_table_limit()` cuts with it, and
+  `_rows_were_cut()` uses it to set the inclusion status, so the two cannot
+  disagree.
 - Text of at most `limit` characters is returned unchanged.
 - Otherwise it works in **whole lines** (each line is one row): the first
   `header_lines` lines are always kept, then rows while the kept text stays
@@ -1004,7 +1056,8 @@ Current notices:
 | `-- [Output truncated: Showing first 40 lines] --` | notebook `stream`/`error` outputs (`_clip_lines`) |
 | `-- [Data preview truncated: Showing first 40 lines] --` | notebook `execute_result`/`display_data` outputs |
 | `-- [Error output] --` | prefix of a notebook `error` output (ANSI codes stripped) |
-| `-- [Execution state: run order 1,5,2; cell 5 never run; ...] --` | `process_notebook` Cell 0, only when the run history is noteworthy (see [Execution-state notice](#execution-state-notice)) |
+| `-- [Execution state: cells ran in order 1,3,2; cell 4 never run; ...] --` | `process_notebook` file-level note under the file header, only when the run history is noteworthy (see [Execution-state notice](#execution-state-notice)) |
+| `-- [Output omitted: image/png, text/html] --` | notebook `execute_result`/`display_data` output with no kept text representation (image-only or base64 payload) |
 | `-- [Line truncated: showing first 1000 characters] --` | `truncate_long_lines` |
 | `-- [Table truncated: showing first 4 of 15 rows; the table exceeded 50,000 characters] --` | `enforce_table_limit` (rendered sample rows; says `lines` for SQL data blocks) |
 | `-- [File truncated: Showing first 10KB ...] --` | `DefaultParser` size cap |
@@ -1012,6 +1065,7 @@ Current notices:
 | `-- [Content skipped: (.png) files are excluded by exclusion rules] --` | `process_target_file` (main.py) |
 | `-- [Env file skipped (--no-env-keys): content not included] --` | `EnvParser` |
 | `-- [Skipped: file.parquet requires pyarrow, which is not installed] --` | `ArrowParser` |
+| `-- [Skipped: old.xls requires xlrd to read legacy .xls files, which is not installed] --` | `ExcelParser` |
 | `-- [Error: Malformed Jupyter Notebook (Invalid JSON)] --` | `process_notebook` |
 | `-- [Note: notebook contains no cells] --` | `process_notebook` on a valid, genuinely empty `"cells": []` notebook |
 | `-- [Error reading CSV/SQL/Excel/DB/...: message] --` | error paths (sanitized); `DB` covers both a connection-open failure and a database that passes the magic-byte sniff but fails on the discovery query |
@@ -1118,6 +1172,7 @@ file from the parse outcome (see [Inclusion Status](#inclusion-status)):
 | `Redacted` | A `.env` file rendered as variable names with redacted values |
 | `Skipped (Env)` | A `.env` file skipped entirely (`--no-env-keys`) |
 | `Skipped (No pyarrow)` | A Parquet / Feather / Arrow file skipped because pyarrow is not installed |
+| `Skipped (No xlrd)` | A legacy `.xls` file skipped because xlrd is not installed |
 
 These statistics feed into the UI progress reporting system.
 

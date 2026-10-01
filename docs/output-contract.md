@@ -98,7 +98,11 @@ degrades the product.
    sample), and (c) surface an honest status in the File Index. Honest works
    both ways: a status is derived from what the parse actually did (an
    unreadable file is `Error`, a file shown in full is `Full`), never
-   hard-coded per parser. See [parsers.md § Inclusion Status](parsers.md#inclusion-status).
+   hard-coded per parser. That includes cuts made later, at render time:
+   the table character cap is part of the status decision, not an
+   afterthought. Content dropped without a text form (a notebook's image-only
+   output) leaves a `-- [Output omitted: ...] --` notice rather than
+   vanishing. See [parsers.md § Inclusion Status](parsers.md#inclusion-status).
    A file that appears in the scan but is not rendered must still appear in
    the index (status `Omitted`) — nothing silently vanishes.
 

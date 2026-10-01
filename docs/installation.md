@@ -71,6 +71,11 @@ checks for the import first and degrades to a
 `-- [Skipped: <name> requires pyarrow, ...] --` notice, listing the file in the
 File Index with the status `Skipped (No pyarrow)` (see [parsers.md](parsers.md)).
 
+Legacy `.xls` workbooks need the optional `xlrd` package the same way
+(`pip install xlrd`, or `pipx inject data2prompt xlrd`). Without it the file is
+listed as `Skipped` (raw status `Skipped (No xlrd)`) with an install hint, not
+reported as a read error.
+
 ## Installing from source
 
 The commands are the same on Windows, Linux, and macOS.

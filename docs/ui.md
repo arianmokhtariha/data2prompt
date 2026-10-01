@@ -251,7 +251,7 @@ Section by section:
   equals the percent column (one cell = 2% at the cap) · token sum ·
   percent of all file tokens.
   Row selection is the pure `summarize_composition()` (below). The Excel
-  row is annotated with the total sheet count from `stats`. Falls back to
+  row is annotated with the total sheet count from `stats` ("1 sheet", "7 sheets"). Falls back to
   a dim "nothing tokenized" note if no file contributed tokens.
 - **ATTENTION** — badge-counted items from `_attention_line()` driven by the
   `_ATTENTION_SPECS` table (truncated, binary skipped, excluded, env
@@ -390,7 +390,8 @@ def spaced_caps(title: str) -> str: ...
   using the `_OK_STATUSES` / `_WARN_STATUSES` sets. **Unknown statuses return
   `"error"`** so a future parser status can never render as silently fine.
   `_WARN_STATUSES` includes `"Omitted (Budget)"` (added alongside `Redacted`,
-  `Skipped (Env)`, `Skipped (No pyarrow)`) — a `--budget` run's omitted files
+  `Skipped (Env)`, `Skipped (No pyarrow)`, `Skipped (No xlrd)`) — a
+  `--budget` run's omitted files
   render as a yellow warn status in the HEAVIEST PAYLOADS table, never as the
   red unknown-status error channel.
 - `select_report_rows()` returns the `REPORT_TOP_FILES` (10) token-heaviest
