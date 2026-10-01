@@ -5,7 +5,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
-    List, Union, Dict, Protocol, Optional, Sequence, TypedDict, TYPE_CHECKING
+    List, Union, Dict, Protocol, Optional, Sequence, Set, TypedDict, TYPE_CHECKING
 )
 
 if TYPE_CHECKING:
@@ -605,6 +605,42 @@ def _is_bare_insert_header(line: str) -> bool:
     return line.strip().upper().endswith("VALUES")
 
 
+def _data_row_indices(buffer: List[str]) -> List[int]:
+    """Return the indices of buffered SQL lines that hold data rows.
+
+    A bare ``INSERT ... VALUES`` header is statement structure, not a row;
+    every other buffered line (including a one-row ``INSERT``) is a row.
+    """
+    return [
+        index for index, line in enumerate(buffer)
+        if not _is_bare_insert_header(line)
+    ]
+
+
+def _choose_lines_to_keep(
+    buffer: List[str],
+    row_indices: List[int],
+    sample_size: int,
+    rng: random.Random,
+) -> Set[int]:
+    """Pick the buffer lines to show when there are more rows than the sample.
+
+    Keeps every bare header and line 0 (so the statement keeps its opener),
+    then fills up to ``sample_size`` shown rows with a seeded random sample.
+    """
+    keep = {
+        index for index, line in enumerate(buffer)
+        if _is_bare_insert_header(line)
+    }
+    keep.add(0)
+
+    shown_rows = 1 if 0 in row_indices else 0
+    candidates = [index for index in row_indices if index != 0]
+    slots = max(0, min(sample_size - shown_rows, len(candidates)))
+    keep.update(rng.sample(candidates, slots))
+    return keep
+
+
 def process_sql(
     file_path: Union[str, Path],
     sample_size: int = DEFAULT_SQL_SAMPLE_SIZE,
@@ -631,40 +667,37 @@ def process_sql(
             if not table_data_buffer:
                 return
 
+            row_indices = _data_row_indices(table_data_buffer)
+
             # Schema-only: drop the buffered data rows, leaving just a note.
             if schema_only:
                 processed_lines.append(
-                    f"-- [{len(table_data_buffer)} data row(s) omitted: schema-only] --\n"
+                    f"-- [{len(row_indices)} data row(s) omitted: schema-only] --\n"
                 )
                 table_data_buffer.clear()
                 return
 
-            if len(table_data_buffer) > sample_size:
-                # Always keep the first line (usually the INSERT header)
-                first_line = table_data_buffer[0]
-                
-                # Sample from the rest of the buffer, clamping to a valid range.
-                n_extra = max(0, min(sample_size - 1, len(table_data_buffer) - 1))
-                rest_indices = sorted(rng.sample(range(1, len(table_data_buffer)), n_extra))
-                sampled_rows = [first_line] + [table_data_buffer[idx] for idx in rest_indices]
-                sampled_text = "".join(sampled_rows)
-                
+            if len(row_indices) > sample_size:
+                keep = _choose_lines_to_keep(
+                    table_data_buffer, row_indices, sample_size, rng
+                )
+                sampled_text = "".join(
+                    line for index, line in enumerate(table_data_buffer)
+                    if index in keep
+                )
+
                 # Apply secondary truncation if the sampled block is still too large
                 sampled_text = enforce_table_limit(
                     sampled_text, table_limit, table_truncate, noun="line"
                 )
-                
+
                 processed_lines.append(sampled_text)
                 if not sampled_text.endswith("\n"):
                     processed_lines.append("\n")
-                # A bare "INSERT ... VALUES" header line holds no row; exclude
-                # it so the notice counts data rows only.
-                header_lines = int(_is_bare_insert_header(first_line))
-                shown_rows = len(sampled_rows) - header_lines
-                total_rows = len(table_data_buffer) - header_lines
+                shown_rows = len(keep.intersection(row_indices))
                 processed_lines.append(
                     f"-- [Table data truncated: Showing random {shown_rows:,} of "
-                    f"{total_rows:,} rows to save context] --\n"
+                    f"{len(row_indices):,} rows to save context] --\n"
                 )
             else:
                 data_text = "".join(table_data_buffer)

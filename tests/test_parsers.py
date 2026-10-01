@@ -940,32 +940,123 @@ def test_process_csv_floats_keep_the_digits_written_in_the_file(
     ]
 
 
-def test_process_sql_sampling_notice_counts_data_rows_not_header(
-    tmp_path: Path,
-) -> None:
-    """The INSERT header line is not a row: with a bare 'INSERT ... VALUES'
-    header, 6 tuples and sample_size=3 keep 2 tuples beside the header."""
+def _write_sql(tmp_path: Path, body: str) -> Path:
+    """Write a one-table SQL dump and return its path."""
     path = tmp_path / "dump.sql"
-    path.write_text(
-        "CREATE TABLE t (id int);\n"
-        "INSERT INTO t VALUES\n"
-        + "".join(f"({i}),\n" for i in range(1, 7)),
-        encoding="utf-8",
-    )
-    result = process_sql(path, sample_size=3)
-    assert "Showing random 2 of 6 rows" in result
+    path.write_text("CREATE TABLE t (id int);\n" + body, encoding="utf-8")
+    return path
 
 
-def test_process_sql_sampling_notice_counts_inline_first_row(
+def _shown_tuples(result: str) -> list[str]:
+    """Return the row-tuple lines kept in the processed SQL output."""
+    return [ln for ln in result.splitlines() if ln.lstrip(", ").startswith("(")]
+
+
+def test_process_sql_bare_header_with_exactly_sample_size_rows_keeps_all(
     tmp_path: Path,
 ) -> None:
-    """A header that already carries the first tuple is a data row."""
-    path = tmp_path / "dump.sql"
-    path.write_text(
-        "CREATE TABLE t (id int);\n"
-        "INSERT INTO t VALUES (1)\n"
-        + "".join(f", ({i})\n" for i in range(2, 7)),
-        encoding="utf-8",
+    """The header line is not a row, so 3 rows fit a sample size of 3."""
+    path = _write_sql(
+        tmp_path, "INSERT INTO t VALUES\n" + "".join(f"({i}),\n" for i in range(3))
     )
+
     result = process_sql(path, sample_size=3)
+
+    assert len(_shown_tuples(result)) == 3
+    assert "Table data truncated" not in result
+
+
+def test_process_sql_bare_header_samples_exactly_sample_size_rows(
+    tmp_path: Path,
+) -> None:
+    """A bare header plus 6 rows at size 3 shows the header and 3 rows."""
+    path = _write_sql(
+        tmp_path, "INSERT INTO t VALUES\n" + "".join(f"({i}),\n" for i in range(6))
+    )
+
+    result = process_sql(path, sample_size=3)
+
+    assert "INSERT INTO t VALUES\n" in result
+    assert len(_shown_tuples(result)) == 3
     assert "Showing random 3 of 6 rows" in result
+
+
+def test_process_sql_second_bare_header_is_kept_and_never_sampled_as_row(
+    tmp_path: Path,
+) -> None:
+    """Two bare headers in one buffer: both survive and neither is counted."""
+    body = (
+        "INSERT INTO t VALUES\n"
+        + "".join(f"({i}),\n" for i in range(4))
+        + "INSERT INTO t VALUES\n"
+        + "".join(f"({i}),\n" for i in range(4, 8))
+    )
+    path = _write_sql(tmp_path, body)
+
+    for seed in range(20):
+        result = process_sql(path, sample_size=2, seed=seed)
+        assert result.count("INSERT INTO t VALUES\n") == 2
+        assert len(_shown_tuples(result)) == 2
+        assert "Showing random 2 of 8 rows" in result
+
+
+def test_process_sql_one_insert_per_row_lines_are_sampled_normally(
+    tmp_path: Path,
+) -> None:
+    """Each full INSERT line is a data row; none is a header."""
+    path = _write_sql(
+        tmp_path, "".join(f"INSERT INTO t VALUES ({i});\n" for i in range(10))
+    )
+
+    result = process_sql(path, sample_size=4)
+
+    assert result.count("INSERT INTO t VALUES (") == 4
+    assert "INSERT INTO t VALUES (0);" in result  # line 0 is always kept
+    assert "Showing random 4 of 10 rows" in result
+
+
+def test_process_sql_inline_first_tuple_header_is_kept_and_counted(
+    tmp_path: Path,
+) -> None:
+    """A header carrying the first tuple is a data row that counts as shown."""
+    path = _write_sql(
+        tmp_path,
+        "INSERT INTO t VALUES (1)\n" + "".join(f", ({i})\n" for i in range(2, 7)),
+    )
+
+    result = process_sql(path, sample_size=3)
+
+    assert "INSERT INTO t VALUES (1)" in result
+    assert len(_shown_tuples(result)) == 2  # ", (n)" lines; (1) is on the header
+    assert "Showing random 3 of 6 rows" in result
+
+
+def test_process_sql_sample_size_zero_with_row_opener_reports_one_shown(
+    tmp_path: Path,
+) -> None:
+    """Line 0 is always kept, so the notice reports the truth: 1 row shown."""
+    path = _write_sql(
+        tmp_path,
+        "INSERT INTO t VALUES (1)\n" + "".join(f", ({i})\n" for i in range(2, 6)),
+    )
+
+    result = process_sql(path, sample_size=0)
+
+    assert "Showing random 1 of 5 rows" in result
+
+
+def test_process_sql_schema_only_counts_data_rows_not_headers(
+    tmp_path: Path,
+) -> None:
+    """The omitted-row note excludes bare INSERT ... VALUES header lines."""
+    body = (
+        "INSERT INTO t VALUES\n"
+        + "".join(f"({i}),\n" for i in range(4))
+        + "INSERT INTO t VALUES\n"
+        + "".join(f"({i}),\n" for i in range(4, 8))
+    )
+    path = _write_sql(tmp_path, body)
+
+    result = process_sql(path, schema_only=True)
+
+    assert "8 data row(s) omitted: schema-only" in result

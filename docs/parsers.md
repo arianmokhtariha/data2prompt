@@ -442,17 +442,24 @@ Uses [`process_sql()`](../src/data2prompt/parsers.py#L237) to:
    marker is appended so omitted content never vanishes silently
 
 **Key Algorithm:**
-- First line (INSERT header) is always preserved
-- Remaining rows are randomly sampled; the truncation note reports
-  `random N of M rows` with `:,` separators, counting data rows only: a bare
-  `INSERT ... VALUES` header line (no tuple on it) is excluded from both
-  numbers, while a header that already carries the first tuple counts as a
-  row
+- Buffered lines are classified first. A *bare header* (`_is_bare_insert_header`:
+  a line ending in `VALUES`, no tuple on it) is statement structure and holds no
+  row. Every other line is a *data row*, including a one-row
+  `INSERT ... VALUES (..)` line or a header that already carries the first tuple
+- If the data rows fit `sql_sample_size`, the whole buffer is emitted unchanged,
+  with no notice
+- Otherwise every bare header and buffer line 0 (the statement opener) are kept,
+  the remaining slots up to `sql_sample_size` shown rows are filled by a seeded
+  `rng.sample` over the other data rows, and lines are emitted in original order
+  (`_data_row_indices`, `_choose_lines_to_keep`)
+- The truncation note reports `random N of M rows` with `:,` separators, counting
+  data rows only, where N is the number of rows actually shown. Line 0 is always
+  kept, so with `sql_sample_size = 0` and a row on line 0, N is 1
 - Secondary truncation ensures large sampled blocks don't exceed character limits
 
 **Schema-only mode:** when `config.schema_only` is set, `process_sql()` drops all buffered
 data rows (`INSERT`/data lines) and emits a single `-- [N data row(s) omitted: schema-only]
---` note per table while preserving `CREATE TABLE` blocks and schema keywords. Status
+--` note per table (N counts data rows only, never bare `INSERT ... VALUES` headers) while preserving `CREATE TABLE` blocks and schema keywords. Status
 becomes `"Schema Only"`.
 
 ### ExcelParser
@@ -869,7 +876,7 @@ Current notices:
 | `-- [Skipped: file.db is not a SQLite database (header check failed)] --` | `SQLiteParser` magic-byte sniff |
 | `-- [Note: database contains no user tables] --` | `process_sqlite` empty database |
 | `-- [N data row(s) omitted: schema-only] --` | `process_sql` under `--schema-only` |
-| `-- [Table data truncated: Showing random 15 of 200 rows to save context] --` | `process_sql` sampling |
+| `-- [Table data truncated: Showing random 15 of 200 rows to save context] --` | `process_sql` sampling (data rows only; bare `INSERT ... VALUES` headers are kept but not counted) |
 | `-- [N non-data line(s) omitted: exceeded the X-line limit (--sql-max-lines)] --` | `process_sql` line cap |
 | `-- [Output truncated: Showing first 40 lines] --` | notebook outputs |
 | `-- [Line truncated: showing first 1000 characters] --` | `truncate_long_lines` |
