@@ -17,89 +17,168 @@
 
 <p align="center">
   <b>Turn data-heavy projects into LLM context that actually fits.</b><br>
-  One command packs a directory of CSVs, notebooks, Excel workbooks and SQLite
-  databases into a single structured document: sampled, profiled, redacted, and
-  sized to your context window.
+  One command packs your CSVs, spreadsheets, notebooks and databases into a
+  single file that ChatGPT, Claude or Gemini can read: summarized, cleaned,
+  and sized to fit.
 </p>
-
----
-
-Point a generic repo-to-prompt tool at a project with real datasets in it and
-you get tens of megabytes of output. That is not a number you can trim your way
-out of. To a generic packer a CSV is just a large text file, so it offers two
-choices: dump the whole thing, or skip it.
-
-data2prompt reads data files as data. Every table is profiled on the complete
-dataset (schema, dtypes, per-column statistics, missing-value counts), then
-represented by a seeded random sample of real rows. The model gets a statistical
-picture of the data plus enough real rows to see formats, ranges and quirks.
-Anything the tool changed or left out is stated inline, so the model always
-knows what it is looking at.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/report.svg" alt="The data2prompt final report: token gauge, budget adjustments, per-type composition chart, attention badges, and the heaviest files" width="960">
 </p>
 
-## Why
-
-The same data-heavy project, packed by three tools on default settings:
-
 <p align="center">
-  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/comparison.svg" alt="Output size comparison: repomix 22,085 KB, code2prompt 9,304 KB, data2prompt 241 KB, roughly 80 to 85 percent more token-efficient" width="960">
+  <a href="#why-data2prompt">Why</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#options">Options</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#contributing">Contributing</a>
 </p>
 
-Read that as feasibility rather than savings. A 22 MB dump is millions of
-tokens, no llm model can read that at once. On a real data project a generic packer doesn't produce an expensive
-prompt, it produces an impossible one. Of the three outputs, only the 241 KB one
-can be handed to a model at all, thats the main point of the data2prompt.
+---
 
-The reduction comes from representation, not truncation. Each table still
-contributes its full schema, statistics computed over every row, and a seeded
-sample of real rows. The model often ends up knowing more about your data than
-it would from pages of raw rows, because distributions, missingness and dtypes
-are stated outright instead of inferred from whichever rows happened to fit.
+## Why data2prompt
 
-## Quick start
+Before an AI model can help with a data project, it has to see the project.
+The usual tools for that, like repomix and code2prompt, were made for
+code. They treat a CSV like any other text file and paste in every single row,
+so a normal data project turns into a file far too big for any model to read.
+
+Here is the same analytics project packed by all three tools:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/arianmokhtariha/data2prompt/main/assets/comparison.svg" alt="Output size on the same data project: repomix 22,085 KB, code2prompt 9,304 KB, data2prompt 241 KB" width="960">
+</p>
+
+22 MB is several million tokens. No mainstream model accepts that in one
+prompt, so those outputs can't be used at all. data2prompt's 241 KB fits, and
+thanks to the column statistics the model often learns more about your data
+than it would from the raw rows.
+
+data2prompt looks at your data the way an analyst does on day one: how big each
+table is, what every column holds, where the gaps are, and a few example rows.
+That summary is what the model gets.
+
+---
+
+## Features
+
+### Your data, summarized instead of pasted
+
+Every table (a CSV, an Excel sheet, a Parquet file, a database table) gets a
+profile computed over all of its rows:
+
+- each column's type and how many values are missing
+- for numbers: min, max, average, median and spread
+- for text: how many distinct values there are and which one is most common
+
+On top of that come 15 real rows picked at random, so the model can see what
+the data looks like. A note says how many rows the table really has, so the
+model never mistakes 15 example rows for the whole dataset.
+
+Because the numbers cover every row, the model can spot problems it never saw
+directly: a `-999` placeholder hiding in a numeric column, duplicate IDs, a
+column that is 10% empty, or one category spelled three different ways. In our
+test project, a 2,040-row orders file that would take about 50,000 tokens to
+paste comes down to about 900.
+
+### Clean notebooks
+
+Jupyter notebooks are full of things a model doesn't need: embedded images,
+HTML copies of every table, invisible formatting codes. data2prompt keeps your
+code, your notes, the printed results and the error messages, and removes the
+rest. Very long outputs are shortened, and a removed chart leaves a short note
+behind so the model knows there was one.
+
+It also checks how the notebook was run. If cells ran out of order, some never
+ran, or the run stopped on an error, the model is warned that the saved results
+may not match a clean run from top to bottom.
+
+### Fits your context window with one flag
 
 ```bash
-# No install: fetch and run in one step, via uv
-uvx data2prompt
-
-# Or install as a global CLI tool
-uv tool install data2prompt   # via uv
-pipx install data2prompt      # via pipx
-
-# Or into an active virtual environment
-pip install data2prompt
+data2prompt --budget 100k
 ```
 
-[`uvx`](https://docs.astral.sh/uv/) caches the tool after the first run, so
-repeat runs start instantly and nothing is left on your system to clean up.
+Tell data2prompt how many tokens you can spare and it shrinks the output until
+it fits. It shows fewer example rows first and keeps the column statistics as
+long as possible, since they are the most useful part. Whole files are left out
+only as a last resort. Everything it trimmed is listed for you, and if the
+project can't fit at all, it says so and writes nothing.
 
-Run it from your project root:
+Use it when you want to:
+
+- paste into a chat app with a smaller limit
+- leave room in the conversation for your questions and the model's answers
+- match a model's context size, such as `--budget 128k`, `200k` or `1m`
+- keep API costs predictable on every run
+
+### The model knows what's missing
+
+A model given part of a file will happily guess the rest. data2prompt is
+built to stop that. The output starts with a short guide for the model, lists every
+file with a status (full, sampled, schema only, redacted, skipped), and marks
+every spot where something was shortened or left out. The model is told to say
+when information isn't there instead of making it up.
+
+### Works with the formats you already use
+
+| File | What the model gets |
+| :--- | :--- |
+| CSV, Parquet, Feather, Arrow | Column statistics plus example rows. Parquet keeps its exact column types. |
+| Excel (`.xlsx`, `.xls`, `.xlsm`) | The same for each sheet, plus a note when the workbook has charts or images. |
+| SQLite databases | Each table's structure, including keys and links to other tables, plus statistics and example rows. |
+| SQL scripts | Table definitions in full, with long lists of inserted rows cut down to examples. |
+| Jupyter notebooks | Code, notes and text outputs, cleaned as described above. |
+| `.env` files | Variable names only. Values are always hidden. |
+| Code, docs and other text | The full text. Very large files are cut to their beginning, and binary files are skipped. |
+
+### Safe and repeatable
+
+- Secret values in `.env` files never reach the output.
+- Files listed in your `.gitignore` are left out.
+- Databases are opened read-only, and none of your files are changed.
+- The same project gives the same output every time (apart from the
+  timestamp), so you can compare runs.
+- Token counting happens on your machine. Nothing is uploaded.
+- A broken or locked file gets a note in the output and doesn't stop the run.
+
+---
+
+## Installation
+
+The quickest way is [uv](https://docs.astral.sh/uv/), which runs data2prompt
+without installing anything permanently:
 
 ```bash
-data2prompt                        # → PROMPT.md (markdown, default settings)
-data2prompt -b 100k -c             # fit into 100k tokens, copy to clipboard
-data2prompt -f xml --schema-only   # XML format, schemas only, zero data rows
+uvx data2prompt
+```
+
+Or install it as a command you can use anywhere:
+
+```bash
+uv tool install data2prompt   # with uv
+pipx install data2prompt      # with pipx
+pip install data2prompt       # into your current Python environment
 ```
 
 <details>
-<summary><b>Parquet / Feather / Arrow support</b> (optional extra)</summary>
+<summary><b>Parquet, Feather and Arrow support</b> (optional)</summary>
 
-Columnar formats need [pyarrow](https://arrow.apache.org/docs/python/), which is
-not bundled by default:
+These formats need the extra `pyarrow` package:
 
 ```bash
 uvx --from "data2prompt[parquet]" data2prompt   # no install
-uv tool install "data2prompt[parquet]"          # uv global install
-pipx install "data2prompt[parquet]"             # fresh pipx install
-pipx inject data2prompt pyarrow                 # already installed via pipx
-pip install "data2prompt[parquet]"              # pip equivalent
+uv tool install "data2prompt[parquet]"          # uv
+pipx install "data2prompt[parquet]"             # new pipx install
+pipx inject data2prompt pyarrow                 # existing pipx install
+pip install "data2prompt[parquet]"              # pip
 ```
 
-Without pyarrow these files still appear in the output, with an inline note
-explaining why they were skipped.
+Without it, these files are still listed in the output with a note explaining
+why they were skipped. Old `.xls` Excel files work the same way with `xlrd`
+(`pip install xlrd`).
 </details>
 
 <details>
@@ -112,162 +191,67 @@ pip install -e .
 ```
 </details>
 
-## What happens to your files
+---
 
-Every file type gets a strategy, not a dump:
+## Usage
 
-| File type | Strategy | What the LLM sees |
-| :--- | :--- | :--- |
-| `.csv` | Seeded random sampling | Column schema, full-dataset stats, N sampled rows |
-| `.parquet` `.feather` `.arrow` | Same, via pyarrow | Schema, stats and sample, identical treatment to CSV |
-| `.xlsx` `.xls` `.xlsm` | Per-sheet extraction | Each sheet as its own schema, stats and sample section |
-| `.db` `.sqlite` `.sqlite3` | Read-only stdlib `sqlite3` | Per-table `CREATE TABLE` DDL (keys, FKs, indexes), stats, sampled rows |
-| `.sql` | Statement-aware parsing | Schema statements kept intact, `INSERT` floods capped |
-| `.ipynb` | Cell-level cleaning | Code, markdown and text outputs, with base64 images and HTML dumps stripped |
-| `.env` | Name-only redaction | `KEY=<redacted>`, so variable names but never values |
-| Binary files | Null-byte detection | Skipped, listed in the file index |
-| Everything else | Size-aware reading | Full text, or just the first 10 KB once it passes `--max-file-size` (default 70 KB) |
-
-Two things make the samples trustworthy. Statistics are computed on the full
-dataset before any sampling happens, so dtypes, missing counts and the
-`describe()` summary reflect every row even when the model only sees 15 of them.
-And every intervention the tool makes (sampling, truncation, redaction, skips)
-appears as a uniform `-- [...] --` notice inside the document, so the model is
-never left guessing why something looks incomplete.
-
-## Fitting a context window
-
-State the outcome you want instead of tuning knobs:
+Open a terminal in your project folder and run:
 
 ```bash
-data2prompt --budget 100k
+data2prompt
 ```
 
-`--budget` runs a de-escalation ladder: halve CSV and SQL sample sizes, trim
-notebook outputs, switch to schema-only, drop the stats blocks, cap large text
-files to their first 10 KB, and as a last resort omit the heaviest remaining
-files. It re-renders and re-counts the actual
-document after every step until it fits. The number that gets checked is the
-number you ship.
+You get a `PROMPT.md` file to paste or upload into your AI chat, plus a short
+report in the terminal showing what was included, what was trimmed and which
+files take up the most space.
 
-- Accepts `50000`, `100k`, `1.5m`. Commas and underscores are fine.
-- A budget report is embedded in the document and shown in the terminal report,
-  listing every parameter change and every omitted file.
-- If the budget is infeasible even at the ladder's floor, nothing is written.
-  The process exits non-zero with the minimum achievable count, so you never
-  silently receive an over-budget file.
+Common recipes:
 
-## Under the hood
+| You want to | Run |
+| :--- | :--- |
+| Copy the result straight to the clipboard | `data2prompt -c` |
+| Fit a 200k-token model | `data2prompt --budget 200k` |
+| Share the structure of your data without any rows | `data2prompt --schema-only` |
+| Show the model more example rows | `data2prompt -s 50` |
+| Get XML instead of Markdown (some models follow it better in long prompts) | `data2prompt -f xml` |
 
-Two rules shape the whole pipeline: never misrepresent what the model is seeing,
-and never estimate a number that can be measured. That's why `--budget`
-re-renders and re-counts instead of guessing, why every reduction leaves a
-notice behind, and why the same command on the same project produces
-byte-identical output a year later.
+To leave files or folders out, list them in a `.data2promptignore` file in your
+project. It works like a `.gitignore`.
 
-### Profiling and sampling
+---
 
-- Every CSV, Parquet file, Excel sheet and SQLite table is profiled before a
-  single row is sampled: per-column dtype, missing count and percentage, and the
-  full `describe()` battery (count, unique, top, freq, mean, std, min, quartiles,
-  max), rendered as one unified schema table.
-- Sampling is seeded, and the drawn rows are re-sorted back into original file
-  order, so time series stay chronological and IDs stay ascending. Every notice
-  cites the true size captured before sampling, as in
-  `-- [Sample: random 15 of 1,234,567 rows] --`, so the sample can never be
-  mistaken for the dataset.
-- Parquet, Feather and Arrow columns carry pyarrow's native type strings
-  (`int64`, `utf8`, `timestamp[us, tz=UTC]`), and SQLite columns their declared
-  types from `PRAGMA table_info`. Both override pandas' lossier inference.
-- SQLite files are verified by magic bytes and opened strictly read-only
-  (`mode=ro` plus `PRAGMA query_only`). Each table is rendered with its full
-  `CREATE` DDL, including keys, foreign keys and indexes. Tables past 100k rows
-  are `LIMIT`-read so a pathological database can't stall a run, and their stats
-  block is honestly omitted rather than computed on a partial scan.
+## Options
 
-### The generated document
-
-- It opens with a reading contract covering layout, structural conventions, the
-  notice grammar, and explicit accuracy rules against hallucination. The preamble
-  is context-aware: conventions for notebooks, Excel, SQLite or env files only
-  appear when those types were actually scanned.
-- A File Index lists every scanned file with its type and an inclusion status
-  drawn from a controlled vocabulary (`Full`, `Sampled`, `Schema Only`,
-  `Redacted`, `Omitted` and a few more). Nothing the scan touched goes
-  unaccounted for.
-- Every tool intervention uses the same `-- [Category: detail] --` form, taught
-  once in the preamble, so the model can always separate what the tool says from
-  what your files say.
-- Fences are sized dynamically. Before content is embedded, the longest backtick
-  run inside it is measured and the enclosing fence is made one backtick longer,
-  so a README or notebook that contains its own fences can't break the structure.
-- Each file has one canonical path (project-relative, forward-slashed) that is
-  byte-identical across the File Index, the file headers and every notice, so the
-  model can cross-reference sections by literal string match.
-- Two formats, `markdown` (default) and `xml` for stronger structural anchoring
-  in long contexts, are logically identical and governed by a written
-  [output contract](docs/output-contract.md). XML mode quotes attributes carrying
-  user data while leaving file content verbatim, so no `&lt;` entity noise
-  inflates the token count.
-- The document closes with an end-of-codebase recap that restates the accuracy
-  rules, so the model knows the snapshot is complete and nothing follows.
-
-### Reliability
-
-- Token counts are exact and offline. A bundled `o200k_base` BPE (tiktoken)
-  counts the fully rendered document, scaffolding included, with a pure-regex
-  fallback if the encoding can't load. No network call, ever.
-- `--seed 42` keeps runs reproducible. Regenerate a prompt for a diff, an eval or
-  a bug report and you get the identical document back.
-- Every parser contains its own failures. A corrupt file, a locked file, a
-  truncated database, one bad Excel sheet or one bad SQLite table degrades to an
-  inline error note for that file alone, never a crashed run.
-- `.env` values never reach the output (names only, values redacted), long lines
-  are truncated to neutralize prompt-injection padding, and binary content is
-  detected and excluded.
-- Scanning respects `.gitignore` with real per-directory scoping (a
-  `src/.gitignore` applies under `src/`, exactly like git), honors a
-  project-level `.data2promptignore`, ships hardened core ignore lists (`.git`,
-  `node_modules`, caches), and recognizes its own previous outputs by an embedded
-  marker so it never packs itself.
-- `--clipboard` pipes the result to your OS clipboard through native tools
-  (`clip`, `pbcopy`, `xclip`, `wl-copy`) with a file fallback, using UTF-16 on
-  Windows so non-ASCII content round-trips intact.
-- An animated banner and a transient progress bar run during the scan, and the
-  final report shows a token gauge against a 200K context window, a per-type
-  composition chart, attention badges, and the heaviest files each with a
-  token-share bar. Animations disable themselves on non-interactive output.
-
-## CLI reference
-
-The flags you will actually reach for:
-
-| Flag | Default | Purpose |
+| Flag | Default | What it does |
 | :--- | :--- | :--- |
-| `-o`, `--output` | `PROMPT` | Base name of the generated file |
-| `-f`, `--format` | `markdown` | Output format: `markdown` or `xml` |
-| `-b`, `--budget` | off | Target token budget (`50000`, `100k`, `1.5m`) |
-| `-c`, `--clipboard` | off | Copy to clipboard instead of writing a file |
-| `-s`, `--csv-sample-size` | `15` | Rows sampled per tabular file |
-| `--seed` | `42` | Sampling seed, for identical output across runs |
-| `--schema-only` | off | Schemas and dtypes only, zero data rows |
+| `-b`, `--budget` | off | Fit the output into a token budget (`50000`, `100k`, `1.5m`) |
+| `-c`, `--clipboard` | off | Copy the result to the clipboard instead of writing a file |
+| `-f`, `--format` | `markdown` | `markdown` or `xml` (same content either way) |
+| `-o`, `--output` | `PROMPT` | Name of the output file |
+| `-s`, `--csv-sample-size` | `15` | Example rows per table |
+| `--seed` | `42` | Which random rows are picked; keep it the same for identical output |
+| `--schema-only` | off | Column information and statistics only, no rows |
+| `--no-stats-summary` | stats on | Leave out the column statistics |
+| `--stats-decimals` | `4` | Decimal places for statistics |
+| `--data-decimals` | `6` | Decimal places for values in example rows |
 | `--max-lines` | `40` | Output lines kept per notebook cell |
-| `--max-sheets` | `10` | Sheets processed per Excel workbook |
-| `--max-tables` | `25` | Tables processed per SQLite database |
-| `--stats-decimals` | `4` | Max decimals for float statistics (values below 1 keep at least 4 significant digits) |
-| `--data-decimals` | `6` | Max decimals for float sample values (raise it to keep more digits) |
-| `--max-file-size` | `70` | KB threshold before plain files are head-truncated |
-| `--no-stats-summary` | stats on | Drop the per-table stats block |
-| `--no-env-keys` | redact | Skip `.env` files entirely instead of redacting |
-| `--no-gitignore` | respect | Ignore `.gitignore` rules while scanning |
-| `--ignore-folders` / `--ignore-files` / `--skip-exts` | | Additional exclusions, merged with the core ignore sets |
+| `--max-sheets` | `10` | Sheets read per Excel file |
+| `--max-tables` | `25` | Tables read per database |
+| `--max-file-size` | `70` | Size in KB above which other text files are cut to their first 10 KB |
+| `--no-env-keys` | redact | Leave `.env` files out completely |
+| `--no-gitignore` | respect | Include files that `.gitignore` excludes |
+| `--ignore-folders` / `--ignore-files` / `--skip-exts` | | Extra folders, files or extensions to leave out |
 
-Full reference with validation rules and edge cases: [docs/cli.md](docs/cli.md)
+Every flag, with its limits and edge cases, is documented in
+[docs/cli.md](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/cli.md).
+
+---
 
 ## Architecture
 
-Small, single-responsibility modules under an orchestration layer. Parsing,
-output generation, scanning, token budgeting and UI never bleed into each other:
+data2prompt is a small, fully typed Python package. A thin `main.py` hands each
+job to one focused module, and new file types plug into a parser registry
+without touching the rest of the pipeline.
 
 ```mermaid
 graph LR
@@ -280,32 +264,29 @@ graph LR
     Budget --> Output
 ```
 
-A parser registry maps extensions to specialized parsers, so new file types plug
-in without touching the pipeline. An output strategy keeps markdown and XML
-generation interchangeable and contract-bound. The codebase is fully typed
-(PEP 484) and stdlib-first.
+Each module has its own in-depth document:
 
-Every module has a matching deep-dive document:
-
-| | |
+| Doc | Covers |
 | :--- | :--- |
-| [Architecture](docs/architecture.md) | Module layout, data flow, design patterns |
-| [Parsers](docs/parsers.md) | Per-format strategies and the tool-notice grammar |
-| [Budget](docs/budget.md) | The `--budget` de-escalation ladder, end to end |
-| [Output](docs/output.md) · [Output Contract](docs/output-contract.md) | Document structure and the markdown/XML parity rules |
-| [CLI](docs/cli.md) · [UI](docs/ui.md) · [Installation](docs/installation.md) | Flags, the terminal interface, setup |
+| [Architecture](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/architecture.md) | Module layout, data flow, design patterns |
+| [Parsers](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/parsers.md) | How each file format is read and summarized |
+| [Budget](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/budget.md) | How `--budget` decides what to trim |
+| [Output](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/output.md) · [Output contract](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/output-contract.md) | The structure of the generated file and the rules it follows |
+| [CLI](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/cli.md) · [UI](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/ui.md) · [Installation](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/installation.md) | Flags, the terminal report, setup |
 
-## Development
+---
+
+## Contributing
 
 ```bash
 pip install -e .[dev]
 pytest
 ```
 
-Contributions are welcome. New file-type parsers are the highest-leverage place
-to start, since the registry makes them self-contained. Please open an issue
-first for anything that changes the generated document, and read
-[docs/output-contract.md](docs/output-contract.md) before touching output code.
+Contributions are welcome. Support for a new file type is the easiest place to
+start. For anything that changes the generated file, please open an issue first
+and read the
+[output contract](https://github.com/arianmokhtariha/data2prompt/blob/main/docs/output-contract.md).
 
 ---
 
