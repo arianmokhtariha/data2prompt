@@ -93,7 +93,8 @@ behind so the model knows there was one.
 
 It also checks how the notebook was run. If cells ran out of order, some never
 ran, or the run stopped on an error, the model is warned that the saved results
-may not match a clean run from top to bottom.
+may not match a clean run from top to bottom, all of this removes false assumptions
+from the model.
 
 ### Fits your context window with one flag
 
